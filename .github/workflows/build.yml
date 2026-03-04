@@ -1,0 +1,59 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+permissions:
+  contents: read
+
+jobs:
+  build-pc:
+    name: PC (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            libsdl2-dev \
+            libsdl2-image-dev \
+            libsdl2-ttf-dev \
+            libsdl2-mixer-dev
+
+      - name: Configure
+        run: cmake -B build-pc -S .
+
+      - name: Build
+        run: cmake --build build-pc --parallel
+
+      - name: Upload PC artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cold_start-pc
+          path: build-pc/cold_start
+
+  build-switch:
+    name: Nintendo Switch
+    runs-on: ubuntu-latest
+    container:
+      image: devkitpro/devkita64:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Switch SDL2 portlibs
+        run: dkp-pacman -S --noconfirm switch-sdl2 switch-sdl2_image switch-sdl2_ttf switch-sdl2_mixer
+
+      - name: Build
+        run: make -j$(nproc)
+
+      - name: Upload Switch artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cold_start-switch
+          path: cold_start.nro
