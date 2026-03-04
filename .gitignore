@@ -1,0 +1,13 @@
+# Build output directories
+build/
+build-pc/
+
+# Nintendo Switch compiled outputs
+*.elf
+*.nacp
+*.nro
+*.nso
+*.pfs0
+
+# PC compiled output
+cold_start
