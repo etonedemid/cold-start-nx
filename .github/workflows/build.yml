@@ -56,4 +56,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: cold_start-switch
-          path: cold_start.nro
+          path: cold-start-nx.nro
