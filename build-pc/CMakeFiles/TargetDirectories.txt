@@ -1,3 +1,0 @@
-/home/etonedemid/topdown-nx/cold_start/build-pc/CMakeFiles/cold_start.dir
-/home/etonedemid/topdown-nx/cold_start/build-pc/CMakeFiles/edit_cache.dir
-/home/etonedemid/topdown-nx/cold_start/build-pc/CMakeFiles/rebuild_cache.dir
