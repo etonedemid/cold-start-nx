@@ -85,6 +85,8 @@ enum class NetPacketType : uint8_t {
     AdminRespawn    = 0x56,  // host forces player respawn
     AdminTeamMove   = 0x57,  // host moves a player to a different team
     LivesUpdate     = 0x58,  // sync remaining lives for a player
+    HitRequest      = 0x59,  // client→host: "bullet X hit me for Y damage" (PvP validation)
+    PlayerHpSync    = 0x5A,  // host→all: authoritative HP update for a player
 };
 
 // ── Network channels ──
@@ -229,6 +231,9 @@ public:
     void sendPlayerDied(uint8_t playerId, uint8_t killerId);
     void sendPlayerRespawn(uint8_t playerId, Vec2 pos);
     void sendEnemyKilled(uint32_t enemyIdx, uint8_t killerId);
+    // PvP host-authoritative hit validation
+    void sendHitRequest(uint32_t bulletNetId, int damage, uint8_t ownerId); // client→host
+    void sendPlayerHpSync(uint8_t playerId, int hp, int maxHp, uint8_t killerId); // host→all
     void sendWaveStart(int waveNum);
     void sendScoreUpdate(uint8_t playerId, int score);
 
@@ -270,6 +275,10 @@ public:
     std::function<void(uint8_t playerId, int lives)> onLivesUpdated;
     std::function<void(uint8_t playerId, uint8_t killerId)> onPlayerDied;
     std::function<void(uint8_t playerId, Vec2 pos)> onPlayerRespawned;
+    // PvP: host sends authoritative HP; called on all peers including host
+    std::function<void(uint8_t playerId, int hp, int maxHp, uint8_t killerId)> onPlayerHpSync;
+    // PvP: host receives a hit request from a client; return true to accept
+    std::function<bool(uint32_t bulletNetId, int damage, uint8_t ownerId, uint8_t senderPlayerId)> onHitRequest;
     std::function<void(int waveNum)> onWaveStarted;
     std::function<void(const std::string& sender, const std::string& text)> onChatMessage;
     std::function<void(uint32_t mapSeed, int mapW, int mapH, const std::vector<uint8_t>& customMapData)> onGameStarted;

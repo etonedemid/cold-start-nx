@@ -2936,11 +2936,23 @@ void Game::updateExplosions(float dt) {
                     if (e.hp <= 0) killEnemy(e);
                 }
             }
-            // In PvP, explosions deal 3 HP damage to the local player
+            // In PvP, explosions deal 3 HP damage to the local player — host-validated
             if ((lobbySettings_.isPvp || currentRules_.pvpEnabled) &&
                 !player_.dead &&
                 Vec2::dist(ex.pos, player_.pos) < ex.radius) {
-                player_.takeDamage(3);
+                auto& netEx = NetworkManager::instance();
+                if (netEx.isHost()) {
+                    // Host applies damage and broadcasts authoritative HP
+                    player_.takeDamage(3);
+                    NetPlayer* localNetP = netEx.localPlayer();
+                    if (localNetP) localNetP->hp = player_.hp;
+                    if (player_.dead) {
+                        netEx.sendPlayerDied(netEx.localPlayerId(), 255);
+                    } else {
+                        netEx.sendPlayerHpSync(netEx.localPlayerId(), player_.hp, player_.maxHp, 255);
+                    }
+                }
+                // Clients do not apply damage locally — they wait for PlayerHpSync from host
             }
             ex.dealtDmg = true;
         }
@@ -3303,13 +3315,28 @@ void Game::resolveCollisions() {
                 }
                 if (circleOverlap(b.pos, b.size, p.pos, PLAYER_SIZE * 0.5f)) {
                     b.alive = false;
-                    p.takeDamage(b.damage);
-                    camera_.addShake(2.0f);
-                    if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
-                    if (p.dead) {
-                        if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
-                        camera_.addShake(4.0f);
-                        net.sendPlayerDied(net.localPlayerId(), b.ownerId);
+                    if (net.isHost()) {
+                        // Host processes damage directly and broadcasts to all
+                        NetPlayer* localNetP = net.localPlayer();
+                        int newHp = player_.hp - b.damage;
+                        if (localNetP) localNetP->hp = std::max(0, newHp);
+                        if (newHp <= 0) {
+                            p.takeDamage(b.damage);  // sets dead flag
+                            camera_.addShake(4.0f);
+                            if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                            net.sendPlayerDied(net.localPlayerId(), b.ownerId);
+                        } else {
+                            p.takeDamage(b.damage);
+                            camera_.addShake(2.0f);
+                            if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                            net.sendPlayerHpSync(net.localPlayerId(), player_.hp, player_.maxHp, b.ownerId);
+                        }
+                    } else {
+                        // Client: report hit to host for validation — host will send back HP/death
+                        net.sendHitRequest(b.netId, b.damage, b.ownerId);
+                        // Optimistic visual feedback only (no HP deducted yet)
+                        camera_.addShake(1.5f);
+                        if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
                     }
                     break;
                 }
@@ -5158,12 +5185,18 @@ void Game::startCustomMapMultiplayer(const std::string& path) {
     player_.hp = config_.playerMaxHp;
     player_.bombCount = 1;
 
-    // Find start trigger for player spawn
-    MapTrigger* startT = customMap_.findStartTrigger();
-    if (startT) {
-        player_.pos = {startT->x, startT->y};
-    } else {
-        player_.pos = {map_.worldWidth() / 2.0f, map_.worldHeight() / 2.0f};
+    // Find start trigger for player spawn (prefer team spawn in team/PvP mode)
+    {
+        bool spawned = false;
+        if (localTeam_ >= 0 && currentRules_.teamCount >= 2) {
+            MapTrigger* teamT = customMap_.findTeamSpawnTrigger(localTeam_);
+            if (teamT) { player_.pos = {teamT->x, teamT->y}; spawned = true; }
+        }
+        if (!spawned) {
+            MapTrigger* startT = customMap_.findStartTrigger();
+            if (startT) player_.pos = {startT->x, startT->y};
+            else player_.pos = {map_.worldWidth() / 2.0f, map_.worldHeight() / 2.0f};
+        }
     }
 
     // Camera
@@ -6782,6 +6815,54 @@ void Game::setupNetworkCallbacks() {
         }
     };
 
+    // ── PvP host-authoritative damage ──
+    // Host validates a bullet-hit reported by a client and applies authoritative damage
+    net.onHitRequest = [this](uint32_t bulletNetId, int damage, uint8_t ownerId, uint8_t senderPlayerId) -> bool {
+        auto& net = NetworkManager::instance();
+        // Remove bullet from host's list (prevents double-hit)
+        bool bulletFound = false;
+        for (auto& b : bullets_) {
+            if (b.netId == bulletNetId && b.alive) {
+                b.alive = false;
+                bulletFound = true;
+                break;
+            }
+        }
+        // Allow even if bullet wasn't found locally — network ordering may differ
+        NetPlayer* victim = net.findPlayer(senderPlayerId);
+        if (!victim || !victim->alive) return false;
+        victim->hp -= damage;
+        if (victim->hp <= 0) {
+            victim->hp = 0;
+            victim->alive = false;
+            net.sendPlayerDied(senderPlayerId, ownerId);
+        } else {
+            net.sendPlayerHpSync(senderPlayerId, victim->hp, victim->maxHp, ownerId);
+        }
+        (void)bulletFound;
+        return true;
+    };
+
+    // Receive authoritative HP from host — update local player if it's ours
+    net.onPlayerHpSync = [this](uint8_t playerId, int hp, int maxHp, uint8_t killerId) {
+        auto& net = NetworkManager::instance();
+        if (playerId == net.localPlayerId()) {
+            player_.hp    = hp;
+            player_.maxHp = maxHp;
+            if (hp <= 0 && !player_.dead) {
+                // Host confirmed we're dead
+                player_.dead = true;
+                if (sfxHurt_)  { int ch = Mix_PlayChannel(-1, sfxHurt_,  0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                camera_.addShake(4.0f);
+            } else if (hp < player_.maxHp) {
+                camera_.addShake(1.8f);
+                if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+            }
+        }
+        (void)killerId;
+    };
+
     net.onChatMessage = [this](const std::string& sender, const std::string& text) {
         printf("[CHAT] %s: %s\n", sender.c_str(), text.c_str());
     };
@@ -6994,7 +7075,7 @@ void Game::updateMultiplayer(float dt) {
     if (net.isInGame()) {
         netStateSendTimer_ -= dt;
         if (netStateSendTimer_ <= 0) {
-            netStateSendTimer_ = 1.0f / 20.0f; // 20 Hz
+            netStateSendTimer_ = 1.0f / 30.0f; // 30 Hz
 
             NetPlayer state;
             state.id = net.localPlayerId();
@@ -7010,11 +7091,11 @@ void Game::updateMultiplayer(float dt) {
             net.sendPlayerState(state);
         }
 
-        // Host sends enemy states at 10 Hz, or immediately when an enemy dies
+        // Host sends enemy states at 20 Hz, or immediately when an enemy dies
         if (net.isHost()) {
             enemySendTimer_ -= dt;
             if (enemySendTimer_ <= 0 || enemyStatesNeedUpdate_) {
-                enemySendTimer_ = 1.0f / 10.0f;
+                enemySendTimer_ = 1.0f / 20.0f;
                 enemyStatesNeedUpdate_ = false;
 
                 // Pack enemy data: {pos.x:4, pos.y:4, rot:4, hp:4, type:1, flags:1, dashDir.x:4, dashDir.y:4} = 26 bytes each
@@ -7052,29 +7133,47 @@ void Game::updateMultiplayer(float dt) {
                 Vec2 spawnPos;
                 bool found = false;
 
-                // Team spawn: assign corners  (team 0=top-left, 1=bottom-right, 2=top-right, 3=bottom-left)
+                // Team spawn: first try team spawn trigger from custom map, then fall back to corners
                 int myTeam = localTeam_;
                 if (myTeam >= 0 && currentRules_.teamCount >= 2) {
-                    float margin = 96.0f;
-                    float ww = map_.worldWidth();
-                    float wh = map_.worldHeight();
-                    Vec2 corners[4] = {
-                        {margin, margin},                    // team 0 — top-left
-                        {ww - margin, wh - margin},          // team 1 — bottom-right
-                        {ww - margin, margin},                // team 2 — top-right
-                        {margin, wh - margin}                 // team 3 — bottom-left
-                    };
-                    Vec2 target = corners[myTeam % 4];
-                    // FindForsafe spot near target corner
-                    for (int attempt = 0; attempt < 50; attempt++) {
-                        float rx = target.x + (float)(rand() % 200 - 100);
-                        float ry = target.y + (float)(rand() % 200 - 100);
-                        rx = std::max(64.0f, std::min(ww - 64.0f, rx));
-                        ry = std::max(64.0f, std::min(wh - 64.0f, ry));
-                        if (!map_.worldCollides(rx, ry, PLAYER_SIZE * 0.5f)) {
-                            spawnPos = {rx, ry};
-                            found = true;
-                            break;
+                    if (playingCustomMap_) {
+                        MapTrigger* teamT = customMap_.findTeamSpawnTrigger(myTeam);
+                        if (teamT) {
+                            // scatter slightly around trigger centre so players don't stack
+                            for (int attempt = 0; attempt < 50; attempt++) {
+                                float rx = teamT->x + (float)(rand() % (int)teamT->width  - (int)(teamT->width  / 2));
+                                float ry = teamT->y + (float)(rand() % (int)teamT->height - (int)(teamT->height / 2));
+                                if (!map_.worldCollides(rx, ry, PLAYER_SIZE * 0.5f)) {
+                                    spawnPos = {rx, ry};
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (!found) { spawnPos = {teamT->x, teamT->y}; found = true; }
+                        }
+                    }
+                    if (!found) {
+                        // Corner fallback (team 0=top-left, 1=bottom-right, 2=top-right, 3=bottom-left)
+                        float margin = 96.0f;
+                        float ww = map_.worldWidth();
+                        float wh = map_.worldHeight();
+                        Vec2 corners[4] = {
+                            {margin, margin},
+                            {ww - margin, wh - margin},
+                            {ww - margin, margin},
+                            {margin, wh - margin}
+                        };
+                        Vec2 target = corners[myTeam % 4];
+                        for (int attempt = 0; attempt < 50; attempt++) {
+                            float rx = target.x + (float)(rand() % 200 - 100);
+                            float ry = target.y + (float)(rand() % 200 - 100);
+                            rx = std::max(64.0f, std::min(ww - 64.0f, rx));
+                            ry = std::max(64.0f, std::min(wh - 64.0f, ry));
+                            if (!map_.worldCollides(rx, ry, PLAYER_SIZE * 0.5f)) {
+                                spawnPos = {rx, ry};
+                                found = true;
+                                break;
+                            }
                         }
                     }
                 }
