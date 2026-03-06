@@ -14,8 +14,9 @@ struct Bomb {
     bool  alive       = true;
     float lifetime    = 10.0f;
     float age         = 0;
-    int   homingTarget = -1;  // index into enemies_ for homing, -1 = none
-    float homingStr    = 0.0f;
+    int     homingTarget   = -1;   // index into enemies_ for homing, -1 = none
+    uint8_t homingPlayerId = 255;  // remote player ID to home toward (PvP), 255 = none
+    float   homingStr      = 0.0f;
 
     // Animation
     int   animFrame   = 0;

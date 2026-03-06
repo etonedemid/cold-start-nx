@@ -1950,7 +1950,7 @@ void Game::handleInput() {
                                 fread(customMapData.data(), 1, sz, f);
                                 fclose(f);
                                 startCustomMapMultiplayer(customMapFile);
-                                if (lobbySettings_.isPvp) player_.invulnDuration = 0.01f;
+                                if (lobbySettings_.isPvp) player_.invulnDuration = 0.0f;
                                 state_ = GameState::MultiplayerGame;
                                 net.startGame(0, map_.width, map_.height, customMapData);
                                 respawnTimer_ = currentRules_.respawnTime;
@@ -1960,7 +1960,7 @@ void Game::handleInput() {
                             uint32_t mapSeed = (uint32_t)time(nullptr) ^ (uint32_t)rand();
                             mapSrand(mapSeed);
                             startGame();
-                            if (lobbySettings_.isPvp) player_.invulnDuration = 0.01f;
+                            if (lobbySettings_.isPvp) player_.invulnDuration = 0.0f;
                             state_ = GameState::MultiplayerGame;
                             net.startGame(mapSeed, config_.mapWidth, config_.mapHeight);
                             respawnTimer_ = currentRules_.respawnTime;
@@ -2337,17 +2337,49 @@ void Game::updatePlayer(float dt) {
                 }
             }
 
+            // In PvP, also search remote players for the closest enemy in cone
+            uint8_t bestPlayerId = 255;
+            bool pvpActive = lobbySettings_.isPvp || currentRules_.pvpEnabled;
+            if (pvpActive) {
+                auto& net = NetworkManager::instance();
+                uint8_t localId = net.localPlayerId();
+                for (auto& rp : net.players()) {
+                    if (rp.id == localId || !rp.alive || rp.spectating) continue;
+                    // Skip teammates
+                    if (localTeam_ >= 0 && rp.team == localTeam_) continue;
+                    Vec2 toRp = rp.targetPos - p.pos;
+                    float dist = toRp.length();
+                    if (dist < 1.0f || dist > bestDist) continue;
+                    Vec2 dirRp = toRp * (1.0f / dist);
+                    float dot = aimDir.x * dirRp.x + aimDir.y * dirRp.y;
+                    if (dot > 0.707f) { // ~45° cone
+                        bestDist = dist;
+                        bestPlayerId = rp.id;
+                        bestIdx = -1; // player target wins over AI enemy
+                    }
+                }
+            }
+
             Vec2 launchDir;
-            if (bestIdx >= 0) {
-                // Launch toward that enemy
+            // Reset both homing fields before assigning
+            toFire->homingTarget   = -1;
+            toFire->homingPlayerId = 255;
+            toFire->homingStr      = 0;
+            if (bestPlayerId != 255) {
+                // Home toward closest enemy player
+                auto& net2 = NetworkManager::instance();
+                NetPlayer* tp = net2.findPlayer(bestPlayerId);
+                launchDir = tp ? (tp->targetPos - toFire->pos).normalized() : aimDir;
+                toFire->homingPlayerId = bestPlayerId;
+                toFire->homingStr = 3.5f;
+            } else if (bestIdx >= 0) {
+                // Launch toward that AI enemy
                 launchDir = (enemies_[bestIdx].pos - toFire->pos).normalized();
                 toFire->homingTarget = bestIdx;
                 toFire->homingStr = 3.5f; // homing strength (rad/s turn rate)
             } else {
                 // Raycast: launch in aim direction
                 launchDir = aimDir;
-                toFire->homingTarget = -1;
-                toFire->homingStr = 0;
             }
             toFire->activate(launchDir);
             // ── Sync bomb launch to other players ──
@@ -2362,8 +2394,10 @@ void Game::updatePlayer(float dt) {
 void Player::takeDamage(int dmg) {
     if (invulnerable || dead) return;
     hp -= dmg;
-    invulnerable = true;
-    invulnTimer = invulnDuration;
+    if (invulnDuration > 0.0f) {
+        invulnerable = true;
+        invulnTimer  = invulnDuration;
+    }
     if (hp <= 0) die();
 }
 
@@ -2847,7 +2881,7 @@ void Game::updateBombs(float dt) {
         }
 
         if (b.hasDashed) {
-            // Homing toward target enemy if alive
+            // Homing toward target AI enemy if alive
             if (b.homingTarget >= 0 && b.homingTarget < (int)enemies_.size()) {
                 auto& target = enemies_[b.homingTarget];
                 if (target.alive) {
@@ -2871,6 +2905,32 @@ void Game::updateBombs(float dt) {
                     }
                 } else {
                     b.homingTarget = -1; // target died
+                }
+            }
+            // Homing toward a remote enemy player (PvP)
+            if (b.homingPlayerId != 255) {
+                auto& netH = NetworkManager::instance();
+                NetPlayer* tp = netH.findPlayer(b.homingPlayerId);
+                if (tp && tp->alive && !tp->spectating) {
+                    Vec2 toTarget = tp->targetPos - b.pos;
+                    float dist = toTarget.length();
+                    if (dist > 1.0f) {
+                        Vec2 desired = toTarget * (1.0f / dist);
+                        float speed = b.vel.length();
+                        if (speed > 1.0f) {
+                            Vec2 curDir = b.vel * (1.0f / speed);
+                            Vec2 newDir = {
+                                curDir.x + (desired.x - curDir.x) * b.homingStr * dt,
+                                curDir.y + (desired.y - curDir.y) * b.homingStr * dt
+                            };
+                            float nlen = newDir.length();
+                            if (nlen > 0.001f) {
+                                b.vel = newDir * (speed / nlen);
+                            }
+                        }
+                    }
+                } else {
+                    b.homingPlayerId = 255; // target gone
                 }
             }
 
@@ -2899,6 +2959,20 @@ void Game::updateBombs(float dt) {
                 for (auto& e : enemies_) {
                     if (!e.alive) continue;
                     if (Vec2::dist(b.pos, e.pos) < BOMB_SIZE + 20.0f) {
+                        spawnExplosion(b.pos);
+                        b.alive = false;
+                        break;
+                    }
+                }
+            }
+            // Proximity: explode on contact with any remote enemy player (PvP)
+            if (b.alive && (lobbySettings_.isPvp || currentRules_.pvpEnabled)) {
+                auto& netP = NetworkManager::instance();
+                uint8_t localId = netP.localPlayerId();
+                for (auto& rp : netP.players()) {
+                    if (rp.id == localId || !rp.alive || rp.spectating) continue;
+                    if (localTeam_ >= 0 && rp.team == localTeam_) continue;
+                    if (Vec2::dist(b.pos, rp.targetPos) < BOMB_SIZE + 20.0f) {
                         spawnExplosion(b.pos);
                         b.alive = false;
                         break;
@@ -2953,6 +3027,28 @@ void Game::updateExplosions(float dt) {
                     }
                 }
                 // Clients do not apply damage locally — they wait for PlayerHpSync from host
+            }
+            // In PvP, host also applies explosion damage to remote players
+            if ((lobbySettings_.isPvp || currentRules_.pvpEnabled)) {
+                auto& netEx2 = NetworkManager::instance();
+                if (netEx2.isHost()) {
+                    for (const auto& rp : netEx2.players()) {
+                        if (rp.id == netEx2.localPlayerId() || !rp.alive) continue;
+                        if (localTeam_ >= 0 && rp.team == localTeam_) continue;
+                        if (Vec2::dist(ex.pos, rp.pos) < ex.radius) {
+                            NetPlayer* rpM = netEx2.findPlayer(rp.id);
+                            if (!rpM) continue;
+                            rpM->hp -= (int)ex.damage;
+                            if (rpM->hp <= 0) {
+                                rpM->hp = 0;
+                                rpM->alive = false;
+                                netEx2.sendPlayerDied(rp.id, 255);
+                            } else {
+                                netEx2.sendPlayerHpSync(rp.id, rpM->hp, rpM->maxHp, 255);
+                            }
+                        }
+                    }
+                }
             }
             ex.dealtDmg = true;
         }
@@ -3353,6 +3449,24 @@ void Game::resolveCollisions() {
                 spawnExplosion(b.pos);
                 b.alive = false;
                 break;
+            }
+        }
+    }
+
+    // Bombs vs remote players (PvP, dashed bombs)
+    if (lobbySettings_.isPvp || currentRules_.pvpEnabled) {
+        auto& netBvP = NetworkManager::instance();
+        uint8_t localId = netBvP.localPlayerId();
+        for (auto& b : bombs_) {
+            if (!b.alive || !b.hasDashed) continue;
+            for (const auto& rp : netBvP.players()) {
+                if (rp.id == localId || !rp.alive || rp.spectating) continue;
+                if (localTeam_ >= 0 && rp.team == localTeam_) continue;
+                if (circleOverlap(b.pos, BOMB_SIZE, rp.targetPos, 18.0f)) {
+                    spawnExplosion(b.pos);
+                    b.alive = false;
+                    break;
+                }
             }
         }
     }
@@ -6995,9 +7109,9 @@ void Game::setupNetworkCallbacks() {
                 startGame();                // generates map, resets player & camera
             }
         }
-        // PvP: near-zero damage cooldown so rapid shots register
+        // PvP: no damage cooldown so rapid hits always register
         // Set AFTER startGame/startCustomMapMultiplayer which reset the Player struct
-        player_.invulnDuration = lobbySettings_.isPvp ? 0.01f : PLAYER_INVULN_TIME;
+        player_.invulnDuration = lobbySettings_.isPvp ? 0.0f : PLAYER_INVULN_TIME;
         state_ = GameState::MultiplayerGame;
         menuSelection_ = 0;
         respawnTimer_ = currentRules_.respawnTime;
@@ -7354,7 +7468,7 @@ void Game::startMultiplayerGame() {
 
             // Load custom map for host
             startCustomMapMultiplayer(customMapFile);
-            if (lobbySettings_.isPvp) player_.invulnDuration = 0.01f;
+            if (lobbySettings_.isPvp) player_.invulnDuration = 0.0f;
             state_ = GameState::MultiplayerGame;
             net.startGame(0, map_.width, map_.height, customMapData);
             respawnTimer_ = currentRules_.respawnTime;
@@ -7370,7 +7484,7 @@ void Game::startMultiplayerGame() {
 
     // Start the game — use generated map
     startGame();
-    if (lobbySettings_.isPvp) player_.invulnDuration = 0.01f;
+    if (lobbySettings_.isPvp) player_.invulnDuration = 0.0f;
     state_ = GameState::MultiplayerGame;
     net.startGame(mapSeed, config_.mapWidth, config_.mapHeight);
     respawnTimer_ = currentRules_.respawnTime;
