@@ -277,6 +277,9 @@ void Game::loadAssets() {
 void Game::startGame() {
     state_ = GameState::Playing;
     gameTime_ = 0;
+    // Reset lobby flags that would suppress wave spawning if carried over from a
+    // previous multiplayer PvP session
+    lobbySettings_.isPvp = false;
     // Wave spawning state
     waveNumber_ = 0;
     waveEnemiesLeft_ = 0;
@@ -4834,9 +4837,16 @@ void Game::renderMainMenu() {
     // Title
     drawTextCentered("COLD START", SCREEN_H / 8, 52, cyan);
 
+    // Version tag — shown under the title
+    {
+        char verBuf[32];
+        snprintf(verBuf, sizeof(verBuf), "v%s", GAME_VERSION);
+        drawTextCentered(verBuf, SCREEN_H / 8 + 58, 14, {0, 180, 160, 220});
+    }
+
     // Subtitle line
     SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 80);
-    SDL_Rect titleLine = {SCREEN_W / 2 - 120, SCREEN_H / 8 + 60, 240, 1};
+    SDL_Rect titleLine = {SCREEN_W / 2 - 120, SCREEN_H / 8 + 76, 240, 1};
     SDL_RenderFillRect(renderer_, &titleLine);
 
     // Menu items grouped visually
@@ -4892,14 +4902,6 @@ void Game::renderMainMenu() {
         char charStr[128];
         snprintf(charStr, sizeof(charStr), "Character: %s", availableChars_[selectedChar_].name.c_str());
         drawTextCentered(charStr, SCREEN_H - 72, 14, dimCyan);
-    }
-
-    // Version tag (bottom-right corner)
-    {
-        char verBuf[32];
-        snprintf(verBuf, sizeof(verBuf), "v%s", GAME_VERSION);
-        int vw = (int)(strlen(verBuf) * 8);
-        drawText(verBuf, SCREEN_W - vw - 12, SCREEN_H - 22, 12, {60, 80, 70, 200});
     }
 
     // Bottom hint
