@@ -11,6 +11,8 @@ COLD START is a top-down action shooter built in C++ with SDL2 for PC and Ninten
 - In-game map editor and built-in pixel-art texture editor
 - Mod loading with support for maps, packs, characters, items, gamemodes, sprite overrides, sound overrides, and synced multiplayer mod payloads
 
+### Some things do not work, im actively working on this :)
+
 ## Screenshots
 
 
