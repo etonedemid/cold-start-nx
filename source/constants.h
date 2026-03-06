@@ -3,7 +3,7 @@
 #include "vec2.h"
 
 // ── Version ──
-constexpr const char* GAME_VERSION = "0.5.8";
+constexpr const char* GAME_VERSION = "0.5.9";
 
 // Screen
 constexpr int SCREEN_W = 1280;
