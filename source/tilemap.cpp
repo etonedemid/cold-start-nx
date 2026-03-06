@@ -5,6 +5,11 @@
 #include <cstring>
 #include <cmath>
 
+// Use portable PRNG for all map generation (mapRand / mapSrand from tilemap.h)
+// so that the same seed produces the same map on every platform.
+#define rand()  mapRand()
+#define srand(s) mapSrand(s)
+
 struct Room {
     int x, y, w, h;
     bool overlaps(const Room& o, int pad = 1) const {

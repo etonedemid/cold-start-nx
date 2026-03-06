@@ -12,10 +12,16 @@
 #include "mapformat.h"
 #include "charformat.h"
 #include "editor.h"
+#include "texeditor.h"
 #include "mappack.h"
+#include "pickup.h"
+#include "gamemode.h"
+#include "mod.h"
+#include "network.h"
 
 #include <SDL2/SDL.h>
 #include <vector>
+#include <string>
 
 enum class GameState {
     MainMenu,
@@ -38,6 +44,23 @@ enum class GameState {
     PackDead,
     PackLevelWin,    // Between levels in a pack
     PackComplete,    // All levels done
+    // ── Multiplayer ──
+    MultiplayerMenu, // Host/Join/Browse
+    HostSetup,       // Configuring game before hosting
+    JoinMenu,        // Enter IP to connect
+    Lobby,           // Pre-game lobby (host & clients)
+    MultiplayerGame, // Active multiplayer game
+    MultiplayerPaused,
+    MultiplayerDead, // Waiting to respawn
+    Scoreboard,      // Match results / scoreboard
+    TeamSelect,      // Team selection screen before team game starts
+    MultiplayerSpectator, // Player exhausted all lives — free-roam ghost, no respawn
+    // ── Map game mode select (before playing a custom map) ──
+    MapConfig,       // Choose Arena / Sandbox before starting a custom map
+    // ── Sprite editor ──
+    SpriteEditor,    // Pixel art / sprite editor
+    // ── Mod management ──
+    ModMenu,         // Enable/disable mods
 };
 
 struct GameConfig {
@@ -49,6 +72,8 @@ struct GameConfig {
     float enemySpeedScale = 1.0f;
     int musicVolume = 80;   // 0-128
     int sfxVolume   = 100;  // 0-128
+    std::string username = "Player"; // multiplayer display name
+    bool fullscreen = false;
 };
 
 enum class DecalType : uint8_t { Blood, Scorch };
@@ -71,6 +96,45 @@ struct BoxFragment {
     float age = 0;
     bool  alive = true;
     SDL_Color color;
+};
+
+// ── Mod-save dialog state ────────────────────────────────────────────────────
+struct ModSaveDialogState {
+    enum Phase  { Closed, ChooseMod, NameNewMod, ChooseCategory };
+    enum Asset  { AssetMap, AssetSprite, AssetCharacter };
+
+    Phase phase = Closed;
+    Asset asset = AssetMap;
+
+    // Snapshot of available mods shown at open time
+    std::vector<std::string> modIds;
+    std::vector<std::string> modNames;
+    int selIdx = 0;    // 0 = "＋ New Mod", 1+ = existing mods
+
+    // New-mod name input
+    std::string newModId;
+    bool        textEditing = false;
+    int         gpCharIdx   = 0;
+
+    // Sprite category selection (0=Ground Tile, 1=Wall Tile, 2=Ceiling Tile,
+    //                            3=Character Body, 4=Character Legs)
+    int catIdx = 0;
+    static constexpr int CAT_COUNT = 5;
+    static constexpr const char* CAT_NAMES[5] = {
+        "Ground Tile  (sprites/tiles/ground/)",
+        "Wall Tile    (sprites/tiles/walls/)",
+        "Ceiling Tile (sprites/tiles/ceiling/)",
+        "Character Body (sprites/characters/body/)",
+        "Character Legs (sprites/characters/legs/)"
+    };
+
+    // Results
+    bool        confirmed           = false;
+    std::string confirmedModFolder;  // e.g. "mods/mymod"
+    int         confirmedCat        = 0;
+
+    bool isOpen() const { return phase != Closed; }
+    void close()        { phase = Closed; confirmed = false; }
 };
 
 class Game {
@@ -114,6 +178,9 @@ private:
     std::vector<Entity> debris_;
     std::vector<BloodDecal> blood_;
     std::vector<BoxFragment> boxFragments_;
+    std::vector<PickupCrate> crates_;      // upgrade crates
+    std::vector<Pickup>      pickups_;     // floating pickups
+    PlayerUpgrades           upgrades_;    // active player upgrades
     Camera              camera_;
     TileMap             map_;
 
@@ -127,6 +194,9 @@ private:
 
     // ── Map Editor ──
     MapEditor editor_;
+
+    // ── Sprite / Texture Editor ──
+    TextureEditor texEditor_;
 
     // ── Custom map play ──
     CustomMap customMap_;
@@ -160,6 +230,10 @@ private:
     std::vector<std::string> mapFiles_;
     int mapSelectIdx_ = 0;
 
+    // ── Map pre-game config (mode selection) ──
+    int  mapConfigMode_  = 0;   // 0=Arena, 1=Sandbox
+    bool sandboxMode_    = false; // no enemies/crates when true
+
     // ── Map Pack system ──
     std::vector<MapPack> availablePacks_;
     int packSelectIdx_ = 0;
@@ -170,6 +244,12 @@ private:
     // ── Visual Polish ──
     float waveAnnounceTimer_ = 0;  // countdown for wave banner display
     int   waveAnnounceNum_   = 0;  // which wave to show
+
+    // Pickup name popup (reuses wave banner style)
+    float pickupPopupTimer_ = 0;
+    std::string pickupPopupName_;
+    std::string pickupPopupDesc_;
+    SDL_Color   pickupPopupColor_ = {255, 255, 255, 255};
     float muzzleFlashTimer_  = 0;  // bright flash near gun when firing
     Vec2  muzzleFlashPos_     = {0,0}; // world position of muzzle flash
     float screenFlashTimer_  = 0;  // brief white flash (e.g. explosion)
@@ -237,7 +317,8 @@ private:
     void enemyChase(Enemy& e, float dt);
     void enemyDash(Enemy& e, float dt);
     void enemyShoot(Enemy& e, float dt);
-    bool enemyCanSeePlayer(const Enemy& e) const;
+    bool enemyCanSeeAnyPlayer(Enemy& e);      // sets e.targetPlayerId, returns true if any player visible
+    Vec2 getEnemyTargetPos(const Enemy& e) const; // returns position of the enemy's current target
     Vec2 steerToward(Vec2 from, Vec2 to, float spd, float dt) const;
 
     // Combat
@@ -255,7 +336,10 @@ private:
     // Rendering helpers
     void renderSprite(SDL_Texture* tex, Vec2 worldPos, float angle, float scale = 1.0f);
     void renderSpriteEx(SDL_Texture* tex, Vec2 worldPos, float angle, float scale, SDL_Color tint);
+    void renderExplosionPixelated(const Explosion& ex);
     void renderMap();
+    void renderWallOverlay();
+    void renderDecals();
     void renderRoofOverlay();
     void renderShadingPass();
     void renderUI();
@@ -272,6 +356,7 @@ private:
 
     // ── New systems ──
     void startCustomMap(const std::string& path);
+    void startCustomMapMultiplayer(const std::string& path);
     void updateCustomMapGoal();
     void scanMapFiles();
     void scanCharacters();
@@ -279,10 +364,20 @@ private:
 
     // Additional menu renders
     void renderMapSelectMenu();
+    void renderMapConfigMenu();  // Arena / Sandbox mode select
     void renderCharSelectMenu();
     void renderCustomWinScreen();
     void renderCharCreator();
     void saveCharCreator();
+    void saveCharCreatorToMod(const std::string& modFolder);
+
+    // ── Mod-save overlay dialog ──
+    ModSaveDialogState modSaveDialog_;
+    bool charCreatorWantsModSave_ = false;
+    void openModSaveDialog(ModSaveDialogState::Asset asset);
+    void handleModSaveDialogEvent(const SDL_Event& e);
+    void renderModSaveDialog();
+    static std::string modBuildFolder(const std::string& modId, const std::string& displayName);
     void saveConfig();
     void loadConfig();
 
@@ -293,4 +388,143 @@ private:
     void renderPackComplete();
     void startPackLevel();
     void advancePackLevel();
+
+    // ── Pickup / Crate system ──
+    void updateCrates(float dt);
+    void updatePickups(float dt);
+    void spawnCrate(Vec2 pos);
+    void collectPickup(Pickup& p);
+    void applyUpgrade(UpgradeType type);
+    void renderCrates();
+    void renderPickups();
+    float crateSpawnTimer_  = 0;
+    float cratePopupTimer_  = 0;  // countdown for "SUPPLY DROP" popup
+
+    // ── Multiplayer ──
+    GameModeRules currentRules_;            // active gamemode rules
+    float netStateSendTimer_ = 0;           // rate-limit state sends
+    float enemySendTimer_    = 0;           // rate-limit enemy state sends (host only)
+    bool  enemyStatesNeedUpdate_ = false;   // send enemy states immediately on next frame (after kill)
+    uint32_t nextBulletNetId_ = 1;          // monotonically increasing bullet network ID
+    float respawnTimer_ = 0;                // countdown after death
+    float connectTimer_ = 0;                // connection attempt timeout
+    bool  suppressNetExplosion_ = false;    // prevent re-sending network-spawned explosions
+    bool  pvpDamageThisFrame_ = false;       // flag for PVP bullet-player collision
+    std::string joinAddress_ = "127.0.0.1"; // address to join
+    std::string connectStatus_;              // connection status message
+    bool        ipTyping_    = false;        // currently editing IP on gamepad
+    bool        usernameTyping_ = false;     // editing username in config
+    bool        mpUsernameTyping_ = false;   // editing username in host/join menus
+    int         usernameCharIdx_ = 0;        // palette index for username char picker
+    int         kbNavHeldButton_ = -1;       // D-pad button held during keyboard picker nav
+    Uint32      kbNavRepeatAt_   = 0;        // SDL_GetTicks target for next repeat step
+    int         ipCharIdx_   = 0;            // palette index for IP char picker
+    int  multiMenuSelection_ = 0;
+    int  lobbyMenuSelection_ = 0;
+    int  hostSetupSelection_ = 0;
+    int  joinMenuSelection_  = 0;             // 0=edit addr, 1=edit username, 2=connect, 3=back
+    int  gamemodeSelectIdx_ = 0;
+    int  hostMapSelectIdx_ = 0;              // map selection in host setup
+    int  hostMaxPlayers_ = 8;                   // configurable max players (2-16)
+    int  hostPort_ = 7777;                      // configurable host port
+    bool portTyping_  = false;                   // currently editing host port with keyboard
+    int  portCharIdx_ = 0;                       // palette index for host port char picker
+    std::string portStr_ = "7777";               // host port as editable string
+    int  joinPort_ = 7777;                       // port used when joining
+    bool joinPortTyping_ = false;                // currently editing join port with keyboard
+    int  joinPortCharIdx_ = 0;                   // palette index for join port char picker
+    std::string joinPortStr_ = "7777";           // join port as editable string
+    int  modMenuSelection_ = 0;
+    int  modMenuTab_       = 0;  // 0=Mods 1=Characters 2=Maps 3=Playlists
+    bool lobbyReady_ = false;
+
+    // ── Lobby settings (host-controlled) ──
+    LobbySettings lobbySettings_;           // synced from host to clients
+    int  lobbySettingsSel_   = 0;           // which settings row is selected (host)
+    int  lobbySettingsScroll_= 0;           // scroll offset for settings panel
+    int  lobbyGamemodeIdx_   = 0;           // index into GameModeRegistry for lobby
+    int  lobbyMapIdx_        = 0;           // 0=random, 1+=custom maps
+
+    // ── Team selection ──
+    int8_t localTeam_        = -1;          // local player's chosen team (-1=none)
+    int    teamSelectCursor_ = 0;           // cursor for team selection screen
+    bool   teamLocked_       = false;       // player locked in team choice
+
+    // ── Lives system ──
+    int    localLives_       = -1;          // -1=infinite, >=0=remaining lives (individual)
+    int    sharedLives_      = -1;          // -1=infinite, >=0=remaining (shared pool, host only)
+    bool   spectatorMode_    = false;       // ran out of lives, spectating as ghost
+
+    // ── Admin menu (host-only overlay during gameplay) ──
+    bool   adminMenuOpen_    = false;
+    int    adminMenuSel_     = 0;           // selected player index
+    int    adminMenuAction_  = 0;           // 0=kick, 1=respawn, 2=team-, 3=team+
+
+    // ── Multiplayer pause sub-state ──
+    int    pauseMenuSub_     = 0;           // 0=main list, 1=team-pick inline
+    int    pauseTeamCursor_  = 0;           // cursor when picking team from pause
+
+    // ── Saved servers ──
+    struct SavedServer {
+        std::string name;    // display name
+        std::string address; // IP address
+        int port = 7777;
+    };
+    std::vector<SavedServer> savedServers_;
+    int serverListSelection_ = 0;
+    bool serverNameEditing_ = false;
+    std::string serverNameBuf_;
+    int serverNameCharIdx_ = 0;
+
+    // ── Server config presets ──
+    struct ServerPreset {
+        std::string name;
+        std::string gamemodeId;
+        int maxPlayers = 8;
+        int hostPort = 7777;
+        int mapIndex = 0;  // 0 = generated
+    };
+    std::vector<ServerPreset> serverPresets_;
+    int presetSelection_ = 0;
+
+    void initMultiplayer();
+    void shutdownMultiplayer();
+    void updateMultiplayer(float dt);
+    void renderMultiplayerMenu();
+    void renderHostSetup();
+    void renderJoinMenu();
+    void renderLobby();
+    void renderMultiplayerGame();
+    void renderMultiplayerHUD();
+    void renderMultiplayerPause();
+    void renderMultiplayerDeath();
+    void renderScoreboard();
+    void renderTeamSelect();
+    void renderAdminMenu();
+    void renderModMenu();
+    void renderRemotePlayers();
+    void setupNetworkCallbacks();
+    void hostGame();
+    void joinGame();
+    void startMultiplayerGame();  // host only
+
+    // Saved servers
+    void loadSavedServers();
+    void saveSavedServers();
+    void addSavedServer(const std::string& name, const std::string& addr, int port);
+    void removeSavedServer(int idx);
+
+    // Server config presets
+    void loadServerPresets();
+    void saveServerPresets();
+    void addServerPreset(const std::string& name, const std::string& gamemodeId, int maxPlayers, int port, int mapIdx);
+    void removeServerPreset(int idx);
+    void applyServerPreset(int idx);
+
+    // ── IP utility ──
+    std::string getLocalIP();
+
+    // ── Mod system ──
+    void initMods();
+    void applyModOverrides();
 };
