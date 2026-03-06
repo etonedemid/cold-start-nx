@@ -24,6 +24,10 @@ struct Enemy {
     float lastSeenTime = -999;
     bool  canSeePlayer = false;
 
+    // Target tracking (multiplayer)
+    uint8_t targetPlayerId = 255;   // 255 = unset, will pick first seen / closest
+    float   idleTimer      = 0;     // time spent wandering; after 30s retarget to nearest player
+
     // Wander
     Vec2  wanderTarget;
     float nextWanderTime = 0;
@@ -46,4 +50,9 @@ struct Enemy {
 
     // Sprite color tint for damage
     float damageFlash  = 0;
+
+    // Client-side interpolation
+    Vec2  netTargetPos;             // server-authoritative position; client lerps toward this
+    bool  netIsDashing    = false;  // replicated from host for trail rendering
+    bool  netDashCharging = false;  // replicated from host for charge flash
 };
