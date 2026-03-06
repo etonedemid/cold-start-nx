@@ -14,8 +14,9 @@ struct Player {
 
     int   hp         = PLAYER_MAX_HP;
     int   maxHp      = PLAYER_MAX_HP;
-    bool  invulnerable = false;
-    float invulnTimer  = 0;
+    bool  invulnerable  = false;
+    float invulnTimer   = 0;
+    float invulnDuration = PLAYER_INVULN_TIME; // settable per-gamemode (PvP: 0.01f)
 
     // Gun
     int   ammo       = GUN_MAX_AMMO;
