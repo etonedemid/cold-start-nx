@@ -57,8 +57,10 @@ enum class NetPacketType : uint8_t {
     BulletHit       = 0x23,
     BombSpawn       = 0x24,
     ExplosionSpawn  = 0x25,
+    BombOrbit       = 0x29,  // notify others that local player has an orbiting bomb
     CrateSpawn      = 0x26,
     PickupCollect   = 0x27,
+    EnemyBulletSpawn = 0x28, // host-authoritative enemy bullet spawn
 
     // Game events (reliable)
     PlayerDied      = 0x30,
@@ -181,7 +183,7 @@ public:
     bool host(uint16_t port = 7777, int maxClients = 7);
 
     // Join a game
-    bool join(const std::string& address, uint16_t port = 7777);
+    bool join(const std::string& address, uint16_t port = 7777, const std::string& password = "");
 
     // Disconnect / close
     void disconnect();
@@ -207,6 +209,7 @@ public:
     int playerCount() const { return (int)players_.size(); }
     void setUsername(const std::string& name) { username_ = name; }
     const std::string& username() const { return username_; }
+    void setHostPassword(const std::string& pw) { hostPassword_ = pw; }
 
     // Lobby
     const LobbyInfo& lobbyInfo() const { return lobby_; }
@@ -224,10 +227,12 @@ public:
     void sendBulletSpawn(Vec2 pos, float angle, uint8_t playerId, uint32_t netId = 0);
     void sendBulletHit(uint32_t bulletNetId);
     void sendBombSpawn(Vec2 pos, Vec2 vel, uint8_t playerId);
-    void sendExplosion(Vec2 pos);
+    void sendBombOrbit(uint8_t ownerId);            // broadcast "I have an orbiting bomb"
+    void sendExplosion(Vec2 pos, uint8_t ownerId = 255);
     void sendEnemyStates(const void* enemyData, int count);   // host only
     void sendCrateSpawn(Vec2 pos, uint8_t upgradeType);       // host only
     void sendPickupCollect(Vec2 pos, uint8_t upgradeType, uint8_t playerId);
+    void sendEnemyBulletSpawn(Vec2 pos, Vec2 dir);            // host only
     void sendPlayerDied(uint8_t playerId, uint8_t killerId);
     void sendPlayerRespawn(uint8_t playerId, Vec2 pos);
     void sendEnemyKilled(uint32_t enemyIdx, uint8_t killerId);
@@ -246,7 +251,7 @@ public:
     void sendAdminRespawn(uint8_t targetId);  // host only
     void sendAdminTeamMove(uint8_t targetId, int8_t newTeam); // host only
     void sendLivesUpdate(uint8_t playerId, int lives); // host only
-    void sendGameEnd();  // host only — ends game and returns all players to lobby
+    void sendGameEnd(uint8_t reason = 0);  // host only — ends game; reason: 0=HostEnded,1=WavesCleared,2=TeamWiped,3=LastAlive,4=TimeUp
 
     // File sync
     void requestFile(const std::string& filename, uint8_t fromPeer = 0);
@@ -255,16 +260,19 @@ public:
     float syncProgress() const;  // 0..1
 
     // Event callbacks (game.cpp hooks into these)
+    std::function<void(uint8_t reason)> onGameEnded; // reason byte same as sendGameEnd
     std::function<void(uint8_t id, const std::string& name)> onPlayerJoined;
     std::function<void(uint8_t id)> onPlayerLeft;
     std::function<void(const NetPlayer& state)> onPlayerStateReceived;
     std::function<void(Vec2 pos, float angle, uint8_t playerId, uint32_t netId)> onBulletSpawned;
     std::function<void(uint32_t netId)> onBulletRemoved;
     std::function<void(Vec2 pos, Vec2 vel, uint8_t playerId)> onBombSpawned;
-    std::function<void(Vec2 pos)> onExplosionSpawned;
+    std::function<void(uint8_t ownerId)> onBombOrbit;
+    std::function<void(Vec2 pos, uint8_t ownerId)> onExplosionSpawned;
     std::function<void(Vec2 pos, uint8_t upgradeType)> onCrateSpawned;
     std::function<void(Vec2 pos, uint8_t upgradeType, uint8_t playerId)> onPickupCollected;
     std::function<void(const void* data, int count)> onEnemyStatesReceived;
+    std::function<void(Vec2 pos, Vec2 dir)> onEnemyBulletSpawned;
     std::function<void(uint32_t enemyIdx, uint8_t killerId)> onEnemyKilled;
     std::function<void(const LobbySettings& settings)> onConfigSyncReceived;
     std::function<void(uint8_t playerId, int8_t team)> onTeamAssigned;
@@ -282,7 +290,7 @@ public:
     std::function<void(int waveNum)> onWaveStarted;
     std::function<void(const std::string& sender, const std::string& text)> onChatMessage;
     std::function<void(uint32_t mapSeed, int mapW, int mapH, const std::vector<uint8_t>& customMapData)> onGameStarted;
-    std::function<void()> onGameEnded;
+    // (onGameEnded declared above — intentional duplicate removed)
     std::function<void(const std::vector<uint8_t>& modData)> onModSyncReceived;
     std::function<void(const std::string& filename)> onFileSyncComplete;
     std::function<void()> onAllSyncsComplete;
@@ -298,6 +306,8 @@ private:
     uint8_t     localId_ = 0;
     uint8_t     nextPlayerId_ = 1;
     uint32_t    tick_ = 0;
+    std::string hostPassword_;          // password required to join (host side, empty=open)
+    std::string pendingJoinPassword_;   // password to send in Connect packet (client side)
 
     // Players
     std::vector<NetPlayer> players_;
