@@ -80,6 +80,7 @@ struct LobbySettings {
 
     // PVP-specific
     float crateInterval          = 25.0f;   // seconds between crate spawns in PVP
+    float pvpMatchDuration       = 0.0f;    // 0 = unlimited (last alive wins), >0 = timer in seconds
 
     // PVE-specific
     int   waveCount              = 0;       // 0 = infinite waves, >0 = victory after clearing N waves

@@ -8,6 +8,15 @@
 #include <SDL2/SDL_image.h>
 #include <string>
 #include <vector>
+#include <deque>
+
+// ── Undo/redo snapshot (full map state) ──
+struct UndoState {
+    std::vector<uint8_t>  tiles;
+    std::vector<uint8_t>  ceiling;
+    std::vector<MapTrigger>  triggers;
+    std::vector<EnemySpawn>  enemySpawns;
+};
 
 // ── Editor tile palette entry (loaded from tiles/ subfolders) ──
 struct EditorTile {
@@ -25,6 +34,7 @@ enum class EditorTool : uint8_t {
     Entity   = 2,  // place entities (enemies, crates)
     Erase    = 3,  // remove
     Select   = 4,  // select & configure
+    Rect     = 5,  // fill / outline rectangle
 };
 
 // ── Entity spawn subtypes (used in EnemySpawn::enemyType) ──
@@ -112,6 +122,12 @@ public:
     std::string pendingMapName() const { return map_.name; }
     void performModSave(const std::string& modFolder);
 
+    // Direct save (to existing path, no dialog)
+    bool hasExplicitSavePath() const { return hasExplicitSavePath_; }
+
+    // Fill out[0..7] with the palette textures for TILE_CUSTOM_0..7 (for test play)
+    void getCustomTileTextures(SDL_Texture** out) const;
+
 private:
     bool active_ = false;
     SDL_Renderer* renderer_ = nullptr;
@@ -129,12 +145,14 @@ private:
     std::string saveMessage_;
     float saveMessageTimer_ = 0;
     bool  wantsModSave_ = false;
+    bool  hasExplicitSavePath_ = false;  // true after first save or load from specific path
 
     // Palette
     std::vector<EditorTile> palette_;
     int paletteScroll_ = 0;
     int selectedPalette_ = 0;
     std::vector<int> paletteItemY_;  // cached Y positions for click detection
+    SDL_Texture* tileTextures_[256] = {};  // canonical texture per TileType for map rendering
 
     // Tools
     EditorTool currentTool_ = EditorTool::Tile;
@@ -148,7 +166,7 @@ private:
 
     // Zoom
     float zoom_ = 1.0f;
-    static constexpr float ZOOM_MIN = 0.25f;
+    static constexpr float ZOOM_MIN = 0.05f;
     static constexpr float ZOOM_MAX = 4.0f;
 
     // Trigger/enemy selection & resize
@@ -162,6 +180,18 @@ private:
 
     // Test play
     bool wantsTestPlay_ = false;
+
+    // Undo / Redo
+    static constexpr int UNDO_MAX = 64;
+    std::deque<UndoState> undoStack_;
+    std::deque<UndoState> redoStack_;
+    bool undoPushedForStroke_ = false;
+
+    // Brush
+    int  brushSize_   = 1;     // 1..9, tiles painted per side
+    bool rectFilled_  = true;  // Rect tool: filled vs outline
+    int  rectStartTX_ = -1;   // Rect start tile X
+    int  rectStartTY_ = -1;   // Rect start tile Y
 
     // Input state
     bool mouseDown_  = false;
@@ -197,7 +227,11 @@ private:
     int   worldToScreenY(float wy) const { return (int)((wy - camera_.pos.y) * zoom_) + uiToolbarH(); }
 
     // Methods
+    void pushUndo();
+    void undo();
+    void redo();
     void loadPalette();
+    void buildTileTextureLookup();
     void scanTileFolder(const std::string& folder, const std::string& category, uint8_t defaultType);
     void paintTile(int tx, int ty);
     void eraseTile(int tx, int ty);

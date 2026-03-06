@@ -1,5 +1,6 @@
 // ─── editor.cpp ─── Map Editor implementation ───────────────────────────────
 #include "editor.h"
+#include "mod.h"
 #include <cstdio>
 #include <cstring>
 #include <cmath>
@@ -34,6 +35,69 @@ void MapEditor::shutdown() {
     palette_.clear();
 }
 
+// Fill out[0..7] with palette textures for TILE_CUSTOM_0..7 (used by test play).
+void MapEditor::getCustomTileTextures(SDL_Texture** out) const {
+    for (int i = 0; i < 8; i++) out[i] = nullptr;
+    for (auto& pt : palette_) {
+        int cs = (int)pt.tileType - (int)TILE_CUSTOM_0;
+        if (cs >= 0 && cs < 8 && !out[cs])
+            out[cs] = pt.texture;
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Undo / Redo
+// ═════════════════════════════════════════════════════════════════════════════
+
+void MapEditor::pushUndo() {
+    UndoState s;
+    s.tiles       = map_.tiles;
+    s.ceiling     = map_.ceiling;
+    s.triggers    = map_.triggers;
+    s.enemySpawns = map_.enemySpawns;
+    undoStack_.push_back(std::move(s));
+    if ((int)undoStack_.size() > UNDO_MAX) undoStack_.pop_front();
+    redoStack_.clear();   // new action invalidates redo history
+}
+
+void MapEditor::undo() {
+    if (undoStack_.empty()) return;
+    UndoState cur;
+    cur.tiles       = map_.tiles;
+    cur.ceiling     = map_.ceiling;
+    cur.triggers    = map_.triggers;
+    cur.enemySpawns = map_.enemySpawns;
+    redoStack_.push_back(std::move(cur));
+    if ((int)redoStack_.size() > UNDO_MAX) redoStack_.pop_front();
+    auto& s = undoStack_.back();
+    map_.tiles       = s.tiles;
+    map_.ceiling     = s.ceiling;
+    map_.triggers    = s.triggers;
+    map_.enemySpawns = s.enemySpawns;
+    undoStack_.pop_back();
+    selectedTrigger_ = -1;
+    selectedEnemy_   = -1;
+}
+
+void MapEditor::redo() {
+    if (redoStack_.empty()) return;
+    UndoState cur;
+    cur.tiles       = map_.tiles;
+    cur.ceiling     = map_.ceiling;
+    cur.triggers    = map_.triggers;
+    cur.enemySpawns = map_.enemySpawns;
+    undoStack_.push_back(std::move(cur));
+    if ((int)undoStack_.size() > UNDO_MAX) undoStack_.pop_front();
+    auto& s = redoStack_.back();
+    map_.tiles       = s.tiles;
+    map_.ceiling     = s.ceiling;
+    map_.triggers    = s.triggers;
+    map_.enemySpawns = s.enemySpawns;
+    redoStack_.pop_back();
+    selectedTrigger_ = -1;
+    selectedEnemy_   = -1;
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 //  Palette loading
 // ═════════════════════════════════════════════════════════════════════════════
@@ -41,7 +105,7 @@ void MapEditor::shutdown() {
 void MapEditor::loadPalette() {
     palette_.clear();
 
-    // Scan all sprite/tile directories for PNG files
+    // Scan structured tile directories for PNG files
     // Each subfolder maps to a category and default tile type
     struct FolderDef { const char* path; const char* category; uint8_t defaultType; };
     FolderDef folders[] = {
@@ -50,19 +114,16 @@ void MapEditor::loadPalette() {
         {"tiles/walls",   "walls",   TILE_WALL},
         {"tiles/ceiling", "ceiling", TILE_GLASS},
         {"tiles/props",   "props",   TILE_DESK},
-        // RomFS tile folders (Switch)
+        // RomFS tile folders (PC build)
         {"romfs/tiles/ground",  "ground",  TILE_GRASS},
         {"romfs/tiles/walls",   "walls",   TILE_WALL},
         {"romfs/tiles/ceiling", "ceiling", TILE_GLASS},
         {"romfs/tiles/props",   "props",   TILE_DESK},
-        // RomFS sprites/tiles (flat folder — auto-categorize)
-        {"romfs/sprites/tiles", "ground",  TILE_GRASS},
         // Switch romfs: paths
         {"romfs:/tiles/ground",  "ground",  TILE_GRASS},
         {"romfs:/tiles/walls",   "walls",   TILE_WALL},
         {"romfs:/tiles/ceiling", "ceiling", TILE_GLASS},
         {"romfs:/tiles/props",   "props",   TILE_DESK},
-        {"romfs:/sprites/tiles", "ground",  TILE_GRASS},
     };
 
     for (auto& fd : folders) {
@@ -72,9 +133,9 @@ void MapEditor::loadPalette() {
     // Also try to pick up tiles from the Assets system (already-loaded sprites)
     auto& a = Assets::instance();
     auto tryAdd = [&](const char* name, const char* spritePath, uint8_t type, const char* cat) {
-        // Only add if not already in palette
+        // Only add if not already in palette (match by name globally)
         for (auto& pt : palette_) {
-            if (pt.name == name && pt.category == cat) return;
+            if (pt.name == name) return;
         }
         SDL_Texture* t = a.tex(spritePath);
         if (!t) return;
@@ -87,34 +148,62 @@ void MapEditor::loadPalette() {
         palette_.push_back(et);
     };
 
-    // Ensure a basic set of tiles is always available even if folders are empty
+    // Ensure basic tiles exist even if folders are empty
     tryAdd("Grass",    "sprites/tiles/grass.png",    TILE_GRASS,  "ground");
     tryAdd("Floor",    "sprites/tiles/floor.png",    TILE_FLOOR,  "ground");
     tryAdd("Gravel",   "sprites/tiles/gravel.png",   TILE_GRAVEL, "ground");
+    tryAdd("Wood",     "sprites/tiles/wood.png",     TILE_WOOD,   "ground");
+    tryAdd("Sand",     "sprites/tiles/sand.png",     TILE_SAND,   "ground");
     tryAdd("Wall",     "sprites/tiles/floor.png",    TILE_WALL,   "walls");
-    tryAdd("Glass",    "sprites/tiles/glasstile.png", TILE_GLASS,  "walls");
+    tryAdd("Glass",    "sprites/tiles/glasstile.png", TILE_GLASS, "ceiling");
+    tryAdd("Desk",     "sprites/tiles/desk.png",     TILE_DESK,   "props");
     tryAdd("Box",      "sprites/props/box.png",      TILE_BOX,    "props");
 
+    buildTileTextureLookup();
     rebuildFilteredPalette();
     printf("Editor palette: %d tiles loaded\n", (int)palette_.size());
+}
+
+// Build a canonical tileType → texture map for rendering.
+// Priority: first entry per type wins (structured folders are scanned first).
+void MapEditor::buildTileTextureLookup() {
+    memset(tileTextures_, 0, sizeof(tileTextures_));
+    for (auto& pt : palette_) {
+        if (pt.texture && !tileTextures_[pt.tileType]) {
+            tileTextures_[pt.tileType] = pt.texture;
+        }
+    }
 }
 
 void MapEditor::scanTileFolder(const std::string& folder, const std::string& category, uint8_t defaultType) {
     DIR* dir = opendir(folder.c_str());
     if (!dir) return;
 
-    // Filename stem → tile type lookup (works across all folder scans)
+    // Filename stem → tile type lookup
     auto tileTypeFromStem = [](const std::string& s) -> uint8_t {
         if (s == "floor")                           return TILE_FLOOR;
         if (s == "grass")                           return TILE_GRASS;
-        if (s.substr(0,6) == "gravel")              return TILE_GRAVEL;
+        if (s == "gravel")                          return TILE_GRAVEL;
         if (s == "wood")                            return TILE_WOOD;
         if (s == "sand")                            return TILE_SAND;
         if (s == "wall")                            return TILE_WALL;
         if (s == "glass" || s == "glasstile")       return TILE_GLASS;
         if (s == "desk")                            return TILE_DESK;
         if (s == "box")                             return TILE_BOX;
-        return 0xFF; // unknown — use defaultType
+        return 0xFF; // unknown
+    };
+
+    // Color tiles that should each get their own unique TILE_CUSTOM slot
+    auto isColorTile = [](const std::string& s) -> bool {
+        return s == "blue" || s == "red" || s == "green" || s == "white" ||
+               s == "yellow" || s == "orange" || s == "purple" || s == "cyan" || s == "pink";
+    };
+
+    // Skip transition sprites and internal rendering assets
+    auto shouldSkip = [](const std::string& s) -> bool {
+        // gravel-grass transition variants — not user-placeable tiles
+        if (s.size() >= 12 && s.substr(0, 12) == "gravel-grass") return true;
+        return false;
     };
 
     struct dirent* entry;
@@ -124,15 +213,19 @@ void MapEditor::scanTileFolder(const std::string& folder, const std::string& cat
         std::string ext = fname.substr(fname.size() - 4);
         if (ext != ".png" && ext != ".PNG") continue;
 
-        std::string fullPath = folder + "/" + fname;
         std::string displayName = fname.substr(0, fname.size() - 4);
 
+        // Skip internal/transition sprites
+        if (shouldSkip(displayName)) continue;
+
+        // Deduplicate by name globally (regardless of category)
         bool exists = false;
         for (auto& pt : palette_) {
-            if (pt.name == displayName && pt.category == category) { exists = true; break; }
+            if (pt.name == displayName) { exists = true; break; }
         }
         if (exists) continue;
 
+        std::string fullPath = folder + "/" + fname;
         SDL_Surface* surf = IMG_Load(fullPath.c_str());
         if (!surf) continue;
         SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer_, surf);
@@ -143,9 +236,38 @@ void MapEditor::scanTileFolder(const std::string& folder, const std::string& cat
         et.name     = displayName;
         et.path     = fullPath;
         et.texture  = tex;
-        uint8_t detectedType = tileTypeFromStem(displayName);
-        et.tileType = (detectedType != 0xFF) ? detectedType : defaultType;
         et.category = category;
+
+        uint8_t detectedType = tileTypeFromStem(displayName);
+        if (detectedType != 0xFF) {
+            // For "floor" in the walls folder, use the folder's default type
+            if (detectedType == TILE_FLOOR && defaultType == TILE_WALL)
+                et.tileType = TILE_WALL;
+            else
+                et.tileType = detectedType;
+        } else if (isColorTile(displayName)) {
+            // Color tiles each get their own TILE_CUSTOM slot
+            int customSlot = -1;
+            for (int cs = 0; cs < 8; cs++) {
+                bool used = false;
+                for (auto& existing : palette_) {
+                    if (existing.tileType == (uint8_t)(TILE_CUSTOM_0 + cs)) { used = true; break; }
+                }
+                if (!used) { customSlot = cs; break; }
+            }
+            et.tileType = (customSlot >= 0) ? (uint8_t)(TILE_CUSTOM_0 + customSlot) : defaultType;
+        } else {
+            // Truly unknown file — assign custom slot
+            int customSlot = -1;
+            for (int cs = 0; cs < 8; cs++) {
+                bool used = false;
+                for (auto& existing : palette_) {
+                    if (existing.tileType == (uint8_t)(TILE_CUSTOM_0 + cs)) { used = true; break; }
+                }
+                if (!used) { customSlot = cs; break; }
+            }
+            et.tileType = (customSlot >= 0) ? (uint8_t)(TILE_CUSTOM_0 + customSlot) : defaultType;
+        }
         palette_.push_back(et);
     }
     closedir(dir);
@@ -250,9 +372,27 @@ void MapEditor::newMap(int w, int h) {
     camera_.worldH = h * TILE_SIZE;
     selectedTrigger_ = -1;
     selectedEnemy_   = -1;
+    undoStack_.clear();
+    redoStack_.clear();
+    undoPushedForStroke_ = false;
+    hasExplicitSavePath_ = false;
+    savePath_ = "maps/editor_map.csm";
 }
 
 bool MapEditor::saveMap(const std::string& path) {
+    // Normalize custom tile paths: strip "romfs:/" or "romfs/" prefix so
+    // Assets::tex() can prepend the correct platform prefix at load time.
+    auto normPath = [](const std::string& p) -> std::string {
+        if (p.size() > 7 && p.substr(0, 7) == "romfs:/") return p.substr(7);
+        if (p.size() > 6 && p.substr(0, 6) == "romfs/") return p.substr(6);
+        return p;
+    };
+    // Record custom tile paths (for any TILE_CUSTOM_N types used from palette)
+    for (int i = 0; i < 8; i++) map_.customTilePaths[i] = "";
+    for (auto& pt : palette_) {
+        int cs = (int)pt.tileType - (int)TILE_CUSTOM_0;
+        if (cs >= 0 && cs < 8) map_.customTilePaths[cs] = normPath(pt.path);
+    }
     generateThumbnail();
     bool ok = map_.saveToFile(path);
     if (ok) {
@@ -276,6 +416,7 @@ void MapEditor::performModSave(const std::string& modFolder) {
     std::string mapsDir = modFolder + "/maps";
     mkdir(mapsDir.c_str(), 0755);
     savePath_ = mapsDir + "/" + safeName + ".csm";
+    hasExplicitSavePath_ = true;
     saveMap(savePath_);
 }
 
@@ -284,8 +425,13 @@ bool MapEditor::loadMap(const std::string& path) {
     camera_.pos = {0, 0};
     camera_.worldW = map_.width * TILE_SIZE;
     camera_.worldH = map_.height * TILE_SIZE;
+    savePath_ = path;
+    hasExplicitSavePath_ = true;
     selectedTrigger_ = -1;
     selectedEnemy_   = -1;
+    undoStack_.clear();
+    redoStack_.clear();
+    undoPushedForStroke_ = false;
     return true;
 }
 
@@ -372,17 +518,24 @@ void MapEditor::handleInput(SDL_Event& e) {
 
         // ── Toolbar click detection ──
         if (e.button.button == SDL_BUTTON_LEFT && showUI_ && mouseY_ < TOOLBAR_H) {
-            for (int i = 0; i < 5; i++) {
-                int bx = 10 + i * 110;
-                if (mouseX_ >= bx && mouseX_ < bx + 100 && mouseY_ >= 8 && mouseY_ < 40) {
+            for (int i = 0; i < 6; i++) {
+                int bx = 4 + i * 80;
+                if (mouseX_ >= bx && mouseX_ < bx + 76 && mouseY_ >= 4 && mouseY_ < TOOLBAR_H - 4) {
                     currentTool_ = (EditorTool)i;
                     selectedTrigger_ = -1;
-                    selectedEnemy_ = -1;
+                    selectedEnemy_   = -1;
+                    rectStartTX_ = -1; rectStartTY_ = -1;
                     break;
                 }
             }
-            // Test Play button (right side of toolbar)
-            if (mouseX_ >= screenW_ - 180 && mouseX_ < screenW_ - 80 && mouseY_ >= 8 && mouseY_ < 40) {
+            // Save button
+            int saveBx = screenW_ - PALETTE_W - 230;
+            if (mouseX_ >= saveBx && mouseX_ < saveBx + 106 && mouseY_ >= 6 && mouseY_ < TOOLBAR_H - 6) {
+                wantsModSave_ = true;
+            }
+            // Test Play button
+            int playBx = screenW_ - PALETTE_W - 118;
+            if (mouseX_ >= playBx && mouseX_ < playBx + 106 && mouseY_ >= 6 && mouseY_ < TOOLBAR_H - 6) {
                 wantsTestPlay_ = true;
             }
             mouseDown_ = false;  // consume click
@@ -414,6 +567,7 @@ void MapEditor::handleInput(SDL_Event& e) {
             if (selectedTrigger_ >= 0) {
                 int handle = triggerResizeHandle(wx, wy, selectedTrigger_);
                 if (handle >= 0) {
+                    pushUndo();
                     draggingResize_ = true;
                     resizeCorner_ = handle;
                     dragStartX_ = wx;
@@ -443,15 +597,45 @@ void MapEditor::handleInput(SDL_Event& e) {
                 mouseDown_ = false;
                 return;
             }
-            // Clicked nothing — deselect
-            selectedTrigger_ = -1;
-            selectedEnemy_ = -1;
+        }
+
+        // Rect tool: record start tile on mouse down
+        if (e.button.button == SDL_BUTTON_LEFT && currentTool_ == EditorTool::Rect &&
+            mouseX_ < screenW_ - uiPaletteW() && mouseY_ > uiToolbarH()) {
+            float wx2 = screenToWorldX(mouseX_);
+            float wy2 = screenToWorldY(mouseY_);
+            rectStartTX_ = (int)(wx2 / TILE_SIZE);
+            rectStartTY_ = (int)(wy2 / TILE_SIZE);
         }
     }
 
     if (e.type == SDL_MOUSEBUTTONUP) {
-        if (e.button.button == SDL_BUTTON_LEFT)  { mouseDown_ = false; draggingResize_ = false; }
-        if (e.button.button == SDL_BUTTON_RIGHT) rightDown_ = false;
+        if (e.button.button == SDL_BUTTON_LEFT) {
+            // Rect tool: fill the rectangle on mouse release
+            if (currentTool_ == EditorTool::Rect && rectStartTX_ >= 0 &&
+                e.button.x < screenW_ - uiPaletteW() && e.button.y > uiToolbarH()) {
+                float wx2 = screenToWorldX(e.button.x);
+                float wy2 = screenToWorldY(e.button.y);
+                int endTX = (int)(wx2 / TILE_SIZE);
+                int endTY = (int)(wy2 / TILE_SIZE);
+                int x0 = std::min(rectStartTX_, endTX), x1 = std::max(rectStartTX_, endTX);
+                int y0 = std::min(rectStartTY_, endTY), y1 = std::max(rectStartTY_, endTY);
+                pushUndo();
+                for (int ry = y0; ry <= y1; ry++) {
+                    for (int rx = x0; rx <= x1; rx++) {
+                        if (rectFilled_ || ry == y0 || ry == y1 || rx == x0 || rx == x1)
+                            paintTile(rx, ry);
+                    }
+                }
+            }
+            rectStartTX_ = -1; rectStartTY_ = -1;
+            mouseDown_ = false; draggingResize_ = false;
+            undoPushedForStroke_ = false;
+        }
+        if (e.button.button == SDL_BUTTON_RIGHT) {
+            rightDown_ = false;
+            undoPushedForStroke_ = false;
+        }
     }
 
     if (e.type == SDL_MOUSEMOTION) {
@@ -537,18 +721,31 @@ void MapEditor::handleInput(SDL_Event& e) {
 
             case SDLK_F5: wantsTestPlay_ = true; break;  // Test play
 
+            case SDLK_z:
+                if (SDL_GetModState() & KMOD_CTRL) {
+                    if (SDL_GetModState() & KMOD_SHIFT) redo();
+                    else undo();
+                }
+                break;
+            case SDLK_y:
+                if (SDL_GetModState() & KMOD_CTRL) redo();
+                break;
             case SDLK_DELETE:
-            case SDLK_BACKSPACE:
+            case SDLK_BACKSPACE: {
                 // Delete selected trigger/enemy
+                bool deleted = false;
                 if (selectedTrigger_ >= 0 && selectedTrigger_ < (int)map_.triggers.size()) {
+                    if (!deleted) { pushUndo(); deleted = true; }
                     map_.triggers.erase(map_.triggers.begin() + selectedTrigger_);
                     selectedTrigger_ = -1;
                 }
                 if (selectedEnemy_ >= 0 && selectedEnemy_ < (int)map_.enemySpawns.size()) {
+                    if (!deleted) { pushUndo(); deleted = true; }
                     map_.enemySpawns.erase(map_.enemySpawns.begin() + selectedEnemy_);
                     selectedEnemy_ = -1;
                 }
                 break;
+            }
 
             case SDLK_t:
                 if (currentTool_ == EditorTool::Trigger) {
@@ -582,6 +779,14 @@ void MapEditor::handleInput(SDL_Event& e) {
                     entitySpawnType_ = (entitySpawnType_ + 1) % ENTITY_TYPE_COUNT;
                 }
                 break;
+            case SDLK_LEFTBRACKET:  // [ decrease brush size
+                brushSize_--; if (brushSize_ < 1) brushSize_ = 1; break;
+            case SDLK_RIGHTBRACKET: // ] increase brush size
+                brushSize_++; if (brushSize_ > 9) brushSize_ = 9; break;
+            case SDLK_f:  // toggle rect fill mode
+                if (currentTool_ == EditorTool::Rect || currentTool_ == EditorTool::Tile)
+                    rectFilled_ = !rectFilled_;
+                break;
             case SDLK_s:
                 if (SDL_GetModState() & KMOD_CTRL) {
                     wantsModSave_ = true;
@@ -613,6 +818,9 @@ void MapEditor::update(float dt) {
     if (keys[SDL_SCANCODE_LEFT]  || (keys[SDL_SCANCODE_LSHIFT] && keys[SDL_SCANCODE_A])) camera_.pos.x -= panSpeed;
     if (keys[SDL_SCANCODE_RIGHT] || (keys[SDL_SCANCODE_LSHIFT] && keys[SDL_SCANCODE_D])) camera_.pos.x += panSpeed;
 
+    // Reset undo stroke flag when no buttons held
+    if (!mouseDown_ && !rightDown_) undoPushedForStroke_ = false;
+
     // Paint/erase on mouse hold (only in map area, not dragging resize)
     if (!draggingResize_ && mouseX_ < screenW_ - uiPaletteW() && mouseY_ > uiToolbarH()) {
         float wx = screenToWorldX(mouseX_);
@@ -622,19 +830,40 @@ void MapEditor::update(float dt) {
 
         if (mouseDown_) {
             switch (currentTool_) {
-                case EditorTool::Tile:    paintTile(tx, ty); break;
+                case EditorTool::Tile: {
+                    if (!undoPushedForStroke_) { pushUndo(); undoPushedForStroke_ = true; }
+                    int half = (brushSize_ - 1) / 2;
+                    for (int dy = -half; dy <= half; dy++)
+                        for (int dx = -half; dx <= half; dx++)
+                            paintTile(tx + dx, ty + dy);
+                    break;
+                }
                 case EditorTool::Erase: {
-                    eraseTile(tx, ty);
+                    if (!undoPushedForStroke_) { pushUndo(); undoPushedForStroke_ = true; }
+                    int half = (brushSize_ - 1) / 2;
+                    for (int dy = -half; dy <= half; dy++)
+                        for (int dx = -half; dx <= half; dx++)
+                            eraseTile(tx + dx, ty + dy);
                     eraseTriggerAt(wx, wy);
                     eraseEnemyAt(wx, wy);
                     break;
                 }
-                case EditorTool::Trigger: placeTrigger(wx, wy); mouseDown_ = false; break;
-                case EditorTool::Entity:  placeEnemy(wx, wy); mouseDown_ = false; break;
+                case EditorTool::Trigger:
+                    pushUndo();
+                    placeTrigger(wx, wy);
+                    mouseDown_ = false;
+                    break;
+                case EditorTool::Entity:
+                    pushUndo();
+                    placeEnemy(wx, wy);
+                    mouseDown_ = false;
+                    break;
+                case EditorTool::Rect:    /* paint on mouseUp */ break;
                 default: break;
             }
         }
         if (rightDown_) {
+            if (!undoPushedForStroke_) { pushUndo(); undoPushedForStroke_ = true; }
             // Right-click always erases (tiles + triggers + enemies)
             eraseTile(tx, ty);
             eraseTriggerAt(wx, wy);
@@ -647,7 +876,15 @@ void MapEditor::update(float dt) {
 void MapEditor::paintTile(int tx, int ty) {
     if (tx < 0 || ty < 0 || tx >= map_.width || ty >= map_.height) return;
     if (selectedPalette_ >= 0 && selectedPalette_ < (int)palette_.size()) {
-        map_.tiles[ty * map_.width + tx] = palette_[selectedPalette_].tileType;
+        auto& pt = palette_[selectedPalette_];
+        int idx = ty * map_.width + tx;
+        if (pt.category == "ceiling") {
+            // Ceiling tiles go into the ceiling layer — leave the floor tile unchanged
+            map_.ceiling[idx] = CEIL_GLASS;
+        } else {
+            // Floor / walls / props go into the tiles layer — leave ceiling layer unchanged
+            map_.tiles[idx] = pt.tileType;
+        }
     }
 }
 
@@ -735,10 +972,7 @@ void MapEditor::render(SDL_Renderer* renderer) {
             int sy = worldToScreenY((float)(y * TILE_SIZE));
             SDL_Rect dst = {sx, sy, (int)ceilf(ts), (int)ceilf(ts)};
 
-            SDL_Texture* tex = nullptr;
-            for (auto& pt : palette_) {
-                if (pt.tileType == tile && pt.texture) { tex = pt.texture; break; }
-            }
+            SDL_Texture* tex = tileTextures_[tile];
             if (tex) {
                 SDL_RenderCopy(renderer, tex, nullptr, &dst);
             } else {
@@ -780,20 +1014,48 @@ void MapEditor::render(SDL_Renderer* renderer) {
         int ty = (int)(wy / TILE_SIZE);
         int sx = worldToScreenX((float)(tx * TILE_SIZE));
         int sy = worldToScreenY((float)(ty * TILE_SIZE));
-        SDL_Rect cur = {sx, sy, (int)ceilf(ts), (int)ceilf(ts)};
+
+        // Brush-sized outline
+        int half = (brushSize_ - 1) / 2;
+        int bsx = worldToScreenX((float)((tx - half) * TILE_SIZE));
+        int bsy = worldToScreenY((float)((ty - half) * TILE_SIZE));
+        int bsizePx = (int)ceilf(ts * brushSize_);
+        SDL_Rect cur = {bsx, bsy, bsizePx, bsizePx};
 
         if (currentTool_ == EditorTool::Erase) {
             SDL_SetRenderDrawColor(renderer, 255, 60, 60, 140);
+            SDL_RenderDrawRect(renderer, &cur);
+        } else if (currentTool_ == EditorTool::Rect) {
+            // Draw rect preview while dragging
+            if (rectStartTX_ >= 0 && mouseDown_) {
+                int rx0 = std::min(rectStartTX_, tx), rx1 = std::max(rectStartTX_, tx);
+                int ry0 = std::min(rectStartTY_, ty), ry1 = std::max(rectStartTY_, ty);
+                int rsx = worldToScreenX((float)(rx0 * TILE_SIZE));
+                int rsy = worldToScreenY((float)(ry0 * TILE_SIZE));
+                int rpw = (int)ceilf((rx1 - rx0 + 1) * ts);
+                int rph = (int)ceilf((ry1 - ry0 + 1) * ts);
+                SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+                SDL_SetRenderDrawColor(renderer, 255, 200, 50, rectFilled_ ? 35 : 10);
+                SDL_Rect rFill = {rsx, rsy, rpw, rph};
+                SDL_RenderFillRect(renderer, &rFill);
+                SDL_SetRenderDrawColor(renderer, 255, 200, 50, 220);
+                SDL_RenderDrawRect(renderer, &rFill);
+            }
+            SDL_SetRenderDrawColor(renderer, 255, 200, 50, 140);
+            SDL_Rect singleCur = {sx, sy, (int)ceilf(ts), (int)ceilf(ts)};
+            SDL_RenderDrawRect(renderer, &singleCur);
         } else {
             SDL_SetRenderDrawColor(renderer, 255, 255, 255, 120);
+            SDL_RenderDrawRect(renderer, &cur);
         }
-        SDL_RenderDrawRect(renderer, &cur);
 
-        // Preview selected tile
-        if (currentTool_ == EditorTool::Tile && selectedPalette_ >= 0 &&
-            selectedPalette_ < (int)palette_.size() && palette_[selectedPalette_].texture) {
+        // Preview selected tile texture on hovered cell
+        SDL_Rect singleCur = {sx, sy, (int)ceilf(ts), (int)ceilf(ts)};
+        if ((currentTool_ == EditorTool::Tile || currentTool_ == EditorTool::Rect) &&
+            selectedPalette_ >= 0 && selectedPalette_ < (int)palette_.size() &&
+            palette_[selectedPalette_].texture) {
             SDL_SetTextureAlphaMod(palette_[selectedPalette_].texture, 120);
-            SDL_RenderCopy(renderer, palette_[selectedPalette_].texture, nullptr, &cur);
+            SDL_RenderCopy(renderer, palette_[selectedPalette_].texture, nullptr, &singleCur);
             SDL_SetTextureAlphaMod(palette_[selectedPalette_].texture, 255);
         }
     }
@@ -972,114 +1234,108 @@ void MapEditor::renderToolbar(SDL_Renderer* renderer) {
     SDL_SetRenderDrawColor(renderer, 12, 14, 24, 245);
     SDL_Rect bg = {0, 0, screenW_, TOOLBAR_H};
     SDL_RenderFillRect(renderer, &bg);
-    // Bottom border
     SDL_SetRenderDrawColor(renderer, 0, 120, 110, 60);
     SDL_RenderDrawLine(renderer, 0, TOOLBAR_H - 1, screenW_, TOOLBAR_H - 1);
 
-    // Tool buttons
-    const char* toolNames[] = {"Tile", "Trigger", "Entity", "Erase", "Select"};
-    const char* toolKeys[]  = {"1", "2", "3", "4", "5"};
+    // ── Tool buttons ──
+    const char* toolNames[] = {"Tile", "Trigger", "Entity", "Erase", "Select", "Rect"};
+    const char* toolKeys[]  = {"1", "2", "3", "4", "5", "6"};
     SDL_Color toolColors[] = {
-        {80, 200, 255, 255},   // Tile: blue
-        {255, 200, 50, 255},   // Trigger: yellow
-        {255, 80, 80, 255},    // Enemy: red
-        {200, 60, 60, 255},    // Erase: dark red
-        {100, 220, 200, 255},  // Select: teal
+        {80,  200, 255, 255},
+        {255, 200,  50, 255},
+        {255,  80,  80, 255},
+        {200,  60,  60, 255},
+        {100, 220, 200, 255},
+        {255, 160,  50, 255},
     };
 
-    for (int i = 0; i < 5; i++) {
-        int bx = 8 + i * 100;
-        SDL_Rect btn = {bx, 6, 90, 34};
+    int toolBtnW = 76;
+    int toolGap  = 4;
+    int toolStartX = 4;
+    for (int i = 0; i < 6; i++) {
+        int bx = toolStartX + i * (toolBtnW + toolGap);
+        SDL_Rect btn = {bx, 4, toolBtnW, TOOLBAR_H - 8};
         bool sel = ((int)currentTool_ == i);
 
         if (sel) {
-            SDL_SetRenderDrawColor(renderer, toolColors[i].r / 4, toolColors[i].g / 4, toolColors[i].b / 4, 200);
+            SDL_SetRenderDrawColor(renderer, toolColors[i].r / 5, toolColors[i].g / 5, toolColors[i].b / 5, 220);
             SDL_RenderFillRect(renderer, &btn);
-            SDL_SetRenderDrawColor(renderer, toolColors[i].r, toolColors[i].g, toolColors[i].b, 200);
+            SDL_SetRenderDrawColor(renderer, toolColors[i].r, toolColors[i].g, toolColors[i].b, 220);
             SDL_RenderDrawRect(renderer, &btn);
-            // Active indicator bar
-            SDL_Rect ind = {bx, TOOLBAR_H - 3, 90, 3};
+            SDL_Rect ind = {bx, TOOLBAR_H - 3, toolBtnW, 3};
             SDL_RenderFillRect(renderer, &ind);
         } else {
-            SDL_SetRenderDrawColor(renderer, 30, 32, 44, 200);
+            SDL_SetRenderDrawColor(renderer, 26, 28, 38, 200);
             SDL_RenderFillRect(renderer, &btn);
-            SDL_SetRenderDrawColor(renderer, 50, 52, 64, 180);
+            SDL_SetRenderDrawColor(renderer, 46, 48, 58, 180);
             SDL_RenderDrawRect(renderer, &btn);
         }
-
-        // Key badge
-        SDL_Color keyC = sel ? toolColors[i] : SDL_Color{80, 80, 90, 255};
-        drawEditorText(renderer, toolKeys[i], bx + 6, 10, 12, keyC);
-        // Label
-        SDL_Color labelC = sel ? SDL_Color{255, 255, 255, 255} : SDL_Color{160, 160, 170, 255};
-        drawEditorText(renderer, toolNames[i], bx + 20, 12, 14, labelC);
+        SDL_Color keyC   = sel ? toolColors[i] : SDL_Color{70, 70, 80, 255};
+        SDL_Color labelC = sel ? SDL_Color{255,255,255,255} : SDL_Color{140,140,150,255};
+        drawEditorText(renderer, toolKeys[i],  bx + 4, 8, 10, keyC);
+        drawEditorText(renderer, toolNames[i], bx + 14, 7, 13, labelC);
+        // Second row: tool-specific subtitle
+        if (sel) {
+            const char* sub = "";
+            char subBuf[32];
+            if (i == 0 || i == 3) { snprintf(subBuf, sizeof(subBuf), "Brush:%d", brushSize_); sub = subBuf; }
+            else if (i == 5) { sub = rectFilled_ ? "Filled" : "Outline"; }
+            else if (i == 1) {
+                static const char* ttNames[] = {"Start","End","Crate","Effect","SpnR","SpnB","SpnG","SpnY"};
+                static const TriggerType kVT[] = {
+                    TriggerType::LevelStart, TriggerType::LevelEnd, TriggerType::Crate, TriggerType::Effect,
+                    TriggerType::TeamSpawnRed, TriggerType::TeamSpawnBlue, TriggerType::TeamSpawnGreen, TriggerType::TeamSpawnYellow,
+                };
+                int idx = 0; for (int j = 0; j < 8; j++) { if (kVT[j] == triggerGhost_.type) { idx = j; break; } }
+                sub = ttNames[idx];
+            }
+            else if (i == 2) {
+                static const char* eNames[] = {"Melee","Shooter","Crate","Upgrade"};
+                sub = (entitySpawnType_ < ENTITY_TYPE_COUNT) ? eNames[entitySpawnType_] : "?";
+            }
+            if (sub[0]) drawEditorText(renderer, sub, bx + 4, 24, 10, {toolColors[i].r, toolColors[i].g, toolColors[i].b, 160});
+        }
     }
 
-    // Test Play button (right side)
+    // ── Center: map info + hint ──
+    int centerX = toolStartX + 6 * (toolBtnW + toolGap) + 12;
+    int rightEdge = screenW_ - PALETTE_W - 240;
+    if (centerX < rightEdge) {
+        char info[128];
+        snprintf(info, sizeof(info), "%s  %dx%d", map_.name.c_str(), map_.width, map_.height);
+        drawEditorText(renderer, info, centerX, 6, 12, {120, 120, 130, 255});
+        drawEditorText(renderer, "Scroll:zoom  MMB:pan  G:grid  TAB:ui  [/]:brush  F:rectfill", centerX, 24, 9, {60, 60, 70, 255});
+    }
+
+    // ── Save button ──
     {
-        int bx = screenW_ - 200;
-        SDL_Rect btn = {bx, 6, 110, 34};
-        SDL_SetRenderDrawColor(renderer, 20, 100, 40, 255);
+        int bx = screenW_ - PALETTE_W - 230;
+        SDL_Rect btn = {bx, 6, 106, TOOLBAR_H - 12};
+        SDL_SetRenderDrawColor(renderer, 10, 55, 35, 220);
+        SDL_RenderFillRect(renderer, &btn);
+        SDL_SetRenderDrawColor(renderer, 40, 170, 90, 200);
+        SDL_RenderDrawRect(renderer, &btn);
+        SDL_Rect ind = {bx, TOOLBAR_H - 3, 106, 3};
+        SDL_SetRenderDrawColor(renderer, 40, 190, 100, 255);
+        SDL_RenderFillRect(renderer, &ind);
+        drawEditorText(renderer, "Save", bx + 30, 8, 14, {160, 255, 180, 255});
+        drawEditorText(renderer, "Ctrl+S", bx + 24, 24, 9, {80, 140, 100, 200});
+    }
+
+    // ── Play button ──
+    {
+        int bx = screenW_ - PALETTE_W - 118;
+        SDL_Rect btn = {bx, 6, 106, TOOLBAR_H - 12};
+        SDL_SetRenderDrawColor(renderer, 20, 80, 40, 255);
         SDL_RenderFillRect(renderer, &btn);
         SDL_SetRenderDrawColor(renderer, 60, 200, 80, 200);
         SDL_RenderDrawRect(renderer, &btn);
-        // Green indicator
+        SDL_Rect ind = {bx, TOOLBAR_H - 3, 106, 3};
         SDL_SetRenderDrawColor(renderer, 50, 255, 100, 255);
-        SDL_Rect ind = {bx, TOOLBAR_H - 3, 110, 3};
         SDL_RenderFillRect(renderer, &ind);
-        drawEditorText(renderer, "\xe2\x96\xb6 F5 PLAY", bx + 12, 12, 14, {200, 255, 200, 255});
+        drawEditorText(renderer, "\xe2\x96\xb6 Play", bx + 22, 8, 14, {200, 255, 200, 255});
+        drawEditorText(renderer, "F5", bx + 42, 24, 9, {100, 180, 120, 200});
     }
-
-    // Save button
-    {
-        int bx = screenW_ - 310;
-        SDL_Rect btn = {bx, 6, 100, 34};
-        SDL_SetRenderDrawColor(renderer, 25, 28, 45, 220);
-        SDL_RenderFillRect(renderer, &btn);
-        SDL_SetRenderDrawColor(renderer, 50, 52, 64, 180);
-        SDL_RenderDrawRect(renderer, &btn);
-        drawEditorText(renderer, "Ctrl+S Save", bx + 8, 12, 12, {140, 140, 150, 255});
-    }
-
-    // Info: map name + dimensions (second row inside toolbar)
-    {
-        char info[128];
-        snprintf(info, sizeof(info), "%s  %dx%d", map_.name.c_str(), map_.width, map_.height);
-        drawEditorText(renderer, info, 520, 6, 12, {100, 100, 110, 255});
-    }
-
-    // Tool-specific hint (second line of toolbar area)
-    if (currentTool_ == EditorTool::Trigger) {
-        const char* typeNames[] = {
-            "Start", "End/Goal", "Crate", "Effect",
-            "SpawnRed", "SpawnBlue", "SpawnGreen", "SpawnYellow"
-        };
-        // Map TriggerType value to name index
-        int typeIdx = 0;
-        static const TriggerType kValidTypes2[] = {
-            TriggerType::LevelStart, TriggerType::LevelEnd, TriggerType::Crate, TriggerType::Effect,
-            TriggerType::TeamSpawnRed, TriggerType::TeamSpawnBlue, TriggerType::TeamSpawnGreen, TriggerType::TeamSpawnYellow,
-        };
-        for (int i = 0; i < 8; i++) {
-            if (kValidTypes2[i] == triggerGhost_.type) { typeIdx = i; break; }
-        }
-        char tInfo[80];
-        snprintf(tInfo, sizeof(tInfo), "Type: %s  |  T:cycle  C:condition", typeNames[typeIdx]);
-        drawEditorText(renderer, tInfo, 520, 22, 10, {200, 200, 100, 200});
-    } else if (currentTool_ == EditorTool::Entity) {
-        const char* entityNames[] = {"Melee", "Shooter", "Crate", "Upgrade Crate"};
-        const char* eName = (entitySpawnType_ >= 0 && entitySpawnType_ < ENTITY_TYPE_COUNT) ? entityNames[entitySpawnType_] : "?";
-        char eInfo[64];
-        snprintf(eInfo, sizeof(eInfo), "Type: %s  |  E:cycle", eName);
-        drawEditorText(renderer, eInfo, 520, 22, 10, {200, 100, 100, 200});
-    } else if (currentTool_ == EditorTool::Select) {
-        drawEditorText(renderer, "Click to select  |  Drag corners to resize  |  DEL to remove", 520, 22, 10, {100, 200, 200, 200});
-    } else if (currentTool_ == EditorTool::Erase) {
-        drawEditorText(renderer, "Click to erase tiles, triggers & enemies", 520, 22, 10, {200, 100, 100, 200});
-    }
-
-    // Shortcut hints
-    drawEditorText(renderer, "Scroll:zoom  MMB:pan  RClick:erase  G:grid  TAB:UI", 520, 36, 9, {70, 70, 80, 255});
 }
 
 void MapEditor::renderPalette(SDL_Renderer* renderer) {
@@ -1255,10 +1511,88 @@ void MapEditor::scanAvailableMaps() {
         }
         closedir(d);
     }
+
+    // Also include maps from all loaded mods
+    for (const std::string& p : ModManager::instance().allMapPaths()) {
+        // Avoid duplicates
+        bool dup = false;
+        for (auto& existing : config_.availableMaps) {
+            if (existing == p) { dup = true; break; }
+        }
+        if (!dup) config_.availableMaps.push_back(p);
+    }
 }
 
 void MapEditor::handleConfigInput(SDL_Event& e) {
     auto& cfg = config_;
+
+    // ── Mouse click support (config screen) ─────────────────────────────
+    if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+        int mx = e.button.x, my = e.button.y;
+        int panelY = 88;
+        // Field 0: Action toggle row
+        int f0Y = panelY + 16;
+        if (my >= f0Y - 4 && my < f0Y + 34) {
+            cfg.field = 0;
+            if (mx >= screenW_ / 2 - 80) { // clicked on value side
+                if (cfg.action == EditorConfig::Action::NewMap)
+                    cfg.action = (!cfg.availableMaps.empty()) ? EditorConfig::Action::LoadMap : EditorConfig::Action::NewMap;
+                else
+                    cfg.action = EditorConfig::Action::NewMap;
+            }
+        }
+        if (cfg.action == EditorConfig::Action::LoadMap && !cfg.availableMaps.empty()) {
+            // Click on a map list item
+            int listBaseY = panelY + 16 + 44 + 30; // after field-0 + separator + SELECT MAP header
+            int startShow = std::max(0, cfg.loadIdx - 4);
+            int endShow = std::min((int)cfg.availableMaps.size(), startShow + 8);
+            for (int i = startShow; i < endShow; i++) {
+                int itemY = listBaseY + (i - startShow) * 24;
+                if (my >= itemY - 2 && my < itemY + 22) {
+                    cfg.loadIdx = i;
+                    cfg.field = 1;
+                    break;
+                }
+            }
+        } else if (cfg.action == EditorConfig::Action::NewMap) {
+            int yWalk = panelY + 16 + 44; // 148 after field 0
+            if (my >= yWalk - 4 && my < yWalk + 34) cfg.field = 1;      yWalk += 44;
+            if (my >= yWalk - 4 && my < yWalk + 34) cfg.field = 2;      yWalk += 44;
+            if (my >= yWalk - 4 && my < yWalk + 34) { cfg.field = 3; }  yWalk += 44;
+            if (my >= yWalk - 4 && my < yWalk + 34) { cfg.field = 4; }  yWalk += 44;
+            if (my >= yWalk - 4 && my < yWalk + 34) { cfg.field = 5; cfg.gameMode = 1 - cfg.gameMode; }
+        }
+        // OK button
+        int btnY = screenH_ - 100;
+        if (my >= btnY - 4 && my < btnY + 30 &&
+            mx >= screenW_ / 2 - 120 && mx < screenW_ / 2 + 120) {
+            if (cfg.action == EditorConfig::Action::LoadMap && !cfg.availableMaps.empty()) {
+                int idx = std::max(0, std::min(cfg.loadIdx, (int)cfg.availableMaps.size() - 1));
+                loadMap(cfg.availableMaps[idx]);
+                savePath_ = cfg.availableMaps[idx];
+            } else {
+                newMap(cfg.mapWidth, cfg.mapHeight);
+                map_.name    = cfg.mapName;
+                map_.creator = cfg.creator;
+                map_.gameMode = (uint8_t)cfg.gameMode;
+                std::string safe = cfg.mapName;
+                for (char& c : safe) { if (c == ' ' || c == '/' || c == '\\') c = '_'; }
+                if (safe.empty()) safe = "untitled";
+                savePath_ = "maps/" + safe + ".csm";
+            }
+            showConfig_ = false;
+            return;
+        }
+        // Cancel button
+        int cancelY = btnY + 44;
+        if (my >= cancelY - 4 && my < cancelY + 28 &&
+            mx >= screenW_ / 2 - 60 && mx < screenW_ / 2 + 60) {
+            wantsBack_ = true;
+            showConfig_ = false;
+            return;
+        }
+        return; // consume all clicks on config screen
+    }
 
     // Character palette for gamepad text input
     static const char charPalette[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 _-!@#.";
@@ -1663,22 +1997,36 @@ void MapEditor::renderConfig(SDL_Renderer* renderer) {
         y += 30;
 
         if (cfg.availableMaps.empty()) {
-            drawEditorText(renderer, "No .csm files found in maps/", labelX + 20, y, 16, dimGray);
+            drawEditorText(renderer, "No .csm files found in maps/ or any mod", labelX + 20, y, 16, dimGray);
             y += step * 2;
         } else {
             int startShow = std::max(0, cfg.loadIdx - 4);
             int endShow = std::min((int)cfg.availableMaps.size(), startShow + 8);
             for (int i = startShow; i < endShow; i++) {
-                std::string fname = cfg.availableMaps[i];
+                const std::string& fullPath = cfg.availableMaps[i];
+                // Extract basename
+                std::string fname = fullPath;
                 size_t slash = fname.find_last_of('/');
                 if (slash != std::string::npos) fname = fname.substr(slash + 1);
+                // Build prefix: detect mod maps by looking for a /maps/ segment
+                std::string prefix;
+                size_t mapsPos = fullPath.rfind("/maps/");
+                if (mapsPos != std::string::npos && mapsPos > 0) {
+                    // Extract the component before /maps/ (mod folder name)
+                    std::string beforeMaps = fullPath.substr(0, mapsPos);
+                    size_t ps = beforeMaps.find_last_of('/');
+                    std::string modName = (ps != std::string::npos) ? beforeMaps.substr(ps + 1) : beforeMaps;
+                    if (modName != "romfs" && modName != ".") {
+                        prefix = "[" + modName + "] ";
+                    }
+                }
                 bool isCur = (i == cfg.loadIdx);
                 if (isCur) {
                     SDL_SetRenderDrawColor(renderer, 0, 120, 110, 40);
                     SDL_Rect row = {labelX + 12, y - 2, panelW - 80, 24};
                     SDL_RenderFillRect(renderer, &row);
                 }
-                snprintf(buf, sizeof(buf), "%s %s", isCur ? "\xe2\x96\xb6" : " ", fname.c_str());
+                snprintf(buf, sizeof(buf), "%s %s%s", isCur ? "\xe2\x96\xb6" : " ", prefix.c_str(), fname.c_str());
                 drawEditorText(renderer, buf, labelX + 20, y, isCur ? 16 : 14, isCur ? cyan : dimGray);
                 y += 24;
             }
@@ -1781,11 +2129,18 @@ void MapEditor::handleGamepadInput(SDL_Event& e) {
             case SDL_CONTROLLER_BUTTON_START:
                 wantsTestPlay_ = true;
                 break;
+            case SDL_CONTROLLER_BUTTON_LEFTSTICK:  // L3 = Undo
+                undo();
+                break;
+            case SDL_CONTROLLER_BUTTON_RIGHTSTICK:  // R3 = Redo
+                redo();
+                break;
             case SDL_CONTROLLER_BUTTON_BACK: // Delete selection  (- button on Switch)
                 // If nothing selected, treat as exit-to-menu
                 if (selectedTrigger_ < 0 && selectedEnemy_ < 0) {
                     wantsBack_ = true;
                 } else {
+                    pushUndo();
                     if (selectedTrigger_ >= 0 && selectedTrigger_ < (int)map_.triggers.size()) {
                         map_.triggers.erase(map_.triggers.begin() + selectedTrigger_);
                         selectedTrigger_ = -1;
@@ -1878,17 +2233,23 @@ void MapEditor::handleTouchInput(SDL_Event& e) {
 
         // ── Toolbar touch detection ──
         if (showUI_ && mouseY_ < TOOLBAR_H) {
-            for (int i = 0; i < 5; i++) {
-                int bx = 10 + i * 110;
-                if (mouseX_ >= bx && mouseX_ < bx + 100 && mouseY_ >= 8 && mouseY_ < 40) {
+            for (int i = 0; i < 6; i++) {
+                int bx = 4 + i * 80;
+                if (mouseX_ >= bx && mouseX_ < bx + 76 && mouseY_ >= 4 && mouseY_ < TOOLBAR_H - 4) {
                     currentTool_ = (EditorTool)i;
                     selectedTrigger_ = -1;
                     selectedEnemy_ = -1;
                     break;
                 }
             }
+            // Save button
+            int saveBx = screenW_ - PALETTE_W - 230;
+            if (mouseX_ >= saveBx && mouseX_ < saveBx + 106 && mouseY_ >= 6 && mouseY_ < TOOLBAR_H - 6) {
+                wantsModSave_ = true;
+            }
             // Test Play button
-            if (mouseX_ >= screenW_ - 180 && mouseX_ < screenW_ - 80 && mouseY_ >= 8 && mouseY_ < 40) {
+            int playBx = screenW_ - PALETTE_W - 118;
+            if (mouseX_ >= playBx && mouseX_ < playBx + 106 && mouseY_ >= 6 && mouseY_ < TOOLBAR_H - 6) {
                 wantsTestPlay_ = true;
             }
             mouseDown_ = false;  // consume touch
