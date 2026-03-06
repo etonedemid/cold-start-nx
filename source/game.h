@@ -22,6 +22,8 @@
 #include <SDL2/SDL.h>
 #include <vector>
 #include <string>
+#include <set>
+#include <functional>
 
 enum class GameState {
     MainMenu,
@@ -55,6 +57,7 @@ enum class GameState {
     Scoreboard,      // Match results / scoreboard
     TeamSelect,      // Team selection screen before team game starts
     MultiplayerSpectator, // Player exhausted all lives — free-roam ghost, no respawn
+    WinLoss,             // Win/Loss result screen (shown before Scoreboard)
     // ── Map game mode select (before playing a custom map) ──
     MapConfig,       // Choose Arena / Sandbox before starting a custom map
     // ── Sprite editor ──
@@ -162,11 +165,18 @@ private:
     bool parryInput_ = false;
     bool pauseInput_ = false;
     bool confirmInput_ = false;
+    bool usingGamepad_ = false;  // true when last input was from a gamepad (shows soft KB on PC)
     bool backInput_ = false;
     bool leftInput_ = false;
     bool rightInput_ = false;
+    bool tabInput_   = false;  // Y button / Tab — kick-mode toggle in lobby
     int  menuSelection_ = 0;
     int  configSelection_ = 0;
+    int  lobbyKickCursor_ = -1;  // -1 = not in player-kick mode; >=0 = player index
+    std::set<uint8_t> bannedPlayerIds_;  // session ban list (host only)
+    std::string lobbyPassword_ = "";     // password for this hosted lobby
+    bool hostPasswordTyping_ = false;    // editing lobby password in HostSetup
+    int  hostPasswordCharIdx_ = 0;       // char picker index for host password
 
     // ── World ──
     Player              player_;
@@ -281,6 +291,8 @@ private:
     SDL_Texture* gravelGrass3Tex_ = nullptr;
     SDL_Texture* glassTileTex_   = nullptr;
     SDL_Texture* vignetteTex_    = nullptr;
+    // Custom tile textures loaded from map-embedded paths (TILE_CUSTOM_0..7)
+    SDL_Texture* customTileTextures_[8] = {nullptr};
 
     // ── SFX ──
     Mix_Chunk* sfxShoot_    = nullptr;
@@ -324,8 +336,9 @@ private:
     // Combat
     void spawnBullet(Vec2 pos, float angle);
     void spawnEnemyBullet(Vec2 pos, Vec2 target);
-    void spawnExplosion(Vec2 pos);
+    void spawnExplosion(Vec2 pos, uint8_t ownerId = 255);
     void spawnBomb();
+    Vec2 pickSpawnPos();  // team-corner or random spawn (multiplayer)
     void spawnEnemy(Vec2 pos, EnemyType type);
     void killEnemy(Enemy& e);
     void playerParry();
@@ -418,11 +431,36 @@ private:
     int         usernameCharIdx_ = 0;        // palette index for username char picker
     int         kbNavHeldButton_ = -1;       // D-pad button held during keyboard picker nav
     Uint32      kbNavRepeatAt_   = 0;        // SDL_GetTicks target for next repeat step
+
+    // ── Centralized soft keyboard ──
+    struct SoftKeyboard {
+        bool     active     = false;
+        const char* palette = nullptr;
+        int      cols       = 16;
+        int      charIdx    = 0;
+        int      maxLen     = 32;
+        int      heldButton = -1;
+        Uint32   repeatAt   = 0;
+        std::string* target = nullptr;
+        std::function<void(bool confirmed)> onDone;
+
+        void open(const char* pal, int c, std::string* tgt, int max,
+                  std::function<void(bool confirmed)> done = nullptr);
+        void close(bool confirmed);
+    };
+    SoftKeyboard softKB_;
+    bool handleSoftKBEvent(SDL_Event& e);
+    void updateSoftKBRepeat();
+    void renderSoftKB(int centerY);
+    std::string presetNameBuf_;  // buffer for naming host presets
     int         ipCharIdx_   = 0;            // palette index for IP char picker
     int  multiMenuSelection_ = 0;
     int  lobbyMenuSelection_ = 0;
     int  hostSetupSelection_ = 0;
-    int  joinMenuSelection_  = 0;             // 0=edit addr, 1=edit username, 2=connect, 3=back
+    int  joinMenuSelection_  = 0;             // 0=edit addr, 1=edit port, 2=edit username, 3=password, 4=connect, 5=save, 6=back
+    std::string joinPassword_ = "";              // password to send when joining
+    bool joinPasswordTyping_ = false;            // editing join password
+    int  joinPasswordCharIdx_ = 0;               // char picker index for join password
     int  gamemodeSelectIdx_ = 0;
     int  hostMapSelectIdx_ = 0;              // map selection in host setup
     int  hostMaxPlayers_ = 8;                   // configurable max players (2-16)
@@ -482,7 +520,8 @@ private:
         std::string gamemodeId;
         int maxPlayers = 8;
         int hostPort = 7777;
-        int mapIndex = 0;  // 0 = generated
+        int mapIndex = 0;        // 0 = generated
+        LobbySettings lobbySettings; // saved lobby game settings
     };
     std::vector<ServerPreset> serverPresets_;
     int presetSelection_ = 0;
@@ -498,6 +537,29 @@ private:
     void renderMultiplayerHUD();
     void renderMultiplayerPause();
     void renderMultiplayerDeath();
+    // ── Match result ──
+    enum class MatchEndReason : uint8_t {
+        Unknown      = 0,
+        WavesCleared = 1, // PVE: all target waves cleared
+        TeamWiped    = 2, // PVE: all players exhausted lives
+        LastAlive    = 3, // PVP: last player/team standing
+        TimeUp       = 4, // PVP: match timer expired, most kills wins
+        HostEnded    = 5, // manual: host pressed "End Game"
+    };
+    struct MatchResult {
+        bool           isWin       = false;
+        MatchEndReason reason      = MatchEndReason::Unknown;
+        std::string    headline;     // "VICTORY" / "DEFEAT" / "GAME OVER"
+        std::string    subtitle;     // short result description
+        std::string    winnerName;   // FFA winner player name
+        int            winnerTeam   = -1; // winning team index, -1 = none
+        int            winnerKills  = 0;
+        float          matchElapsed = 0.f; // seconds the match lasted
+    };
+    MatchResult matchResult_;
+    float matchTimer_   = 0.f;    // counts DOWN from pvpMatchDuration (0 if no limit)
+    float matchElapsed_ = 0.f;    // counts UP from game start
+    void renderWinLoss();
     void renderScoreboard();
     void renderTeamSelect();
     void renderAdminMenu();
@@ -517,7 +579,7 @@ private:
     // Server config presets
     void loadServerPresets();
     void saveServerPresets();
-    void addServerPreset(const std::string& name, const std::string& gamemodeId, int maxPlayers, int port, int mapIdx);
+    void addServerPreset(const std::string& name, const std::string& gamemodeId, int maxPlayers, int port, int mapIdx, const LobbySettings& ls = {});
     void removeServerPreset(int idx);
     void applyServerPreset(int idx);
 

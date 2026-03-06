@@ -33,6 +33,15 @@ enum TileType : uint8_t {
     TILE_GLASS,     // solid, breakable
     TILE_DESK,      // solid
     TILE_BOX,       // solid, breakable by bullets
+    // Custom non-solid tiles — texture path stored per-map in CSM
+    TILE_CUSTOM_0 = 16,
+    TILE_CUSTOM_1 = 17,
+    TILE_CUSTOM_2 = 18,
+    TILE_CUSTOM_3 = 19,
+    TILE_CUSTOM_4 = 20,
+    TILE_CUSTOM_5 = 21,
+    TILE_CUSTOM_6 = 22,
+    TILE_CUSTOM_7 = 23,
     TILE_COUNT
 };
 

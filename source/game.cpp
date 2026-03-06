@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <algorithm>
+#include <set>
 #include <dirent.h>
 #include <sys/stat.h>
 
@@ -181,6 +182,154 @@ void Game::playMenuMusic() {
         Mix_PlayMusic(menuMusic_, -1);
         Mix_VolumeMusic(config_.musicVolume);
     }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  SoftKeyboard — centralized on-screen keyboard for all text input
+// ═════════════════════════════════════════════════════════════════════════════
+void Game::SoftKeyboard::open(const char* pal, int c, std::string* tgt, int max,
+                              std::function<void(bool confirmed)> done) {
+    active = true; palette = pal; cols = c; charIdx = 0;
+    heldButton = -1; repeatAt = 0; target = tgt; maxLen = max;
+    onDone = done;
+#ifndef __SWITCH__
+    SDL_StartTextInput();
+#endif
+}
+
+void Game::SoftKeyboard::close(bool confirmed) {
+    active = false;
+#ifndef __SWITCH__
+    SDL_StopTextInput();
+#endif
+    auto cb = onDone;
+    target = nullptr;
+    onDone = nullptr;
+    heldButton = -1;
+    if (cb) cb(confirmed);
+}
+
+void Game::updateSoftKBRepeat() {
+    auto& kb = softKB_;
+    if (!kb.active || !kb.palette || kb.heldButton < 0) return;
+    if (SDL_GetTicks() < kb.repeatAt) return;
+    int palLen = (int)strlen(kb.palette);
+    int delta = 0;
+    if (kb.heldButton == SDL_CONTROLLER_BUTTON_DPAD_LEFT)  delta = -1;
+    if (kb.heldButton == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) delta = +1;
+    if (kb.heldButton == SDL_CONTROLLER_BUTTON_DPAD_UP)    delta = -kb.cols;
+    if (kb.heldButton == SDL_CONTROLLER_BUTTON_DPAD_DOWN)  delta = +kb.cols;
+    if (delta != 0) kb.charIdx = (kb.charIdx + delta + palLen * 4) % palLen;
+    kb.repeatAt = SDL_GetTicks() + 80;
+}
+
+bool Game::handleSoftKBEvent(SDL_Event& e) {
+    auto& kb = softKB_;
+    if (!kb.active || !kb.target || !kb.palette) return false;
+    int palLen = (int)strlen(kb.palette);
+
+    if (e.type == SDL_TEXTINPUT) {
+        for (const char* p = e.text.text; *p; p++) {
+            if (*p >= ' ' && *p <= '~' && *p != '=' && *p != '\n')
+                if ((int)kb.target->size() < kb.maxLen) *kb.target += *p;
+        }
+        return true;
+    }
+    if (e.type == SDL_KEYDOWN) {
+        auto sym = e.key.keysym.sym;
+        if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) { kb.close(true); return true; }
+        if (sym == SDLK_ESCAPE) { kb.close(false); return true; }
+        if (sym == SDLK_BACKSPACE && !kb.target->empty()) { kb.target->pop_back(); return true; }
+        return true; // consume all keydowns while keyboard active
+    }
+    if (e.type == SDL_CONTROLLERBUTTONDOWN) {
+        switch (e.cbutton.button) {
+            case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+                kb.charIdx = (kb.charIdx - 1 + palLen) % palLen;
+                kb.heldButton = e.cbutton.button; kb.repeatAt = SDL_GetTicks() + 350;
+                break;
+            case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+                kb.charIdx = (kb.charIdx + 1) % palLen;
+                kb.heldButton = e.cbutton.button; kb.repeatAt = SDL_GetTicks() + 350;
+                break;
+            case SDL_CONTROLLER_BUTTON_DPAD_UP:
+                kb.charIdx = (kb.charIdx - kb.cols + palLen) % palLen;
+                kb.heldButton = e.cbutton.button; kb.repeatAt = SDL_GetTicks() + 350;
+                break;
+            case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+                kb.charIdx = (kb.charIdx + kb.cols) % palLen;
+                kb.heldButton = e.cbutton.button; kb.repeatAt = SDL_GetTicks() + 350;
+                break;
+            case SDL_CONTROLLER_BUTTON_A:
+                if ((int)kb.target->size() < kb.maxLen) *kb.target += kb.palette[kb.charIdx];
+                break;
+            case SDL_CONTROLLER_BUTTON_Y:
+                if (!kb.target->empty()) kb.target->pop_back();
+                break;
+            case SDL_CONTROLLER_BUTTON_X:
+            case SDL_CONTROLLER_BUTTON_START:
+                kb.close(true);
+                break;
+            case SDL_CONTROLLER_BUTTON_B:
+                kb.close(false);
+                break;
+        }
+        return true;
+    }
+    if (e.type == SDL_CONTROLLERBUTTONUP) {
+        if (e.cbutton.button == (Uint8)kb.heldButton) kb.heldButton = -1;
+        return true;
+    }
+    return false;
+}
+
+void Game::renderSoftKB(int centerY) {
+#ifndef __SWITCH__
+    if (!usingGamepad_) return;
+#endif
+    auto& kb = softKB_;
+    if (!kb.active || !kb.palette) return;
+    int palLen = (int)strlen(kb.palette);
+
+    SDL_Color white = {255, 255, 255, 255};
+    SDL_Color gray  = {120, 120, 130, 255};
+
+    bool singleRow = (palLen <= kb.cols);
+    int cellW = singleRow ? 36 : 20;
+    int cellH = singleRow ? 36 : 26;
+    int cols = kb.cols;
+    int rows = (palLen + cols - 1) / cols;
+    int totalW = cols * cellW;
+    int startX = (SCREEN_W - totalW) / 2;
+    int palY = centerY;
+
+    // Opaque background
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer_, 15, 16, 28, 255);
+    SDL_Rect palBg = {startX - 8, palY - 8, totalW + 16, rows * cellH + 40};
+    SDL_RenderFillRect(renderer_, &palBg);
+    SDL_SetRenderDrawColor(renderer_, 0, 120, 110, 180);
+    SDL_RenderDrawRect(renderer_, &palBg);
+
+    for (int i = 0; i < palLen; i++) {
+        int col = i % cols, row = i / cols;
+        int cx = startX + col * cellW;
+        int cy = palY + row * cellH;
+        bool sel = (i == kb.charIdx);
+        if (sel) {
+            SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 255);
+            SDL_Rect bg = {cx, cy, cellW - 2, cellH - 2};
+            SDL_RenderFillRect(renderer_, &bg);
+        }
+        char ch[2] = { kb.palette[i], 0 };
+        int fontSize = singleRow ? (sel ? 22 : 18) : (sel ? 18 : 14);
+        int ox = singleRow ? 10 : 4;
+        int oy = singleRow ? 6 : 3;
+        drawText(ch, cx + ox, cy + oy, fontSize, sel ? white : gray);
+    }
+
+    drawTextCentered("D-pad navigate   A insert   Y delete   B close   X confirm",
+                     palY + rows * cellH + 8, 12, {80, 80, 90, 255});
 }
 
 void Game::shutdown() {
@@ -392,11 +541,37 @@ void Game::run() {
                 state_ = GameState::MainMenu;
                 menuSelection_ = 0;
             }
+            // ── Handle save dialog from editor (runs here, not in update(), because
+            //    update() is only called for gameplay states) ──
+            if (!modSaveDialog_.isOpen()) {
+                if (editor_.wantsModSave()) {
+                    editor_.clearWantsModSave();
+                    if (editor_.hasExplicitSavePath()) {
+                        editor_.saveMap(editor_.savePath());
+                    } else {
+                        openModSaveDialog(ModSaveDialogState::AssetMap);
+                    }
+                }
+            }
+            if (modSaveDialog_.confirmed) {
+                modSaveDialog_.confirmed = false;
+                if (modSaveDialog_.asset == ModSaveDialogState::AssetMap) {
+                    editor_.performModSave(modSaveDialog_.confirmedModFolder);
+                    ModManager::instance().scanMods();
+                    modSaveDialog_.close();
+                }
+                // other asset types handled by update() block below
+            }
             // Check if editor wants to test play
             if (editor_.wantsTestPlay()) {
                 editor_.clearTestPlay();
+                editor_.clearWantsModSave();  // don’t let pending save open dialog mid-game
                 // Copy the editor's map directly into customMap_
                 customMap_ = editor_.getMap();
+                // Sync custom tile paths (normalised) into the map copy
+                // so startCustomMap-style texture loading works
+                for (int _i = 0; _i < 8; _i++) customTileTextures_[_i] = nullptr;
+                editor_.getCustomTileTextures(customTileTextures_);
                 // Apply the map's saved game mode for test-play
                 sandboxMode_ = (customMap_.gameMode == 1);
                 // Start playing it
@@ -466,26 +641,10 @@ void Game::handleInput() {
     backInput_ = false;
     leftInput_ = false;
     rightInput_ = false;
+    tabInput_ = false;
 
-    // Username keyboard picker hold-repeat (16 columns, 64-char palette)
-    {
-        static const int KB_COLS    = 16;
-        static const int KB_PAL_LEN = 64;
-        bool kbActive = (usernameTyping_  && state_ == GameState::ConfigMenu) ||
-                        (mpUsernameTyping_ && (state_ == GameState::HostSetup ||
-                                               state_ == GameState::JoinMenu));
-        if (kbActive && kbNavHeldButton_ >= 0 && SDL_GetTicks() >= kbNavRepeatAt_) {
-            int delta = 0;
-            if (kbNavHeldButton_ == SDL_CONTROLLER_BUTTON_DPAD_LEFT)  delta = -1;
-            if (kbNavHeldButton_ == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) delta = +1;
-            if (kbNavHeldButton_ == SDL_CONTROLLER_BUTTON_DPAD_UP)    delta = -KB_COLS;
-            if (kbNavHeldButton_ == SDL_CONTROLLER_BUTTON_DPAD_DOWN)  delta = +KB_COLS;
-            if (delta != 0)
-                usernameCharIdx_ = (usernameCharIdx_ + delta + KB_PAL_LEN * 4) % KB_PAL_LEN;
-            kbNavRepeatAt_ = SDL_GetTicks() + 80;
-        }
-        if (!kbActive) kbNavHeldButton_ = -1;
-    }
+    // Soft keyboard hold-repeat
+    updateSoftKBRepeat();
 
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
@@ -513,426 +672,21 @@ void Game::handleInput() {
             texEditor_.handleInput(e);
         }
 
-        // Character creator text input handling
-        if (state_ == GameState::CharCreator && charCreator_.textEditing) {
-            // Gamepad text input for Switch
-            static const char ccCharPalette[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 _-!@#.";
-            int& ccCharIdx = charCreator_.gpCharIdx;
-            if (e.type == SDL_CONTROLLERBUTTONDOWN) {
-                int palLen = (int)strlen(ccCharPalette);
-                switch (e.cbutton.button) {
-                    case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
-                        ccCharIdx = (ccCharIdx - 1 + palLen) % palLen;
-                        break;
-                    case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-                        ccCharIdx = (ccCharIdx + 1) % palLen;
-                        break;
-                    case SDL_CONTROLLER_BUTTON_DPAD_UP:
-                        ccCharIdx = (ccCharIdx - 10 + palLen) % palLen;
-                        break;
-                    case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
-                        ccCharIdx = (ccCharIdx + 10) % palLen;
-                        break;
-                    case SDL_CONTROLLER_BUTTON_A:
-                        charCreator_.textBuf += ccCharPalette[ccCharIdx];
-                        break;
-                    case SDL_CONTROLLER_BUTTON_Y:
-                        if (!charCreator_.textBuf.empty()) charCreator_.textBuf.pop_back();
-                        break;
-                    case SDL_CONTROLLER_BUTTON_X:
-                    case SDL_CONTROLLER_BUTTON_START:
-                        charCreator_.name = charCreator_.textBuf;
-                        charCreator_.textEditing = false;
-#ifndef __SWITCH__
-                        SDL_StopTextInput();
-#endif
-                        break;
-                    case SDL_CONTROLLER_BUTTON_B:
-                        charCreator_.textEditing = false;
-#ifndef __SWITCH__
-                        SDL_StopTextInput();
-#endif
-                        break;
-                }
-                continue;
-            }
-            if (e.type == SDL_TEXTINPUT) {
-                charCreator_.textBuf += e.text.text;
-                continue;
-            }
-            if (e.type == SDL_KEYDOWN) {
-                if (e.key.keysym.sym == SDLK_RETURN) {
-                    charCreator_.name = charCreator_.textBuf;
-                    charCreator_.textEditing = false;
-#ifndef __SWITCH__
-                    SDL_StopTextInput();
-#endif
-                    continue;
-                }
-                if (e.key.keysym.sym == SDLK_ESCAPE) {
-                    charCreator_.textEditing = false;
-#ifndef __SWITCH__
-                    SDL_StopTextInput();
-#endif
-                    continue;
-                }
-                if (e.key.keysym.sym == SDLK_BACKSPACE && !charCreator_.textBuf.empty()) {
-                    charCreator_.textBuf.pop_back();
-                    continue;
-                }
-                continue; // consume all keys while text editing
-            }
-        }
-
-        // Port editing (JoinMenu keyboard input)
-        if (state_ == GameState::JoinMenu && joinPortTyping_) {
-            static const char portPalette[] = "0123456789";
-            int palLen = (int)strlen(portPalette);
-            if (e.type == SDL_TEXTINPUT) {
-                for (const char* p = e.text.text; *p; p++) {
-                    if (*p >= '0' && *p <= '9' && joinPortStr_.size() < 5)
-                        joinPortStr_ += *p;
-                }
-                continue;
-            }
-            if (e.type == SDL_KEYDOWN) {
-                if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER ||
-                    e.key.keysym.sym == SDLK_ESCAPE) {
-                    int v = joinPortStr_.empty() ? 7777 : std::stoi(joinPortStr_);
-                    joinPort_ = std::max(1024, std::min(65535, v));
-                    joinPortStr_ = std::to_string(joinPort_);
-                    joinPortTyping_ = false;
-#ifndef __SWITCH__
-                    SDL_StopTextInput();
-#endif
-                    continue;
-                }
-                if (e.key.keysym.sym == SDLK_BACKSPACE && !joinPortStr_.empty())
-                    joinPortStr_.pop_back();
-                continue;
-            }
-            if (e.type == SDL_CONTROLLERBUTTONDOWN) {
-                switch (e.cbutton.button) {
-                    case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
-                        joinPortCharIdx_ = (joinPortCharIdx_ - 1 + palLen) % palLen; break;
-                    case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-                        joinPortCharIdx_ = (joinPortCharIdx_ + 1) % palLen; break;
-                    case SDL_CONTROLLER_BUTTON_A:
-                        if (joinPortStr_.size() < 5) joinPortStr_ += portPalette[joinPortCharIdx_]; break;
-                    case SDL_CONTROLLER_BUTTON_Y:
-                        if (!joinPortStr_.empty()) joinPortStr_.pop_back(); break;
-                    case SDL_CONTROLLER_BUTTON_B:
-                    case SDL_CONTROLLER_BUTTON_START: {
-                        int v = joinPortStr_.empty() ? 7777 : std::stoi(joinPortStr_);
-                        joinPort_ = std::max(1024, std::min(65535, v));
-                        joinPortStr_ = std::to_string(joinPort_);
-                        joinPortTyping_ = false;
-#ifndef __SWITCH__
-                        SDL_StopTextInput();
-#endif
-                        break;
-                    }
-                }
-                continue;
-            }
-            continue;
-        }
-
-        // Port editing (HostSetup keyboard input)
-        if (state_ == GameState::HostSetup && portTyping_) {
-            static const char portPalette[] = "0123456789";
-            int palLen = (int)strlen(portPalette);
-            if (e.type == SDL_TEXTINPUT) {
-                for (const char* p = e.text.text; *p; p++) {
-                    if (*p >= '0' && *p <= '9' && portStr_.size() < 5)
-                        portStr_ += *p;
-                }
-                continue;
-            }
-            if (e.type == SDL_KEYDOWN) {
-                if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER ||
-                    e.key.keysym.sym == SDLK_ESCAPE) {
-                    int v = portStr_.empty() ? 7777 : std::stoi(portStr_);
-                    hostPort_ = std::max(1024, std::min(65535, v));
-                    portStr_ = std::to_string(hostPort_);
-                    portTyping_ = false;
-#ifndef __SWITCH__
-                    SDL_StopTextInput();
-#endif
-                    continue;
-                }
-                if (e.key.keysym.sym == SDLK_BACKSPACE && !portStr_.empty())
-                    portStr_.pop_back();
-                continue;
-            }
-            if (e.type == SDL_CONTROLLERBUTTONDOWN) {
-                switch (e.cbutton.button) {
-                    case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
-                        portCharIdx_ = (portCharIdx_ - 1 + palLen) % palLen; break;
-                    case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-                        portCharIdx_ = (portCharIdx_ + 1) % palLen; break;
-                    case SDL_CONTROLLER_BUTTON_A:
-                        if (portStr_.size() < 5) portStr_ += portPalette[portCharIdx_]; break;
-                    case SDL_CONTROLLER_BUTTON_Y:
-                        if (!portStr_.empty()) portStr_.pop_back(); break;
-                    case SDL_CONTROLLER_BUTTON_B:
-                    case SDL_CONTROLLER_BUTTON_START: {
-                        int v = portStr_.empty() ? 7777 : std::stoi(portStr_);
-                        hostPort_ = std::max(1024, std::min(65535, v));
-                        portStr_ = std::to_string(hostPort_);
-                        portTyping_ = false;
-#ifndef __SWITCH__
-                        SDL_StopTextInput();
-#endif
-                        break;
-                    }
-                }
-                continue;
-            }
-            continue;
-        }
-
-        // IP address editing (JoinMenu gamepad text input — same system as map editor)
-        if (state_ == GameState::JoinMenu && ipTyping_) {
-            static const char ipPalette[] = "0123456789.";
-            int palLen = (int)strlen(ipPalette);
-            if (e.type == SDL_TEXTINPUT) {
-                for (const char* p = e.text.text; *p; p++) {
-                    if ((*p >= '0' && *p <= '9') || *p == '.') {
-                        if (joinAddress_.size() < 21)
-                            joinAddress_ += *p;
-                    }
-                }
-                continue;
-            }
-            if (e.type == SDL_KEYDOWN) {
-                if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) {
-                    ipTyping_ = false;
-#ifndef __SWITCH__
-                    SDL_StopTextInput();
-#endif
-                    joinGame();
-                    continue;
-                }
-                if (e.key.keysym.sym == SDLK_ESCAPE) {
-                    ipTyping_ = false;
-#ifndef __SWITCH__
-                    SDL_StopTextInput();
-#endif
-                    continue;
-                }
-                if (e.key.keysym.sym == SDLK_BACKSPACE && !joinAddress_.empty()) {
-                    joinAddress_.pop_back();
-                }
-                continue;
-            }
-            // Gamepad palette cycling (Switch / gamepad)
-            if (e.type == SDL_CONTROLLERBUTTONDOWN) {
-                switch (e.cbutton.button) {
-                    case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
-                        ipCharIdx_ = (ipCharIdx_ - 1 + palLen) % palLen;
-                        break;
-                    case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-                        ipCharIdx_ = (ipCharIdx_ + 1) % palLen;
-                        break;
-                    case SDL_CONTROLLER_BUTTON_DPAD_UP:
-                        ipCharIdx_ = (ipCharIdx_ - 4 + palLen) % palLen;
-                        break;
-                    case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
-                        ipCharIdx_ = (ipCharIdx_ + 4) % palLen;
-                        break;
-                    case SDL_CONTROLLER_BUTTON_A:
-                        joinAddress_ += ipPalette[ipCharIdx_];
-                        break;
-                    case SDL_CONTROLLER_BUTTON_Y:
-                        if (!joinAddress_.empty()) joinAddress_.pop_back();
-                        break;
-                    case SDL_CONTROLLER_BUTTON_X:
-                    case SDL_CONTROLLER_BUTTON_START:
-                        ipTyping_ = false;
-#ifndef __SWITCH__
-                        SDL_StopTextInput();
-#endif
-                        joinGame();
-                        break;
-                    case SDL_CONTROLLER_BUTTON_B:
-                        ipTyping_ = false;
-#ifndef __SWITCH__
-                        SDL_StopTextInput();
-#endif
-                        break;
-                }
-                continue;
-            }
-            continue;
-        }
-
-        // Username editing in Host/Join menus
-        if ((state_ == GameState::HostSetup || state_ == GameState::JoinMenu) && mpUsernameTyping_) {
-            static const char userPalette[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
-            int palLen = (int)strlen(userPalette);
-            if (e.type == SDL_TEXTINPUT) {
-                for (const char* p = e.text.text; *p; p++) {
-                    if ((*p >= ' ' && *p <= '~') && *p != '=' && *p != '\n') {
-                        if (config_.username.size() < 32)
-                            config_.username += *p;
-                    }
-                }
-                continue;
-            }
-            if (e.type == SDL_KEYDOWN) {
-                if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER ||
-                    e.key.keysym.sym == SDLK_ESCAPE) {
-                    mpUsernameTyping_ = false;
-#ifndef __SWITCH__
-                    SDL_StopTextInput();
-#endif
-                    if (config_.username.empty()) config_.username = "Player";
-                    NetworkManager::instance().setUsername(config_.username);
-                    continue;
-                }
-                if (e.key.keysym.sym == SDLK_BACKSPACE && !config_.username.empty()) {
-                    config_.username.pop_back();
-                }
-                continue;
-            }
-            if (e.type == SDL_CONTROLLERBUTTONDOWN) {
-                switch (e.cbutton.button) {
-                    case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
-                        usernameCharIdx_ = (usernameCharIdx_ - 1 + palLen) % palLen;
-                        kbNavHeldButton_ = SDL_CONTROLLER_BUTTON_DPAD_LEFT;
-                        kbNavRepeatAt_   = SDL_GetTicks() + 350;
-                        break;
-                    case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-                        usernameCharIdx_ = (usernameCharIdx_ + 1) % palLen;
-                        kbNavHeldButton_ = SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
-                        kbNavRepeatAt_   = SDL_GetTicks() + 350;
-                        break;
-                    case SDL_CONTROLLER_BUTTON_DPAD_UP:
-                        usernameCharIdx_ = (usernameCharIdx_ - 16 + palLen) % palLen;
-                        kbNavHeldButton_ = SDL_CONTROLLER_BUTTON_DPAD_UP;
-                        kbNavRepeatAt_   = SDL_GetTicks() + 350;
-                        break;
-                    case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
-                        usernameCharIdx_ = (usernameCharIdx_ + 16) % palLen;
-                        kbNavHeldButton_ = SDL_CONTROLLER_BUTTON_DPAD_DOWN;
-                        kbNavRepeatAt_   = SDL_GetTicks() + 350;
-                        break;
-                    case SDL_CONTROLLER_BUTTON_A:
-                        if (config_.username.size() < 32)
-                            config_.username += userPalette[usernameCharIdx_];
-                        break;
-                    case SDL_CONTROLLER_BUTTON_Y:
-                        if (!config_.username.empty()) config_.username.pop_back();
-                        break;
-                    case SDL_CONTROLLER_BUTTON_X:
-                    case SDL_CONTROLLER_BUTTON_START:
-                    case SDL_CONTROLLER_BUTTON_B:
-                        mpUsernameTyping_ = false;
-#ifndef __SWITCH__
-                        SDL_StopTextInput();
-#endif
-                        if (config_.username.empty()) config_.username = "Player";
-                        NetworkManager::instance().setUsername(config_.username);
-                        break;
-                }
-                continue;
-            }
-            continue;
-        }
-
-        // Username editing (ConfigMenu gamepad + keyboard text input)
-        if (state_ == GameState::ConfigMenu && usernameTyping_) {
-            static const char userPalette[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
-            int palLen = (int)strlen(userPalette);
-            if (e.type == SDL_TEXTINPUT) {
-                for (const char* p = e.text.text; *p; p++) {
-                    if ((*p >= ' ' && *p <= '~') && *p != '=' && *p != '\n') {
-                        if (config_.username.size() < 32)
-                            config_.username += *p;
-                    }
-                }
-                continue;
-            }
-            if (e.type == SDL_KEYDOWN) {
-                if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) {
-                    usernameTyping_ = false;
-#ifndef __SWITCH__
-                    SDL_StopTextInput();
-#endif
-                    if (config_.username.empty()) config_.username = "Player";
-                    NetworkManager::instance().setUsername(config_.username);
-                    continue;
-                }
-                if (e.key.keysym.sym == SDLK_ESCAPE) {
-                    usernameTyping_ = false;
-#ifndef __SWITCH__
-                    SDL_StopTextInput();
-#endif
-                    continue;
-                }
-                if (e.key.keysym.sym == SDLK_BACKSPACE && !config_.username.empty()) {
-                    config_.username.pop_back();
-                }
-                continue;
-            }
-            if (e.type == SDL_CONTROLLERBUTTONDOWN) {
-                switch (e.cbutton.button) {
-                    case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
-                        usernameCharIdx_ = (usernameCharIdx_ - 1 + palLen) % palLen;
-                        kbNavHeldButton_ = SDL_CONTROLLER_BUTTON_DPAD_LEFT;
-                        kbNavRepeatAt_   = SDL_GetTicks() + 350;
-                        break;
-                    case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-                        usernameCharIdx_ = (usernameCharIdx_ + 1) % palLen;
-                        kbNavHeldButton_ = SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
-                        kbNavRepeatAt_   = SDL_GetTicks() + 350;
-                        break;
-                    case SDL_CONTROLLER_BUTTON_DPAD_UP:
-                        usernameCharIdx_ = (usernameCharIdx_ - 16 + palLen) % palLen;
-                        kbNavHeldButton_ = SDL_CONTROLLER_BUTTON_DPAD_UP;
-                        kbNavRepeatAt_   = SDL_GetTicks() + 350;
-                        break;
-                    case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
-                        usernameCharIdx_ = (usernameCharIdx_ + 16) % palLen;
-                        kbNavHeldButton_ = SDL_CONTROLLER_BUTTON_DPAD_DOWN;
-                        kbNavRepeatAt_   = SDL_GetTicks() + 350;
-                        break;
-                    case SDL_CONTROLLER_BUTTON_A:
-                        if (config_.username.size() < 32)
-                            config_.username += userPalette[usernameCharIdx_];
-                        break;
-                    case SDL_CONTROLLER_BUTTON_Y:
-                        if (!config_.username.empty()) config_.username.pop_back();
-                        break;
-                    case SDL_CONTROLLER_BUTTON_X:
-                    case SDL_CONTROLLER_BUTTON_START:
-                        usernameTyping_ = false;
-#ifndef __SWITCH__
-                        SDL_StopTextInput();
-#endif
-                        if (config_.username.empty()) config_.username = "Player";
-                        NetworkManager::instance().setUsername(config_.username);
-                        break;
-                    case SDL_CONTROLLER_BUTTON_B:
-                        usernameTyping_ = false;
-#ifndef __SWITCH__
-                        SDL_StopTextInput();
-#endif
-                        break;
-                }
-                continue;
-            }
+        // Centralized soft keyboard handles ALL text input
+        if (softKB_.active) {
+            if (handleSoftKBEvent(e)) continue;
             continue;
         }
 
         if (e.type == SDL_CONTROLLERBUTTONDOWN) {
+            usingGamepad_ = true;
             switch (e.cbutton.button) {
                 case SDL_CONTROLLER_BUTTON_START:    pauseInput_ = true; break;
                 case SDL_CONTROLLER_BUTTON_A:        confirmInput_ = true; if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); } break;
                 case SDL_CONTROLLER_BUTTON_B:        backInput_ = true; break;
                 case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: parryInput_ = true; break;
                 case SDL_CONTROLLER_BUTTON_X:        bombInput_ = true; break;
+                case SDL_CONTROLLER_BUTTON_Y:        tabInput_ = true; break;
                 case SDL_CONTROLLER_BUTTON_DPAD_UP:  menuSelection_--; if (sfxBeep_) { int ch = Mix_PlayChannel(-1, sfxBeep_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); } break;
                 case SDL_CONTROLLER_BUTTON_DPAD_DOWN:menuSelection_++; if (sfxBeep_) { int ch = Mix_PlayChannel(-1, sfxBeep_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); } break;
                 case SDL_CONTROLLER_BUTTON_DPAD_LEFT:leftInput_ = true; break;
@@ -940,12 +694,14 @@ void Game::handleInput() {
             }
         }
         if (e.type == SDL_KEYDOWN && !e.key.repeat) {
+            usingGamepad_ = false;
             switch (e.key.keysym.sym) {
                 case SDLK_ESCAPE: pauseInput_ = true; break;
                 case SDLK_RETURN: confirmInput_ = true; break;
                 case SDLK_BACKSPACE: backInput_ = true; break;
                 case SDLK_SPACE:  parryInput_ = true; break;
                 case SDLK_q:     bombInput_ = true; break;
+                case SDLK_TAB:   tabInput_ = true; break;
                 case SDLK_UP:    menuSelection_--; break;
                 case SDLK_DOWN:  menuSelection_++; break;
                 case SDLK_LEFT:  leftInput_ = true; break;
@@ -1145,9 +901,12 @@ void Game::handleInput() {
             else if (configSelection_ == 8 && confirmInput_) {
                 // Edit username
                 usernameTyping_ = true;
-#ifndef __SWITCH__
-                SDL_StartTextInput();
-#endif
+                softKB_.open("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-", 16,
+                             &config_.username, 32, [this](bool) {
+                    usernameTyping_ = false;
+                    if (config_.username.empty()) config_.username = "Player";
+                    NetworkManager::instance().setUsername(config_.username);
+                });
             }
             else if (configSelection_ == 9 && (confirmInput_ || backInput_ || pauseInput_)) {
                 saveConfig();
@@ -1401,9 +1160,11 @@ void Game::handleInput() {
             if (cc.field == 0 && confirmInput_) {
                 cc.textEditing = true;
                 cc.textBuf = cc.name;
-#ifndef __SWITCH__
-                SDL_StartTextInput();
-#endif
+                softKB_.open("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 _-!@#.", 16,
+                             &cc.textBuf, 16, [this](bool confirmed) {
+                    charCreator_.textEditing = false;
+                    if (confirmed) charCreator_.name = charCreator_.textBuf;
+                });
             }
             // Save button
             if (cc.field == 9 && confirmInput_) {
@@ -1565,11 +1326,11 @@ void Game::handleInput() {
         }
     }
     else if (state_ == GameState::HostSetup) {
-        if (mpUsernameTyping_ || portTyping_) {
+        if (mpUsernameTyping_ || portTyping_ || hostPasswordTyping_) {
             // Editing consumes events; nothing else to do
         } else {
         if (menuSelection_ < 0) menuSelection_ = 0;
-        if (menuSelection_ > 6) menuSelection_ = 6;
+        if (menuSelection_ > 5) menuSelection_ = 5;
         hostSetupSelection_ = menuSelection_;
 
         if (backInput_ || pauseInput_) { state_ = GameState::MultiplayerMenu; multiMenuSelection_ = 0; menuSelection_ = 0; }
@@ -1581,51 +1342,48 @@ void Game::handleInput() {
         if (hostSetupSelection_ == 1 && confirmInput_) {
             portStr_ = std::to_string(hostPort_);
             portTyping_ = true;
-            portCharIdx_ = 0;
-#ifndef __SWITCH__
-            SDL_StartTextInput();
-#endif
+            softKB_.open("0123456789", 10, &portStr_, 5, [this](bool) {
+                portTyping_ = false;
+                int v = portStr_.empty() ? 7777 : std::stoi(portStr_);
+                hostPort_ = std::max(1024, std::min(65535, v));
+                portStr_ = std::to_string(hostPort_);
+            });
         }
         if (hostSetupSelection_ == 2 && confirmInput_) {
             // Edit username
             mpUsernameTyping_ = true;
-            usernameCharIdx_ = 0;
-#ifndef __SWITCH__
-            SDL_StartTextInput();
-#endif
+            softKB_.open("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-", 16,
+                         &config_.username, 32, [this](bool) {
+                mpUsernameTyping_ = false;
+                if (config_.username.empty()) config_.username = "Player";
+                NetworkManager::instance().setUsername(config_.username);
+            });
         }
-        else if (hostSetupSelection_ == 3 && confirmInput_) {
-            // Save current settings as preset
-            addServerPreset("preset", "arena", hostMaxPlayers_, hostPort_, 0);
-        }
-        else if (hostSetupSelection_ == 4) {
-            // Cycle through presets with left/right
-            if (!serverPresets_.empty()) {
-                int n = (int)serverPresets_.size();
-                if (leftInput_) presetSelection_ = (presetSelection_ - 1 + n) % n;
-                if (rightInput_) presetSelection_ = (presetSelection_ + 1) % n;
-                if (confirmInput_) {
-                    applyServerPreset(presetSelection_);
-                }
-            }
+        if (hostSetupSelection_ == 3 && confirmInput_) {
+            // Edit lobby password
+            hostPasswordTyping_ = true;
+            softKB_.open("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-!@#$", 16,
+                         &lobbyPassword_, 32, [this](bool) {
+                hostPasswordTyping_ = false;
+            });
         }
         else if (confirmInput_) {
-            if (hostSetupSelection_ == 5) {
+            if (hostSetupSelection_ == 4) {
                 // Start hosting
                 currentRules_ = createCoopArenaRules(hostMaxPlayers_);
                 NetworkManager::instance().setGamemode("coop_arena");
                 hostGame();
             }
-            else if (hostSetupSelection_ == 6) {
+            else if (hostSetupSelection_ == 5) {
                 state_ = GameState::MultiplayerMenu; multiMenuSelection_ = 0; menuSelection_ = 0;
             }
         }
         } // end !mpUsernameTyping_
     }
     else if (state_ == GameState::JoinMenu) {
-        if (!ipTyping_ && !mpUsernameTyping_ && !joinPortTyping_) {
+        if (!ipTyping_ && !mpUsernameTyping_ && !joinPortTyping_ && !joinPasswordTyping_) {
             if (menuSelection_ < 0) menuSelection_ = 0;
-            if (menuSelection_ > 5) menuSelection_ = 5;
+            if (menuSelection_ > 6) menuSelection_ = 6;
             joinMenuSelection_ = menuSelection_;
 
             if (backInput_ || pauseInput_) {
@@ -1636,40 +1394,51 @@ void Game::handleInput() {
                 if (joinMenuSelection_ == 0) {
                     // Edit address
                     ipTyping_ = true;
-                    ipCharIdx_ = 0;
-#ifndef __SWITCH__
-                    SDL_StartTextInput();
-#endif
+                    softKB_.open("0123456789.", 11, &joinAddress_, 21, [this](bool confirmed) {
+                        ipTyping_ = false;
+                        if (confirmed && !joinAddress_.empty()) joinGame();
+                    });
                 } else if (joinMenuSelection_ == 1) {
                     // Edit port
                     joinPortStr_ = std::to_string(joinPort_);
                     joinPortTyping_ = true;
-                    joinPortCharIdx_ = 0;
-#ifndef __SWITCH__
-                    SDL_StartTextInput();
-#endif
+                    softKB_.open("0123456789", 10, &joinPortStr_, 5, [this](bool) {
+                        joinPortTyping_ = false;
+                        int v = joinPortStr_.empty() ? 7777 : std::stoi(joinPortStr_);
+                        joinPort_ = std::max(1024, std::min(65535, v));
+                        joinPortStr_ = std::to_string(joinPort_);
+                    });
                 } else if (joinMenuSelection_ == 2) {
                     // Edit username
                     mpUsernameTyping_ = true;
-                    usernameCharIdx_ = 0;
-#ifndef __SWITCH__
-                    SDL_StartTextInput();
-#endif
+                    softKB_.open("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-", 16,
+                                 &config_.username, 32, [this](bool) {
+                        mpUsernameTyping_ = false;
+                        if (config_.username.empty()) config_.username = "Player";
+                        NetworkManager::instance().setUsername(config_.username);
+                    });
                 } else if (joinMenuSelection_ == 3) {
+                    // Edit password
+                    joinPasswordTyping_ = true;
+                    softKB_.open("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-!@#$", 16,
+                                 &joinPassword_, 32, [this](bool) {
+                        joinPasswordTyping_ = false;
+                    });
+                } else if (joinMenuSelection_ == 4) {
                     // Connect
                     joinGame();
-                } else if (joinMenuSelection_ == 4) {
+                } else if (joinMenuSelection_ == 5) {
                     // Save server
                     addSavedServer(joinAddress_, joinAddress_, joinPort_);
                     connectStatus_ = "Server saved!";
-                } else if (joinMenuSelection_ == 5) {
+                } else if (joinMenuSelection_ == 6) {
                     // Back
                     connectStatus_.clear();
                     state_ = GameState::MultiplayerMenu; multiMenuSelection_ = 0; menuSelection_ = 0;
                 }
             }
         }
-        // (while ipTyping_, joinPortTyping_, or mpUsernameTyping_, events are consumed above)
+        // (while ipTyping_, joinPortTyping_, mpUsernameTyping_, or joinPasswordTyping_, events are consumed above)
     }
     else if (state_ == GameState::Lobby) {
         auto& net = NetworkManager::instance();
@@ -1693,12 +1462,79 @@ void Game::handleInput() {
             }
         }
 
+        // ── Lobby kick mode (host only: TAB/Y toggles, LEFT/RIGHT selects, A kicks) ─────
+        if (net.isHost() && tabInput_) {
+            lobbyKickCursor_ = (lobbyKickCursor_ < 0) ? 0 : -1;
+        }
+        if (lobbyKickCursor_ >= 0) {
+            // Navigate the vertical player list with UP/DOWN (menuSelection_ delta)
+            int pCount = (int)net.players().size();
+            if (pCount > 0) {
+                int menuDelta = menuSelection_ - lobbySettingsSel_;
+                if (menuDelta != 0) {
+                    lobbyKickCursor_ = ((lobbyKickCursor_ + menuDelta) % pCount + pCount) % pCount;
+                }
+                lobbyKickCursor_ = std::max(0, std::min(pCount - 1, lobbyKickCursor_));
+            }
+            // Restore menuSelection_ so the lobby settings cursor doesn't move
+            menuSelection_ = lobbySettingsSel_;
+
+            if (confirmInput_ && pCount > 0) {
+                // A button = kick
+                uint8_t tid = net.players()[lobbyKickCursor_].id;
+                if (tid != net.localPlayerId())
+                    net.sendAdminKick(tid);
+                lobbyKickCursor_ = -1;
+                confirmInput_ = false;
+            }
+            if (bombInput_ && pCount > 0) {
+                // X button = ban (add to session ban list) + kick
+                uint8_t tid = net.players()[lobbyKickCursor_].id;
+                if (tid != net.localPlayerId()) {
+                    bannedPlayerIds_.insert(tid);
+                    net.sendAdminKick(tid);
+                }
+                lobbyKickCursor_ = -1;
+                bombInput_ = false;
+            }
+            if (backInput_) { lobbyKickCursor_ = -1; backInput_ = false; }
+            // Consume left/right so settings don't change while in kick mode
+            leftInput_ = false; rightInput_ = false;
+        }
+
         if (backInput_ || pauseInput_) {
             net.disconnect();
             connectStatus_.clear();
+            lobbyKickCursor_ = -1;
+            bannedPlayerIds_.clear();
             state_ = GameState::MultiplayerMenu; multiMenuSelection_ = 0; menuSelection_ = 0;
         }
-        if (confirmInput_) {
+        // Compute setting count here so we can check preset indices before the start-game confirm
+        if (net.isHost()) {
+            int _SC = 13;
+            if (lobbySettings_.livesPerPlayer == 0) _SC = 12;
+            _SC++; // CrateInterval or WaveCount
+            if (lobbySettings_.isPvp) _SC++; // Match Time (PVP only)
+            int _PSave = _SC;      // "Save as Preset" row index
+            int _PLoad = _SC + 1;  // "Load Preset" row index
+            // Intercept confirm when cursor is on a preset row (prevents starting the game)
+            if (confirmInput_ && lobbyKickCursor_ < 0 && lobbySettingsSel_ == _PSave) {
+                presetNameBuf_ = "My Preset";
+                softKB_.open("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 _-", 16,
+                             &presetNameBuf_, 32, [this](bool confirmed) {
+                    if (confirmed && !presetNameBuf_.empty())
+                        addServerPreset(presetNameBuf_, "arena", lobbySettings_.maxPlayers, hostPort_, 0, lobbySettings_);
+                });
+                confirmInput_ = false;
+            } else if (confirmInput_ && lobbyKickCursor_ < 0 && lobbySettingsSel_ == _PLoad) {
+                if (!serverPresets_.empty()) {
+                    applyServerPreset(presetSelection_);
+                    net.sendConfigSync(lobbySettings_);
+                }
+                confirmInput_ = false;
+            }
+        }
+        if (confirmInput_ && lobbyKickCursor_ < 0) {
             if (net.isHost()) {
                 startMultiplayerGame();
             } else {
@@ -1712,15 +1548,21 @@ void Game::handleInput() {
         // Host can adjust lobby settings with UP/DOWN/LEFT/RIGHT
         if (net.isHost()) {
             // Settings row list:
-            //   0=Gamemode(PVP/PVE), 1=FriendlyFire, 2=Upgrades, 3=MapWidth, 4=MapHeight,
-            //   5=EnemyHP, 6=EnemySpeed, 7=SpawnRate, 8=PlayerHP,
-            //   9=TeamCount, 10=Lives, 11=LivesMode, 12=CrateInterval(PVP), 13=WaveCount(PVE)
+            //   0=Gamemode, 1=FriendlyFire, 2=Upgrades, 3=Map, 4=MapWidth, 5=MapHeight,
+            //   6=EnemyHP, 7=EnemySpeed, 8=SpawnRate, 9=PlayerHP,
+            //   10=TeamCount, 11=Lives, 12=LivesMode, 13=CrateInterval(PVP)/WaveCount(PVE)
             // Compute effective setting count based on current mode
-            int SETTING_COUNT = 12; // base: 0-11
-            if (lobbySettings_.livesPerPlayer == 0) SETTING_COUNT = 11; // hide LivesMode
+            int SETTING_COUNT = 13; // base: 0-12 (includes Map selector)
+            if (lobbySettings_.livesPerPlayer == 0) SETTING_COUNT = 12; // hide LivesMode
             // Add conditional setting
             if (lobbySettings_.isPvp) SETTING_COUNT++; // CrateInterval
             else SETTING_COUNT++; // WaveCount
+            // Match Time: PVP only
+            if (lobbySettings_.isPvp) SETTING_COUNT++; // pvpMatchDuration
+            // Add preset rows (always at end)
+            int presetSaveIdx = SETTING_COUNT;     // save current settings as preset
+            int presetLoadIdx = SETTING_COUNT + 1; // load / apply a saved preset
+            SETTING_COUNT += 2;
 
             if (menuSelection_ < 0) menuSelection_ = SETTING_COUNT - 1;
             if (menuSelection_ >= SETTING_COUNT) menuSelection_ = 0;
@@ -1741,25 +1583,46 @@ void Game::handleInput() {
                     case 2: // Upgrades shared
                         lobbySettings_.upgradesShared = !lobbySettings_.upgradesShared;
                         break;
-                    case 3: // Map width
-                        lobbySettings_.mapWidth = std::max(10, std::min(200, lobbySettings_.mapWidth + dir * 10));
+                    case 3: { // Map selection (0=Generated, 1+=custom map files)
+                        int nm = (int)mapFiles_.size();
+                        if (nm > 0) {
+                            int newIdx = lobbyMapIdx_ + dir;
+                            if (newIdx < 0) newIdx = nm;   // wrap to last custom
+                            if (newIdx > nm) newIdx = 0;   // wrap to Generated
+                            lobbyMapIdx_ = newIdx;
+                            if (lobbyMapIdx_ == 0) {
+                                net.setMap("", "");
+                            } else {
+                                const std::string& mf = mapFiles_[lobbyMapIdx_ - 1];
+                                size_t sl = mf.rfind('/'); if (sl == std::string::npos) sl = mf.rfind('\\');
+                                std::string mname = (sl != std::string::npos) ? mf.substr(sl + 1) : mf;
+                                size_t dot = mname.rfind('.'); if (dot != std::string::npos) mname = mname.substr(0, dot);
+                                net.setMap(mf, mname);
+                            }
+                        }
                         break;
-                    case 4: // Map height
-                        lobbySettings_.mapHeight = std::max(10, std::min(200, lobbySettings_.mapHeight + dir * 10));
+                    }
+                    case 4: // Map width (only when generated map)
+                        if (lobbyMapIdx_ == 0)
+                            lobbySettings_.mapWidth = std::max(10, std::min(200, lobbySettings_.mapWidth + dir * 10));
                         break;
-                    case 5: // Enemy HP
+                    case 5: // Map height (only when generated map)
+                        if (lobbyMapIdx_ == 0)
+                            lobbySettings_.mapHeight = std::max(10, std::min(200, lobbySettings_.mapHeight + dir * 10));
+                        break;
+                    case 6: // Enemy HP
                         lobbySettings_.enemyHpScale = std::max(0.1f, std::min(5.0f, lobbySettings_.enemyHpScale + dir * 0.1f));
                         break;
-                    case 6: // Enemy speed
+                    case 7: // Enemy speed
                         lobbySettings_.enemySpeedScale = std::max(0.1f, std::min(5.0f, lobbySettings_.enemySpeedScale + dir * 0.1f));
                         break;
-                    case 7: // Spawn rate
+                    case 8: // Spawn rate
                         lobbySettings_.spawnRateScale = std::max(0.1f, std::min(5.0f, lobbySettings_.spawnRateScale + dir * 0.1f));
                         break;
-                    case 8: // Player HP
+                    case 9: // Player HP
                         lobbySettings_.playerMaxHp = std::max(1, std::min(100, lobbySettings_.playerMaxHp + dir));
                         break;
-                    case 9: { // Team count
+                    case 10: { // Team count
                         int tc = lobbySettings_.teamCount;
                         if (dir > 0) tc = (tc == 0) ? 2 : (tc == 2) ? 4 : 0;
                         else         tc = (tc == 0) ? 4 : (tc == 4) ? 2 : 0;
@@ -1767,26 +1630,45 @@ void Game::handleInput() {
                         currentRules_.teamCount = tc;
                         break;
                     }
-                    case 10: // Lives per player (0-100)
+                    case 11: // Lives per player (0-100)
                         lobbySettings_.livesPerPlayer = std::max(0, std::min(100, lobbySettings_.livesPerPlayer + dir));
                         break;
-                    case 11: // Lives mode OR conditional setting
+                    case 12: // Lives mode OR conditional setting
                         if (lobbySettings_.livesPerPlayer > 0) {
                             // LivesMode
                             lobbySettings_.livesShared = !lobbySettings_.livesShared;
                         } else if (lobbySettings_.isPvp) {
-                            // CrateInterval (no livesMode visible, so 11 = crateInterval)
+                            // CrateInterval (no livesMode visible, so 12 = crateInterval)
                             lobbySettings_.crateInterval = std::max(5.0f, std::min(120.0f, lobbySettings_.crateInterval + dir * 5.0f));
                         } else {
-                            // WaveCount (no livesMode visible, so 11 = waveCount)
+                            // WaveCount (no livesMode visible, so 12 = waveCount)
                             lobbySettings_.waveCount = std::max(0, std::min(1000, lobbySettings_.waveCount + dir * (lobbySettings_.waveCount >= 10 ? 10 : 1)));
                         }
                         break;
-                    case 12: // CrateInterval (PVP, when lives>0) or WaveCount (PVE, when lives>0)
-                        if (lobbySettings_.isPvp) {
-                            lobbySettings_.crateInterval = std::max(5.0f, std::min(120.0f, lobbySettings_.crateInterval + dir * 5.0f));
-                        } else {
-                            lobbySettings_.waveCount = std::max(0, std::min(1000, lobbySettings_.waveCount + dir * (lobbySettings_.waveCount >= 10 ? 10 : 1)));
+                    case 13: // CrateInterval/WaveCount (when lives>0) OR MatchTime (when lives==0, isPvp)
+                        if (lobbySettings_.livesPerPlayer > 0) {
+                            // condIdx=13: CrateInterval or WaveCount
+                            if (lobbySettings_.isPvp) {
+                                lobbySettings_.crateInterval = std::max(5.0f, std::min(120.0f, lobbySettings_.crateInterval + dir * 5.0f));
+                            } else {
+                                lobbySettings_.waveCount = std::max(0, std::min(1000, lobbySettings_.waveCount + dir * (lobbySettings_.waveCount >= 10 ? 10 : 1)));
+                            }
+                        } else if (lobbySettings_.isPvp) {
+                            // lives==0, isPvp → matchTimeIdx=13
+                            lobbySettings_.pvpMatchDuration = std::max(0.0f, std::min(3600.0f, lobbySettings_.pvpMatchDuration + dir * 30.0f));
+                        }
+                        // else lives==0, !isPvp → presetSaveIdx=13 (no left/right effect)
+                        break;
+                    default:
+                        // lives>0, isPvp → matchTimeIdx=14
+                        if (lobbySettings_.isPvp && lobbySettings_.livesPerPlayer > 0 && lobbySettingsSel_ == 14) {
+                            lobbySettings_.pvpMatchDuration = std::max(0.0f, std::min(3600.0f, lobbySettings_.pvpMatchDuration + dir * 30.0f));
+                        }
+                        // presetLoadIdx: cycle through presets with left/right
+                        if (lobbySettingsSel_ == presetLoadIdx && !serverPresets_.empty()) {
+                            int n = (int)serverPresets_.size();
+                            if (leftInput_)  presetSelection_ = (presetSelection_ - 1 + n) % n;
+                            if (rightInput_) presetSelection_ = (presetSelection_ + 1) % n;
                         }
                         break;
                 }
@@ -1877,8 +1759,9 @@ void Game::handleInput() {
         int endGameIdx = -1;
         int nextIdx   = 1 + (hasTeams ? 1 : 0) + (isHostPlayer ? 1 : 0);
         if (isHostPlayer) { endGameIdx = nextIdx; nextIdx++; }
-        int dcIdx     = nextIdx;
-        int maxSel    = dcIdx;
+        // Host cannot disconnect mid-game (must use End Game instead)
+        int dcIdx     = isHostPlayer ? -1 : nextIdx;
+        int maxSel    = isHostPlayer ? (nextIdx - 1) : nextIdx;
 
         if (menuSelection_ < 0) menuSelection_ = 0;
         if (menuSelection_ > maxSel) menuSelection_ = maxSel;
@@ -1899,7 +1782,7 @@ void Game::handleInput() {
                 adminMenuAction_ = 0;
             } else if (isHostPlayer && menuSelection_ == endGameIdx) {
                 // End game — return everyone to lobby
-                net2.sendGameEnd();
+                net2.sendGameEnd((uint8_t)MatchEndReason::HostEnded);
             } else if (menuSelection_ == dcIdx) {
                 net2.disconnect();
                 playMenuMusic();
@@ -1913,11 +1796,17 @@ void Game::handleInput() {
         // Wait for respawn (automatic from updateMultiplayer)
         if (respawnTimer_ <= 0) respawnTimer_ = currentRules_.respawnTime;
     }
+    else if (state_ == GameState::WinLoss) {
+        // Any confirm or back → proceed to full scoreboard
+        if (confirmInput_ || backInput_) {
+            state_ = GameState::Scoreboard;
+            menuSelection_ = 0;
+        }
+    }
     else if (state_ == GameState::Scoreboard) {
         if (confirmInput_ || backInput_) {
-            NetworkManager::instance().disconnect();
-            playMenuMusic();
-            state_ = GameState::MainMenu;
+            // Return to lobby instead of main menu
+            state_ = GameState::Lobby;
             menuSelection_ = 0;
         }
     }
@@ -1963,6 +1852,7 @@ void Game::handleInput() {
                             uint32_t mapSeed = (uint32_t)time(nullptr) ^ (uint32_t)rand();
                             mapSrand(mapSeed);
                             startGame();
+                            player_.pos = pickSpawnPos(); // team corner or random spawn
                             if (lobbySettings_.isPvp) player_.invulnDuration = 0.0f;
                             state_ = GameState::MultiplayerGame;
                             net.startGame(mapSeed, config_.mapWidth, config_.mapHeight);
@@ -1982,6 +1872,7 @@ void Game::handleInput() {
             }
             state_ = GameState::Lobby;
             menuSelection_ = 0;
+            lobbyKickCursor_ = -1;
         }
     }
     else if (state_ == GameState::ModMenu) {
@@ -2091,12 +1982,9 @@ void Game::update() {
     // Always update multiplayer (even in lobby/menus for network events)
     updateMultiplayer(dt);
 
-    // ── Mod-save dialog: open when any editor flags it ──────────────────────
+    // Mod-save for texEditor / charCreator (map saves handled in Editor state block)
     if (!modSaveDialog_.isOpen()) {
-        if (editor_.wantsModSave()) {
-            editor_.clearWantsModSave();
-            openModSaveDialog(ModSaveDialogState::AssetMap);
-        } else if (texEditor_.wantsModSave()) {
+        if (texEditor_.wantsModSave()) {
             texEditor_.clearWantsModSave();
             openModSaveDialog(ModSaveDialogState::AssetSprite);
         } else if (charCreatorWantsModSave_) {
@@ -2266,14 +2154,17 @@ void Game::updatePlayer(float dt) {
         }
     } else if (fireInput_ && p.fireCooldown <= 0 && p.ammo > 0) {
         spawnBullet(p.pos, p.rotation);
-        // Triple shot – two extra bullets at ±15°
+        // Triple shot – two extra bullets at ±15°, costs 3 ammo, halves fire rate
         if (upgrades_.hasTripleShot) {
             const float spread = 0.26f; // ~15 degrees
             spawnBullet(p.pos, p.rotation + spread);
             spawnBullet(p.pos, p.rotation - spread);
+            p.ammo = std::max(0, p.ammo - 3);
+            p.fireCooldown = 2.0f / p.fireRate; // half fire rate
+        } else {
+            p.ammo--;
+            p.fireCooldown = 1.0f / p.fireRate;
         }
-        p.ammo--;
-        p.fireCooldown = 1.0f / p.fireRate;
         p.hasFiredOnce = true;
         p.shootAnimTimer = 0.12f;
         camera_.addShake(1.2f);
@@ -2461,7 +2352,11 @@ void Game::updateEnemies(float dt) {
                     if (d < best) { best = d; bestId = pid; }
                 };
                 if (net.isOnline()) {
-                    for (auto& p : net.players()) { if (p.alive && !p.spectating) testClose(p.id, p.pos); }
+                    if (!player_.dead) testClose(net.localPlayerId(), player_.pos);
+                    for (auto& p : net.players()) {
+                        if (p.id == net.localPlayerId()) continue;
+                        if (p.alive && !p.spectating) testClose(p.id, p.pos);
+                    }
                 } else {
                     if (!player_.dead) testClose(0, player_.pos);
                 }
@@ -2546,7 +2441,10 @@ bool Game::enemyCanSeeAnyPlayer(Enemy& e) {
     };
 
     if (net.isOnline()) {
+        // Use authoritative local position (net.players() entry for self may be stale)
+        if (!player_.dead) testVis(net.localPlayerId(), player_.pos);
         for (auto& p : net.players()) {
+            if (p.id == net.localPlayerId()) continue; // already tested above
             if (p.alive && !p.spectating) testVis(p.id, p.pos);
         }
     } else {
@@ -2566,6 +2464,8 @@ bool Game::enemyCanSeeAnyPlayer(Enemy& e) {
 Vec2 Game::getEnemyTargetPos(const Enemy& e) const {
     auto& net = NetworkManager::instance();
     if (net.isOnline() && e.targetPlayerId != 255) {
+        // Use authoritative local position for own player
+        if (e.targetPlayerId == net.localPlayerId()) return player_.pos;
         for (auto& p : net.players()) {
             if (p.id == e.targetPlayerId && p.alive && !p.spectating)
                 return p.pos;
@@ -2705,6 +2605,31 @@ Vec2 Game::steerToward(Vec2 from, Vec2 to, float spd, float dt) const {
 void Game::updateBullets(float dt) {
     for (auto& b : bullets_) {
         b.tick(dt);
+        // Magnet upgrade — gently steer bullets toward the nearest alive enemy
+        if (upgrades_.hasMagnet && b.alive) {
+            float bestDist = 420.0f;
+            Enemy* target = nullptr;
+            for (auto& e : enemies_) {
+                if (!e.alive) continue;
+                float d = (e.pos - b.pos).length();
+                if (d < bestDist) { bestDist = d; target = &e; }
+            }
+            if (target) {
+                Vec2 toTarget = (target->pos - b.pos).normalized();
+                float speed = b.vel.length();
+                if (speed > 0.001f) {
+                    float currentAngle = b.vel.angle();
+                    float targetAngle  = toTarget.angle();
+                    float angleDiff = targetAngle - currentAngle;
+                    // Wrap to [-π, π]
+                    while (angleDiff >  (float)M_PI) angleDiff -= 2.0f * (float)M_PI;
+                    while (angleDiff < -(float)M_PI) angleDiff += 2.0f * (float)M_PI;
+                    const float turnRate = 3.5f; // rad/s
+                    currentAngle += std::clamp(angleDiff, -turnRate * dt, turnRate * dt);
+                    b.vel = Vec2::fromAngle(currentAngle) * speed;
+                }
+            }
+        }
         // Wall collision
         int tx = TileMap::toTile(b.pos.x);
         int ty = TileMap::toTile(b.pos.y);
@@ -2859,6 +2784,12 @@ void Game::spawnEnemyBullet(Vec2 pos, Vec2 target) {
         int ch = Mix_PlayChannel(-1, sfxEnemyShoot_, 0);
         if (ch >= 0) Mix_Volume(ch, config_.sfxVolume * 2 / 5);
     }
+
+    // Host broadcasts bullet spawn to clients
+    auto& net = NetworkManager::instance();
+    if (net.isHost() && net.isInGame()) {
+        net.sendEnemyBulletSpawn(b.pos, dir);
+    }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -2948,13 +2879,13 @@ void Game::updateBombs(float dt) {
                     destroyBox(btx, bty);
                     // Bomb continues through boxes
                 } else {
-                    spawnExplosion(b.pos);
+                    spawnExplosion(b.pos, b.ownerId);
                     b.alive = false;
                 }
             }
             // Explode if speed drops too low
             if (b.vel.length() < 30.0f) {
-                spawnExplosion(b.pos);
+                spawnExplosion(b.pos, b.ownerId);
                 b.alive = false;
             }
             // Proximity: explode on contact with any enemy
@@ -2962,7 +2893,7 @@ void Game::updateBombs(float dt) {
                 for (auto& e : enemies_) {
                     if (!e.alive) continue;
                     if (Vec2::dist(b.pos, e.pos) < BOMB_SIZE + 20.0f) {
-                        spawnExplosion(b.pos);
+                        spawnExplosion(b.pos, b.ownerId);
                         b.alive = false;
                         break;
                     }
@@ -2976,17 +2907,25 @@ void Game::updateBombs(float dt) {
                     if (rp.id == localId || !rp.alive || rp.spectating) continue;
                     if (localTeam_ >= 0 && rp.team == localTeam_) continue;
                     if (Vec2::dist(b.pos, rp.targetPos) < BOMB_SIZE + 20.0f) {
-                        spawnExplosion(b.pos);
+                        spawnExplosion(b.pos, b.ownerId);
                         b.alive = false;
                         break;
                     }
                 }
             }
         } else {
-            // Orbit around the player
+            // Orbit around the owner (local player or a remote player)
             b.orbitAngle += b.orbitSpeed * dt;
-            b.pos.x = player_.pos.x + cosf(b.orbitAngle) * b.orbitRadius;
-            b.pos.y = player_.pos.y + sinf(b.orbitAngle) * b.orbitRadius;
+            Vec2 center = player_.pos;
+            if (b.ownerId != 255) {
+                auto& netU = NetworkManager::instance();
+                if (b.ownerId != netU.localPlayerId()) {
+                    NetPlayer* owner = netU.findPlayer(b.ownerId);
+                    if (owner && owner->alive) center = owner->targetPos;
+                }
+            }
+            b.pos.x = center.x + cosf(b.orbitAngle) * b.orbitRadius;
+            b.pos.y = center.y + sinf(b.orbitAngle) * b.orbitRadius;
         }
     }
 }
@@ -3018,15 +2957,22 @@ void Game::updateExplosions(float dt) {
                 !player_.dead &&
                 Vec2::dist(ex.pos, player_.pos) < ex.radius) {
                 auto& netEx = NetworkManager::instance();
-                if (netEx.isHost()) {
+                uint8_t localId = netEx.localPlayerId();
+                bool selfFire = (ex.ownerId == localId);
+                bool teamFire = false;
+                if (!selfFire && ex.ownerId != 255 && localTeam_ >= 0) {
+                    NetPlayer* exOwner = netEx.findPlayer(ex.ownerId);
+                    if (exOwner && exOwner->team == localTeam_) teamFire = true;
+                }
+                if (!selfFire && !teamFire && netEx.isHost()) {
                     // Host applies damage and broadcasts authoritative HP
                     player_.takeDamage(3);
                     NetPlayer* localNetP = netEx.localPlayer();
                     if (localNetP) localNetP->hp = player_.hp;
                     if (player_.dead) {
-                        netEx.sendPlayerDied(netEx.localPlayerId(), 255);
+                        netEx.sendPlayerDied(localId, 255);
                     } else {
-                        netEx.sendPlayerHpSync(netEx.localPlayerId(), player_.hp, player_.maxHp, 255);
+                        netEx.sendPlayerHpSync(localId, player_.hp, player_.maxHp, 255);
                     }
                 }
                 // Clients do not apply damage locally — they wait for PlayerHpSync from host
@@ -3035,9 +2981,18 @@ void Game::updateExplosions(float dt) {
             if ((lobbySettings_.isPvp || currentRules_.pvpEnabled)) {
                 auto& netEx2 = NetworkManager::instance();
                 if (netEx2.isHost()) {
+                    // Determine the owner's team for friendly-fire checks
+                    int8_t exOwnerTeam = -1;
+                    if (ex.ownerId == netEx2.localPlayerId()) {
+                        exOwnerTeam = (int8_t)localTeam_;
+                    } else if (ex.ownerId != 255) {
+                        NetPlayer* exOwnerP = netEx2.findPlayer(ex.ownerId);
+                        if (exOwnerP) exOwnerTeam = exOwnerP->team;
+                    }
                     for (const auto& rp : netEx2.players()) {
                         if (rp.id == netEx2.localPlayerId() || !rp.alive) continue;
-                        if (localTeam_ >= 0 && rp.team == localTeam_) continue;
+                        if (rp.id == ex.ownerId) continue;           // can't hurt yourself
+                        if (exOwnerTeam >= 0 && rp.team == exOwnerTeam) continue;  // same team
                         if (Vec2::dist(ex.pos, rp.pos) < ex.radius) {
                             NetPlayer* rpM = netEx2.findPlayer(rp.id);
                             if (!rpM) continue;
@@ -3058,9 +3013,10 @@ void Game::updateExplosions(float dt) {
     }
 }
 
-void Game::spawnExplosion(Vec2 pos) {
+void Game::spawnExplosion(Vec2 pos, uint8_t ownerId) {
     Explosion ex;
     ex.pos = pos;
+    ex.ownerId = ownerId;
     explosions_.push_back(ex);
     camera_.addShake(6.0f);
     if (sfxExplosion_) { int ch = Mix_PlayChannel(-1, sfxExplosion_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
@@ -3068,7 +3024,7 @@ void Game::spawnExplosion(Vec2 pos) {
     // ── Sync explosion to other players (guard prevents echo-loop from network callback) ──
     auto& net = NetworkManager::instance();
     if (net.isOnline() && !suppressNetExplosion_) {
-        net.sendExplosion(pos);
+        net.sendExplosion(pos, ownerId);
     }
 
     // ── Visual polish: screen flash on explosion ──
@@ -3152,14 +3108,53 @@ void Game::spawnExplosion(Vec2 pos) {
     }
 }
 
+Vec2 Game::pickSpawnPos() {
+    float ww = map_.worldWidth();
+    float wh = map_.worldHeight();
+
+    // Team mode: place player at their team's corner of the map
+    if (localTeam_ >= 0 && currentRules_.teamCount >= 2) {
+        float margin = 96.0f;
+        Vec2 corners[4] = {
+            {margin,       margin},
+            {ww - margin,  wh - margin},
+            {ww - margin,  margin},
+            {margin,       wh - margin}
+        };
+        Vec2 target = corners[localTeam_ % 4];
+        for (int attempt = 0; attempt < 50; attempt++) {
+            float rx = target.x + (float)(rand() % 200 - 100);
+            float ry = target.y + (float)(rand() % 200 - 100);
+            rx = std::max(64.0f, std::min(ww - 64.0f, rx));
+            ry = std::max(64.0f, std::min(wh - 64.0f, ry));
+            if (!map_.worldCollides(rx, ry, PLAYER_SIZE * 0.5f))
+                return {rx, ry};
+        }
+        return corners[localTeam_ % 4]; // fallback: corner even if colliding
+    }
+
+    // No teams: pick a random open tile
+    for (int attempt = 0; attempt < 80; attempt++) {
+        float rx = (float)(64 + rand() % (map_.width  * 64 - 128));
+        float ry = (float)(64 + rand() % (map_.height * 64 - 128));
+        if (!map_.worldCollides(rx, ry, PLAYER_SIZE * 0.5f))
+            return {rx, ry};
+    }
+    return {ww / 2.0f, wh / 2.0f}; // ultimate fallback
+}
+
 void Game::spawnBomb() {
+    auto& net = NetworkManager::instance();
     Bomb b;
     b.pos = player_.pos;
     // Start at a random angle around the player
     b.orbitAngle = (float)(rand() % 360) * M_PI / 180.0f;
     b.orbitRadius = 55.0f + (float)(rand() % 20);
     b.orbitSpeed = 3.0f + (float)(rand() % 100) / 100.0f; // radians/sec
+    b.ownerId = net.isInGame() ? net.localPlayerId() : 255;
     bombs_.push_back(b);
+    // Notify other clients so they can render the orbiting bomb
+    if (net.isInGame()) net.sendBombOrbit(b.ownerId);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -3207,7 +3202,7 @@ void Game::updateSpawning(float dt) {
                 if (allDead) {
                     auto& net = NetworkManager::instance();
                     if (net.isHost()) {
-                        net.sendGameEnd();
+                        net.sendGameEnd((uint8_t)MatchEndReason::WavesCleared);
                     }
                     return;
                 }
@@ -3231,7 +3226,7 @@ void Game::updateSpawning(float dt) {
                 if (allDead) {
                     auto& net = NetworkManager::instance();
                     if (net.isHost()) {
-                        net.sendGameEnd();
+                        net.sendGameEnd((uint8_t)MatchEndReason::WavesCleared);
                     }
                 }
                 return;
@@ -3291,7 +3286,7 @@ void Game::resolveCollisions() {
         for (auto& e : enemies_) {
             if (!e.alive) continue;
             if (circleOverlap(b.pos, b.size, e.pos, e.size * 0.7f)) {
-                e.hp -= b.damage;
+                // Visual feedback on all peers
                 e.damageFlash = 1.0f;
                 if (!b.piercing) {
                     b.alive = false;
@@ -3300,18 +3295,22 @@ void Game::resolveCollisions() {
                         net.sendBulletHit(b.netId);
                     }
                 }
-                // Aggro — target the player who shot this bullet
-                e.state = EnemyState::Chase;
-                e.lastSeenTime = gameTime_;
-                e.idleTimer    = 0;
-                if (b.ownerId != 255) e.targetPlayerId = b.ownerId;
-                if (e.hp <= 0) {
-                    uint32_t eIdx = (uint32_t)(&e - &enemies_[0]);
-                    killEnemy(e);
-                    // Broadcast kill so clients sync immediately
-                    if (net.isInGame()) {
-                        net.sendEnemyKilled(eIdx, net.localPlayerId());
-                        enemyStatesNeedUpdate_ = true;
+                // State changes are HOST-ONLY to keep enemy HP authoritative
+                if (!net.isOnline() || net.isHost()) {
+                    e.hp -= b.damage;
+                    // Aggro — target the player who shot this bullet
+                    e.state = EnemyState::Chase;
+                    e.lastSeenTime = gameTime_;
+                    e.idleTimer    = 0;
+                    if (b.ownerId != 255) e.targetPlayerId = b.ownerId;
+                    if (e.hp <= 0) {
+                        uint32_t eIdx = (uint32_t)(&e - &enemies_[0]);
+                        killEnemy(e);
+                        // Broadcast kill so clients sync immediately
+                        if (net.isInGame()) {
+                            net.sendEnemyKilled(eIdx, net.localPlayerId());
+                            enemyStatesNeedUpdate_ = true;
+                        }
                     }
                 }
                 break;
@@ -3337,7 +3336,7 @@ void Game::resolveCollisions() {
                 camera_.addShake(1.8f);
                 if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
                 if (p.dead) {
-                    if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                    if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 2); }
                     camera_.addShake(4.0f);
                     auto& net = NetworkManager::instance();
                     if (net.isInGame()) net.sendPlayerDied(net.localPlayerId(), 0);
@@ -3348,7 +3347,7 @@ void Game::resolveCollisions() {
 
     // Melee enemies vs player (dash collision)
     for (auto& e : enemies_) {
-        if (!e.alive || !e.isDashing) continue;
+        if (!e.alive || !(e.isDashing || e.netIsDashing)) continue;
         if (circleOverlap(e.pos, e.size * 0.6f, p.pos, PLAYER_SIZE * 0.5f)) {
             if (p.isParrying) {
                 // Parry counter!
@@ -3365,7 +3364,7 @@ void Game::resolveCollisions() {
                 camera_.addShake(1.8f);
                 if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
                 if (p.dead) {
-                    if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                    if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 2); }
                     camera_.addShake(4.0f);
                     auto& net = NetworkManager::instance();
                     if (net.isInGame()) net.sendPlayerDied(net.localPlayerId(), 0);
@@ -3422,7 +3421,7 @@ void Game::resolveCollisions() {
                         if (newHp <= 0) {
                             p.takeDamage(b.damage);  // sets dead flag
                             camera_.addShake(4.0f);
-                            if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                            if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 2); }
                             net.sendPlayerDied(net.localPlayerId(), b.ownerId);
                         } else {
                             p.takeDamage(b.damage);
@@ -3449,7 +3448,7 @@ void Game::resolveCollisions() {
         for (auto& e : enemies_) {
             if (!e.alive) continue;
             if (circleOverlap(b.pos, BOMB_SIZE, e.pos, e.size * 0.7f)) {
-                spawnExplosion(b.pos);
+                spawnExplosion(b.pos, b.ownerId);
                 b.alive = false;
                 break;
             }
@@ -3464,9 +3463,10 @@ void Game::resolveCollisions() {
             if (!b.alive || !b.hasDashed) continue;
             for (const auto& rp : netBvP.players()) {
                 if (rp.id == localId || !rp.alive || rp.spectating) continue;
+                if (rp.id == b.ownerId) continue;  // can't detonate on own player
                 if (localTeam_ >= 0 && rp.team == localTeam_) continue;
                 if (circleOverlap(b.pos, BOMB_SIZE, rp.targetPos, 18.0f)) {
-                    spawnExplosion(b.pos);
+                    spawnExplosion(b.pos, b.ownerId);
                     b.alive = false;
                     break;
                 }
@@ -3660,15 +3660,15 @@ void Game::render() {
                 bool showDash    = e.isDashing    || e.netIsDashing;
                 bool showCharge  = e.dashCharging || e.netDashCharging;
 
-                // Red ghost trail during dash
+                // Red ghost trail during dash — subtle/transparent
                 if (showDash && e.type == EnemyType::Melee) {
                     Vec2 trailDir = (e.dashDir.lengthSq() > 0.001f) ? e.dashDir : Vec2{1,0};
                     for (int t = 1; t <= 4; t++) {
                         Vec2 trailPos = e.pos - trailDir * e.size * 0.65f * (float)t;
-                        Uint8 alpha = (Uint8)std::max(0, 160 - t * 38);
-                        SDL_Color trailCol = {255, 30, 30, alpha};
+                        Uint8 alpha = (Uint8)std::max(0, 70 - t * 16);
+                        SDL_Color trailCol = {220, 60, 60, alpha};
                         renderSpriteEx(tex, trailPos, e.rotation + M_PI/2,
-                                       drawScale * (1.0f - t * 0.07f), trailCol);
+                                       drawScale * (1.0f - t * 0.10f), trailCol);
                     }
                 }
 
@@ -4173,6 +4173,10 @@ void Game::render() {
         }
         break;
 
+    case GameState::WinLoss:
+        renderWinLoss();
+        break;
+
     case GameState::Scoreboard:
         renderScoreboard();
         break;
@@ -4404,6 +4408,8 @@ void Game::renderMap() {
                 tileAngle = (tileHash % 4) * 90.0;
                 if (tileHash & 0x100) tileFlip = (SDL_RendererFlip)(tileFlip | SDL_FLIP_HORIZONTAL);
                 if (tileHash & 0x200) tileFlip = (SDL_RendererFlip)(tileFlip | SDL_FLIP_VERTICAL);
+            } else if (tile >= TILE_CUSTOM_0 && tile <= TILE_CUSTOM_7) {
+                tex = customTileTextures_[tile - TILE_CUSTOM_0];
             } else {
                 // Grass — use gravel transition sprites
                 bool R = isGrv(x+1, y);
@@ -4653,13 +4659,17 @@ void Game::renderUI() {
         //drawText(str, 20, 100, 16, {255, 200, 100, 255});
     }
 
-    // Timer
+    // Timer — in multiplayer move to center-top to avoid overlapping stats
     {
         char timeStr[32];
         int mins = (int)gameTime_ / 60;
         int secs = (int)gameTime_ % 60;
         snprintf(timeStr, sizeof(timeStr), "%d:%02d", mins, secs);
-        drawText(timeStr, SCREEN_W - 100, 20, 20, white);
+        if (NetworkManager::instance().isOnline()) {
+            drawTextCentered(timeStr, 8, 18, {200, 200, 200, 180});
+        } else {
+            drawText(timeStr, SCREEN_W - 100, 20, 20, white);
+        }
     }
 
     // FPS
@@ -4989,7 +4999,7 @@ void Game::renderConfigMenu() {
         std::string uDisplay = config_.username;
         if (usernameTyping_) {
             static float blink = 0; blink += 0.016f;
-            if ((int)(blink * 3) % 2 == 0) uDisplay += '_';
+            uDisplay += ((int)(blink * 1.5f) % 2 == 0) ? '_' : ' ';
         }
         char ubuf[128];
         snprintf(ubuf, sizeof(ubuf), "Username:  %s", uDisplay.c_str());
@@ -5089,7 +5099,7 @@ void Game::renderPauseMenu() {
         itemY += stepY;
     }
 
-    drawTextCentered("LEFT/RIGHT adjust volume & fullscreen   A/ENTER confirm", py + panelH - 30, 12, {80, 80, 90, 255});
+    drawTextCentered("", py + panelH - 30, 12, {80, 80, 90, 255});
 }
 
 void Game::renderDeathScreen() {
@@ -5192,6 +5202,13 @@ void Game::startCustomMap(const std::string& path) {
         return;
     }
 
+    // Load custom tile textures
+    for (int i = 0; i < 8; i++) {
+        customTileTextures_[i] = nullptr;
+        if (!customMap_.customTilePaths[i].empty())
+            customTileTextures_[i] = Assets::instance().tex(customMap_.customTilePaths[i]);
+    }
+
     state_ = GameState::PlayingCustom;
     playingCustomMap_ = true;
     customGoalOpen_ = false;
@@ -5269,6 +5286,13 @@ void Game::startCustomMapMultiplayer(const std::string& path) {
     if (!customMap_.loadFromFile(path)) {
         printf("Failed to load custom map for multiplayer: %s\n", path.c_str());
         return;
+    }
+
+    // Load custom tile textures
+    for (int i = 0; i < 8; i++) {
+        customTileTextures_[i] = nullptr;
+        if (!customMap_.customTilePaths[i].empty())
+            customTileTextures_[i] = Assets::instance().tex(customMap_.customTilePaths[i]);
     }
 
     playingCustomMap_ = true;
@@ -5713,23 +5737,10 @@ void Game::renderCharCreator() {
     // Field 0: Name
     if (cc.textEditing) {
         drawText("NAME:", 120, y, 20, yellow);
-        std::string display = cc.textBuf + "_";
+        static float ccBlink = 0; ccBlink += 0.016f;
+        std::string display = cc.textBuf + ((int)(ccBlink * 1.5f) % 2 == 0 ? '_' : ' ');
         drawText(display.c_str(), 560, y, 20, yellow);
-        // Show char palette row
-        static const char ccCharPal[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 _-!@#.";
-        int pi = cc.gpCharIdx;
-        int palLen = (int)strlen(ccCharPal);
-        char charRow[48];
-        int cx = 0;
-        for (int d = -5; d <= 5; d++) {
-            int idx = (pi + d + palLen) % palLen;
-            charRow[cx++] = (d == 0) ? '[' : ' ';
-            charRow[cx++] = ccCharPal[idx];
-            charRow[cx++] = (d == 0) ? ']' : ' ';
-        }
-        charRow[cx] = 0;
-        drawText(charRow, 120, y + 24, 16, cyan);
-        drawText("ENTER/X confirm  ESC/B cancel  DPad:select char  A:type  Y:delete", 120, y + 44, 12, gray);
+        renderSoftKB(y + 30);
     } else {
         SDL_Color nc = (cc.field == 0) ? white : gray;
         drawText("NAME:", 120, y, 20, nc);
@@ -6337,17 +6348,41 @@ void Game::loadServerPresets() {
     serverPresets_.clear();
     FILE* f = fopen("presets.txt", "r");
     if (!f) return;
-    char line[512];
+    char line[1024];
     while (fgets(line, sizeof(line), f)) {
         char name[128], gmId[128];
         int maxP = 8, port = 7777, mapIdx = 0;
-        if (sscanf(line, "%127[^|]|%127[^|]|%d|%d|%d", name, gmId, &maxP, &port, &mapIdx) >= 2) {
+        int isPvp = 0, ffir = 0, teams = 2, mw = 200, mh = 200, pHp = 100, lives = 0, livesShared = 0, waves = 10, waveCount = 10;
+        float ehp = 1.0f, espd = 1.0f, spawnR = 1.0f, crate = 30.0f, pvpMatchDur = 0.0f;
+        int n = sscanf(line, "%127[^|]|%127[^|]|%d|%d|%d|%d|%d|%d|%d|%d|%f|%f|%f|%d|%d|%d|%d|%f|%f",
+                       name, gmId, &maxP, &port, &mapIdx,
+                       &isPvp, &ffir, &teams, &mw, &mh,
+                       &ehp, &espd, &spawnR, &pHp, &lives, &livesShared, &waveCount, &crate, &pvpMatchDur);
+        if (n >= 2) {
             ServerPreset p;
             p.name = name;
             p.gamemodeId = gmId;
             p.maxPlayers = maxP;
             p.hostPort = port;
             p.mapIndex = mapIdx;
+            if (n >= 18) {
+                p.lobbySettings.isPvp        = (bool)isPvp;
+                p.lobbySettings.friendlyFire = (bool)ffir;
+                p.lobbySettings.teamCount    = teams;
+                p.lobbySettings.mapWidth     = mw;
+                p.lobbySettings.mapHeight    = mh;
+                p.lobbySettings.enemyHpScale    = ehp;
+                p.lobbySettings.enemySpeedScale = espd;
+                p.lobbySettings.spawnRateScale  = spawnR;
+                p.lobbySettings.playerMaxHp  = pHp;
+                p.lobbySettings.livesPerPlayer = lives;
+                p.lobbySettings.livesShared  = (bool)livesShared;
+                p.lobbySettings.waveCount    = waveCount;
+                p.lobbySettings.crateInterval = crate;
+            }
+            if (n >= 19) {
+                p.lobbySettings.pvpMatchDuration = pvpMatchDur;
+            }
             serverPresets_.push_back(p);
         }
     }
@@ -6359,20 +6394,28 @@ void Game::saveServerPresets() {
     FILE* f = fopen("presets.txt", "w");
     if (!f) { printf("Failed to save presets\n"); return; }
     for (auto& p : serverPresets_) {
-        fprintf(f, "%s|%s|%d|%d|%d\n", p.name.c_str(), p.gamemodeId.c_str(),
-                p.maxPlayers, p.hostPort, p.mapIndex);
+        const auto& ls = p.lobbySettings;
+        fprintf(f, "%s|%s|%d|%d|%d|%d|%d|%d|%d|%d|%.4f|%.4f|%.4f|%d|%d|%d|%d|%.4f|%.4f\n",
+                p.name.c_str(), p.gamemodeId.c_str(),
+                p.maxPlayers, p.hostPort, p.mapIndex,
+                (int)ls.isPvp, (int)ls.friendlyFire, ls.teamCount,
+                ls.mapWidth, ls.mapHeight,
+                ls.enemyHpScale, ls.enemySpeedScale, ls.spawnRateScale,
+                ls.playerMaxHp, ls.livesPerPlayer, (int)ls.livesShared,
+                ls.waveCount, ls.crateInterval, ls.pvpMatchDuration);
     }
     fclose(f);
     printf("Saved %d presets\n", (int)serverPresets_.size());
 }
 
-void Game::addServerPreset(const std::string& name, const std::string& gamemodeId, int maxPlayers, int port, int mapIdx) {
+void Game::addServerPreset(const std::string& name, const std::string& gamemodeId, int maxPlayers, int port, int mapIdx, const LobbySettings& ls) {
     ServerPreset p;
     p.name = name;
     p.gamemodeId = gamemodeId;
     p.maxPlayers = maxPlayers;
     p.hostPort = port;
     p.mapIndex = mapIdx;
+    p.lobbySettings = ls;
     serverPresets_.push_back(p);
     saveServerPresets();
 }
@@ -6397,6 +6440,7 @@ void Game::applyServerPreset(int idx) {
     }
     hostPort_ = p.hostPort;
     hostMapSelectIdx_ = p.mapIndex;
+    lobbySettings_ = p.lobbySettings;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -6714,9 +6758,15 @@ void Game::setupNetworkCallbacks() {
 
     net.onPlayerJoined = [this](uint8_t id, const std::string& name) {
         printf("[NET] Player joined: %s (id=%d)\n", name.c_str(), id);
-        // Send current lobby settings to the new player (host only)
         auto& net2 = NetworkManager::instance();
         if (net2.isHost()) {
+            // Auto-kick banned players
+            if (bannedPlayerIds_.count(id)) {
+                printf("[NET] Auto-kicking banned player %d\n", id);
+                net2.sendAdminKick(id);
+                return;
+            }
+            // Send current lobby settings to the new player
             net2.sendConfigSync(lobbySettings_);
         }
     };
@@ -6845,20 +6895,48 @@ void Game::setupNetworkCallbacks() {
     };
 
     net.onBombSpawned = [this](Vec2 pos, Vec2 vel, uint8_t playerId) {
-        if (playerId != NetworkManager::instance().localPlayerId()) {
-            Bomb bomb;
-            bomb.pos = pos;
-            bomb.vel = vel;
-            bomb.alive = true;
-            bomb.hasDashed = true;   // network bombs are always launched
-            bomb.animFrame = 0;
-            bombs_.push_back(bomb);
+        if (playerId == NetworkManager::instance().localPlayerId()) return;
+        // If we already have an orbiting bomb from this player, convert it in-place
+        // so there is no duplicate when it launches
+        for (auto& b : bombs_) {
+            if (b.ownerId == playerId && b.alive && !b.hasDashed) {
+                b.pos = pos;
+                b.vel = vel;
+                b.hasDashed = true;
+                return;
+            }
         }
+        // No orbiting bomb found — create a launched one (fallback)
+        Bomb bomb;
+        bomb.ownerId = playerId;
+        bomb.pos = pos;
+        bomb.vel = vel;
+        bomb.alive = true;
+        bomb.hasDashed = true;
+        bomb.animFrame = 0;
+        bombs_.push_back(bomb);
     };
 
-    net.onExplosionSpawned = [this](Vec2 pos) {
+    net.onBombOrbit = [this](uint8_t ownerId) {
+        auto& net2 = NetworkManager::instance();
+        if (ownerId == net2.localPlayerId()) return;
+        // Don't duplicate if we already have an orbiting bomb for this player
+        for (auto& b : bombs_) {
+            if (b.ownerId == ownerId && b.alive && !b.hasDashed) return;
+        }
+        Bomb rb;
+        rb.ownerId = ownerId;
+        rb.orbitAngle = (float)(rand() % 360) * (float)M_PI / 180.0f;
+        rb.orbitRadius = 55.0f;
+        rb.orbitSpeed = 3.0f;
+        rb.alive = true;
+        rb.hasDashed = false;
+        bombs_.push_back(rb);
+    };
+
+    net.onExplosionSpawned = [this](Vec2 pos, uint8_t ownerId) {
         suppressNetExplosion_ = true;
-        spawnExplosion(pos);
+        spawnExplosion(pos, ownerId);
         suppressNetExplosion_ = false;
     };
 
@@ -6871,10 +6949,18 @@ void Game::setupNetworkCallbacks() {
 
     net.onPickupCollected = [this](Vec2 pos, uint8_t upgradeType, uint8_t playerId) {
         bool isLocalPick = (playerId == NetworkManager::instance().localPlayerId());
-        // Individual mode: only the picker gets the upgrade (they already applied it in collectPickup)
-        // Shared mode: everyone applies when ANY player picks it up
+        // Individual mode: only the picker gets the upgrade; shared: everyone gets it
         if (isLocalPick || currentRules_.upgradesShared) {
             applyUpgrade((UpgradeType)upgradeType);
+        }
+        // Remove the pickup from the world on all clients (it should disappear for everyone)
+        if (!isLocalPick) {
+            for (auto& p : pickups_) {
+                if (p.alive && (p.pos - pos).lengthSq() < 64.0f * 64.0f) {
+                    p.alive = false;
+                    break;
+                }
+            }
         }
     };
 
@@ -6882,11 +6968,48 @@ void Game::setupNetworkCallbacks() {
         auto& net = NetworkManager::instance();
         NetPlayer* victim = net.findPlayer(playerId);
         if (victim) victim->alive = false;
+
+        // ── Team-colored death burst ──────────────────────────────────────
+        if (currentRules_.teamCount >= 2) {
+            Vec2 dpos = victim ? victim->pos : player_.pos;
+            int  team = victim ? (int)victim->team : (int)localTeam_;
+            if (victim || playerId == net.localPlayerId()) {
+                static const SDL_Color teamColors[4] = {
+                    {255, 80,  80,  255}, {80,  80,  255, 255},
+                    {80,  220, 80,  255}, {255, 180, 60,  255}
+                };
+                SDL_Color tc = (team >= 0 && team < 4) ? teamColors[team]
+                                                       : SDL_Color{180, 180, 180, 255};
+                int numGibs = 22 + rand() % 10;
+                for (int i = 0; i < numGibs; i++) {
+                    BoxFragment f;
+                    f.pos = {dpos.x + (float)(rand() % 24 - 12),
+                             dpos.y + (float)(rand() % 24 - 12)};
+                    float angle = (float)(rand() % 360) * (float)M_PI / 180.0f;
+                    float spd   = 130.0f + (float)(rand() % 320);
+                    f.vel       = {cosf(angle) * spd, sinf(angle) * spd};
+                    f.size      = 3.0f + (float)(rand() % 7);
+                    f.lifetime  = 0.55f + (float)(rand() % 100) / 200.0f;
+                    f.age       = 0;
+                    f.alive     = true;
+                    f.rotation  = (float)(rand() % 360);
+                    f.rotSpeed  = (float)(rand() % 600 - 300);
+                    int var = rand() % 50 - 25;
+                    f.color = {
+                        (Uint8)std::max(0, std::min(255, (int)tc.r + var)),
+                        (Uint8)std::max(0, std::min(255, (int)tc.g + var)),
+                        (Uint8)std::max(0, std::min(255, (int)tc.b + var)),
+                        255
+                    };
+                    boxFragments_.push_back(f);
+                }
+            }
+        }
         // If WE are the one who died, actually kill the local player
         if (playerId == net.localPlayerId() && !player_.dead) {
             player_.dead = true;
             player_.hp = 0;
-            if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+            if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 2); }
             camera_.addShake(4.0f);
             // Transition to death / spectator based on lives
             if (currentRules_.lives > 0 && localLives_ > 0) {
@@ -6902,7 +7025,26 @@ void Game::setupNetworkCallbacks() {
                         if (pp.alive || pp.lives > 0) { allDead = false; break; }
                     }
                     if (allDead) {
-                        net.sendGameEnd();
+                        net.sendGameEnd((uint8_t)MatchEndReason::TeamWiped);
+                    }
+                }
+                // PVP battle-royale: check if only one player/team remains (no-timer mode only)
+                if (lobbySettings_.isPvp && net.isHost() && lobbySettings_.pvpMatchDuration == 0.0f) {
+                    if (lobbySettings_.teamCount >= 2) {
+                        std::set<int> teamsAlive;
+                        for (auto& pp : net.players()) {
+                            if ((pp.alive || pp.lives > 0) && pp.team >= 0)
+                                teamsAlive.insert(pp.team);
+                        }
+                        if ((int)teamsAlive.size() <= 1)
+                            net.sendGameEnd((uint8_t)MatchEndReason::LastAlive);
+                    } else {
+                        int aliveCount = 0;
+                        for (auto& pp : net.players()) {
+                            if (pp.alive || pp.lives > 0) aliveCount++;
+                        }
+                        if (aliveCount <= 1)
+                            net.sendGameEnd((uint8_t)MatchEndReason::LastAlive);
                     }
                 }
             } else {
@@ -6977,7 +7119,7 @@ void Game::setupNetworkCallbacks() {
                 // Host confirmed we're dead
                 player_.dead = true;
                 if (sfxHurt_)  { int ch = Mix_PlayChannel(-1, sfxHurt_,  0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
-                if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 2); }
                 camera_.addShake(4.0f);
             } else if (hp < player_.maxHp) {
                 camera_.addShake(1.8f);
@@ -6995,6 +7137,26 @@ void Game::setupNetworkCallbacks() {
         waveNumber_ = waveNum;
         waveAnnounceTimer_ = 2.5f;
         waveAnnounceNum_ = waveNum;
+    };
+
+    net.onEnemyBulletSpawned = [this](Vec2 pos, Vec2 dir) {
+        // Clients only — spawn the bullet locally for visuals and local collision
+        auto& net2 = NetworkManager::instance();
+        if (net2.isHost()) return;
+        Entity b;
+        b.pos = pos;
+        b.vel = dir * ENEMY_BULLET_SPEED;
+        b.rotation = atan2f(dir.y, dir.x);
+        b.size = BULLET_SIZE;
+        b.lifetime = ENEMY_BULLET_LIFETIME;
+        b.tag = TAG_ENEMY_BULLET;
+        b.sprite = enemyBulletSprite_;
+        b.damage = 1;
+        enemyBullets_.push_back(b);
+        if (sfxEnemyShoot_) {
+            int ch = Mix_PlayChannel(-1, sfxEnemyShoot_, 0);
+            if (ch >= 0) Mix_Volume(ch, config_.sfxVolume * 2 / 5);
+        }
     };
 
     net.onEnemyStatesReceived = [this](const void* rawData, int count) {
@@ -7068,6 +7230,7 @@ void Game::setupNetworkCallbacks() {
         joinPortTyping_ = false;
         mpUsernameTyping_ = false;
         portTyping_ = false;
+        if (softKB_.active) softKB_.close(false);
 #ifndef __SWITCH__
         SDL_StopTextInput();
 #endif
@@ -7087,6 +7250,8 @@ void Game::setupNetworkCallbacks() {
 
         // Initialise lives tracking (client side)
         spectatorMode_ = false;
+        matchElapsed_ = 0.0f;
+        matchTimer_   = (lobbySettings_.pvpMatchDuration > 0.0f) ? lobbySettings_.pvpMatchDuration : 0.0f;
         localLives_ = (currentRules_.lives > 0 && !currentRules_.sharedLives) ? currentRules_.lives : -1;
         sharedLives_ = -1; // host tracks shared pool
 
@@ -7109,6 +7274,7 @@ void Game::setupNetworkCallbacks() {
             } else {
                 mapSrand(mapSeed);             // same seed as host → same map
                 startGame();                // generates map, resets player & camera
+                player_.pos = pickSpawnPos(); // team corner or random, not map centre
             }
         }
         // PvP: no damage cooldown so rapid hits always register
@@ -7119,10 +7285,118 @@ void Game::setupNetworkCallbacks() {
         respawnTimer_ = currentRules_.respawnTime;
     };
 
-    net.onGameEnded = [this]() {
-        state_ = GameState::Lobby;
+    net.onGameEnded = [this](uint8_t rawReason) {
+        auto reason = (MatchEndReason)rawReason;
+        auto& netR = NetworkManager::instance();
+        auto  players = netR.players(); // snapshot for result computation
+
+        matchResult_ = MatchResult{};
+        matchResult_.reason      = reason;
+        matchResult_.matchElapsed = matchElapsed_;
+
+        // Team-name helper
+        static const char* kTeamNames[4] = {"Red","Blue","Green","Yellow"};
+
+        switch (reason) {
+            case MatchEndReason::WavesCleared:
+                matchResult_.isWin    = true;
+                matchResult_.headline = "VICTORY";
+                matchResult_.subtitle = "All waves cleared!";
+                break;
+
+            case MatchEndReason::TeamWiped:
+                matchResult_.isWin    = false;
+                matchResult_.headline = "DEFEAT";
+                matchResult_.subtitle = "All players eliminated";
+                break;
+
+            case MatchEndReason::LastAlive:
+                if (!spectatorMode_) {
+                    matchResult_.isWin    = true;
+                    matchResult_.headline = "VICTORY";
+                    if (lobbySettings_.teamCount >= 2)
+                        matchResult_.subtitle = "Your team is the last standing!";
+                    else
+                        matchResult_.subtitle = "Last player standing!";
+                    matchResult_.winnerTeam = localTeam_;
+                    if (auto* lp = netR.localPlayer()) matchResult_.winnerName = lp->username;
+                } else {
+                    matchResult_.isWin    = false;
+                    matchResult_.headline = "DEFEAT";
+                    // Find winner
+                    if (lobbySettings_.teamCount >= 2) {
+                        for (auto& p : players) {
+                            if (!p.spectating && p.alive && p.team >= 0) {
+                                matchResult_.winnerTeam = p.team;
+                                break;
+                            }
+                        }
+                        int wt = matchResult_.winnerTeam;
+                        matchResult_.subtitle = std::string(wt >= 0 && wt < 4 ? kTeamNames[wt] : "Unknown") + " team wins!";
+                    } else {
+                        for (auto& p : players) {
+                            if (!p.spectating && p.alive) {
+                                matchResult_.winnerName = p.username;
+                                matchResult_.winnerKills = p.kills;
+                                break;
+                            }
+                        }
+                        if (matchResult_.winnerName.empty() && !players.empty())
+                            matchResult_.winnerName = players[0].username;
+                        matchResult_.subtitle = matchResult_.winnerName + " wins!";
+                    }
+                }
+                break;
+
+            case MatchEndReason::TimeUp:
+                if (lobbySettings_.teamCount >= 2) {
+                    int teamKills[4] = {};
+                    for (auto& p : players)
+                        if (p.team >= 0 && p.team < 4) teamKills[p.team] += p.kills;
+                    int bestTeam = 0;
+                    for (int t = 1; t < 4; t++)
+                        if (teamKills[t] > teamKills[bestTeam]) bestTeam = t;
+                    matchResult_.winnerTeam  = bestTeam;
+                    matchResult_.winnerKills = teamKills[bestTeam];
+                    matchResult_.isWin = (localTeam_ == bestTeam);
+                    if (matchResult_.isWin) {
+                        matchResult_.headline = "VICTORY";
+                        matchResult_.subtitle = std::string("Time's up! ") + kTeamNames[bestTeam] + " team wins with " + std::to_string(teamKills[bestTeam]) + " kills";
+                    } else {
+                        matchResult_.headline = "DEFEAT";
+                        matchResult_.subtitle = std::string("Time's up! ") + kTeamNames[bestTeam] + " team wins with " + std::to_string(teamKills[bestTeam]) + " kills";
+                    }
+                } else {
+                    NetPlayer* best = nullptr;
+                    for (auto& p : players)
+                        if (!best || p.kills > best->kills) best = (NetPlayer*)&p;
+                    if (best) {
+                        matchResult_.winnerName  = best->username;
+                        matchResult_.winnerKills = best->kills;
+                        matchResult_.isWin = (best->id == netR.localPlayerId());
+                    }
+                    if (matchResult_.isWin) {
+                        matchResult_.headline = "VICTORY";
+                        matchResult_.subtitle = "Time's up! You win with " + std::to_string(matchResult_.winnerKills) + " kills!";
+                    } else {
+                        matchResult_.headline = "DEFEAT";
+                        matchResult_.subtitle = "Time's up!  " + matchResult_.winnerName + " wins with " + std::to_string(matchResult_.winnerKills) + " kills";
+                    }
+                }
+                break;
+
+            default: // HostEnded / Unknown
+                matchResult_.isWin    = false;
+                matchResult_.headline = "GAME OVER";
+                matchResult_.subtitle = "Match ended by host";
+                break;
+        }
+
+        state_ = GameState::WinLoss;
         menuSelection_ = 0;
         spectatorMode_ = false;
+        lobbyKickCursor_ = -1;
+        playMenuMusic();
     };
 
     net.onModSyncReceived = [this](const std::vector<uint8_t>& modData) {
@@ -7251,7 +7525,7 @@ void Game::updateMultiplayer(float dt) {
         }
 
         // Respawn countdown
-        if (player_.dead && currentRules_.respawnTime > 0) {
+        if (state_ == GameState::MultiplayerDead && player_.dead && currentRules_.respawnTime > 0) {
             respawnTimer_ -= dt;
             if (respawnTimer_ <= 0) {
                 Vec2 spawnPos;
@@ -7326,15 +7600,33 @@ void Game::updateMultiplayer(float dt) {
                 state_ = GameState::MultiplayerGame;
             }
         }
+
+        // ── Match timer (visible on all clients; only host acts on expiry) ─────
+        if (lobbySettings_.isPvp) {
+            matchElapsed_ += dt;
+            if (lobbySettings_.pvpMatchDuration > 0.0f && matchTimer_ > 0.0f) {
+                matchTimer_ -= dt;
+                if (matchTimer_ < 0.0f) matchTimer_ = 0.0f;
+                // Host triggers end when timer expires
+                if (net.isHost() && matchTimer_ <= 0.0f) {
+                    net.sendGameEnd((uint8_t)MatchEndReason::TimeUp);
+                }
+            }
+        } else if (net.isHost()) {
+            matchElapsed_ += dt;
+        }
     }
 }
 
 void Game::hostGame() {
     auto& net = NetworkManager::instance();
     if (net.host(hostPort_, hostMaxPlayers_ - 1)) {
+        net.setHostPassword(lobbyPassword_);
         state_ = GameState::Lobby;
         menuSelection_ = 0;
         lobbyReady_ = false;
+        lobbyKickCursor_ = -1;
+        bannedPlayerIds_.clear();
         // Initialize lobby settings from current config
         lobbySettings_.mapWidth       = config_.mapWidth;
         lobbySettings_.mapHeight      = config_.mapHeight;
@@ -7388,10 +7680,11 @@ std::string Game::getLocalIP() {
 void Game::joinGame() {
     auto& net = NetworkManager::instance();
     connectStatus_.clear();
-    if (net.join(joinAddress_, joinPort_)) {
+    if (net.join(joinAddress_, joinPort_, joinPassword_)) {
         state_ = GameState::Lobby;
         menuSelection_ = 0;
         lobbyReady_ = false;
+        lobbyKickCursor_ = -1;
         connectTimer_ = 5.0f; // 5 second timeout
         printf("Joining %s:%d...\n", joinAddress_.c_str(), joinPort_);
     } else {
@@ -7422,6 +7715,8 @@ void Game::startMultiplayerGame() {
 
     // Initialise lives tracking
     spectatorMode_ = false;
+    matchElapsed_ = 0.0f;
+    matchTimer_   = (lobbySettings_.pvpMatchDuration > 0.0f) ? lobbySettings_.pvpMatchDuration : 0.0f;
     if (currentRules_.lives > 0 && !currentRules_.sharedLives) {
         localLives_ = currentRules_.lives;
     } else {
@@ -7486,6 +7781,7 @@ void Game::startMultiplayerGame() {
 
     // Start the game — use generated map
     startGame();
+    player_.pos = pickSpawnPos(); // team corner or random, not map centre
     if (lobbySettings_.isPvp) player_.invulnDuration = 0.0f;
     state_ = GameState::MultiplayerGame;
     net.startGame(mapSeed, config_.mapWidth, config_.mapHeight);
@@ -7912,33 +8208,11 @@ void Game::renderHostSetup() {
         std::string pDisp = portTyping_ ? portStr_ : std::to_string(hostPort_);
         if (portTyping_) {
             static float pBlink = 0; pBlink += 0.016f;
-            if ((int)(pBlink * 3) % 2 == 0) pDisp += '_';
+            pDisp += ((int)(pBlink * 1.5f) % 2 == 0) ? '_' : ' ';
         }
         drawRow(1, "Port:", pDisp.c_str(), false);
         if (portTyping_) {
-            // Digit palette
-            static const char portPalette[] = "0123456789";
-            int palLen = (int)strlen(portPalette);
-            int cellW = 36, cellH = 36;
-            int totalW = palLen * cellW;
-            int startX = (SCREEN_W - totalW) / 2;
-            int palY = y - step + step / 2 + 4;
-            SDL_SetRenderDrawColor(renderer_, 15, 16, 28, 210);
-            SDL_Rect palBg = {startX - 8, palY - 8, totalW + 16, cellH + 16};
-            SDL_RenderFillRect(renderer_, &palBg);
-            for (int i = 0; i < palLen; i++) {
-                int cx = startX + i * cellW;
-                bool sel2 = (i == portCharIdx_);
-                if (sel2) {
-                    SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 255);
-                    SDL_Rect bg2 = {cx, palY, cellW - 4, cellH - 4};
-                    SDL_RenderFillRect(renderer_, &bg2);
-                }
-                char ch[2] = { portPalette[i], 0 };
-                drawText(ch, cx + 10, palY + 6, sel2 ? 22 : 18, sel2 ? white : gray);
-            }
-            drawTextCentered("Type digits   ENTER confirm   BACKSPACE delete",
-                             palY + cellH + 8, 12, {80, 80, 90, 255});
+            renderSoftKB(y - step + step / 2 + 4);
         }
     }
 
@@ -7947,9 +8221,29 @@ void Game::renderHostSetup() {
         std::string uDisplay = config_.username;
         if (mpUsernameTyping_) {
             static float blinkT = 0; blinkT += 0.016f;
-            if ((int)(blinkT * 3) % 2 == 0) uDisplay += '_';
+            uDisplay += ((int)(blinkT * 1.5f) % 2 == 0) ? '_' : ' ';
         }
         drawRow(2, "Username:", uDisplay.c_str(), false);
+    }
+
+    // Password (editable — empty means open lobby)
+    {
+        std::string pwDisplay;
+        if (hostPasswordTyping_) {
+            // Show actual text while typing
+            pwDisplay = lobbyPassword_;
+            static float pwBlink = 0; pwBlink += 0.016f;
+            pwDisplay += ((int)(pwBlink * 1.5f) % 2 == 0) ? '_' : ' ';
+        } else if (lobbyPassword_.empty()) {
+            pwDisplay = "(none — open lobby)";
+        } else {
+            // Mask password
+            pwDisplay = std::string(lobbyPassword_.size(), '*');
+        }
+        drawRow(3, "Password:", pwDisplay.c_str(), false);
+        if (hostPasswordTyping_) {
+            renderSoftKB(y);
+        }
     }
 
     // IP Address display
@@ -7962,58 +8256,11 @@ void Game::renderHostSetup() {
         y += step + 10;
     }
 
-    // Spacer
-    y += 6;
-
-    // --- Preset buttons ---
-    // Save preset
-    {
-        bool sel = (hostSetupSelection_ == 3);
-        SDL_Color c = sel ? cyan : gray;
-        if (sel) {
-            SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 20);
-            SDL_Rect bg = {SCREEN_W / 2 - 200, y - 4, 400, 34};
-            SDL_RenderFillRect(renderer_, &bg);
-            SDL_SetRenderDrawColor(renderer_, 0, 255, 228, 140);
-            SDL_Rect bar = {SCREEN_W / 2 - 200, y - 4, 3, 34};
-            SDL_RenderFillRect(renderer_, &bar);
-        }
-        drawTextCentered(sel ? "> SAVE AS PRESET <" : "SAVE AS PRESET", y + 4, sel ? 20 : 18, c);
-        y += step - 6;
-    }
-
-    // Load preset
-    {
-        bool sel = (hostSetupSelection_ == 4);
-        SDL_Color c = sel ? cyan : gray;
-        if (sel) {
-            SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 20);
-            SDL_Rect bg = {SCREEN_W / 2 - 200, y - 4, 400, 34};
-            SDL_RenderFillRect(renderer_, &bg);
-            SDL_SetRenderDrawColor(renderer_, 0, 255, 228, 140);
-            SDL_Rect bar = {SCREEN_W / 2 - 200, y - 4, 3, 34};
-            SDL_RenderFillRect(renderer_, &bar);
-        }
-        std::string presetLabel = "LOAD PRESET";
-        if (!serverPresets_.empty()) {
-            int idx = presetSelection_ % (int)serverPresets_.size();
-            presetLabel = sel
-                ? "< " + serverPresets_[idx].name + " >"
-                : serverPresets_[idx].name;
-        } else {
-            presetLabel = "(no presets saved)";
-        }
-        char pbuf[128];
-        snprintf(pbuf, sizeof(pbuf), "LOAD:  %s", presetLabel.c_str());
-        drawTextCentered(pbuf, y + 4, sel ? 20 : 18, !serverPresets_.empty() ? c : (SDL_Color){60, 60, 70, 255});
-        y += step - 6;
-    }
-
     y += 10;
 
     // Start button
     {
-        bool sel = (hostSetupSelection_ == 5);
+        bool sel = (hostSetupSelection_ == 4);
         SDL_Color c = sel ? green : gray;
         if (sel) {
             SDL_SetRenderDrawColor(renderer_, 50, 255, 100, 20);
@@ -8026,7 +8273,7 @@ void Game::renderHostSetup() {
 
     // Back button
     {
-        bool sel = (hostSetupSelection_ == 6);
+        bool sel = (hostSetupSelection_ == 5);
         SDL_Color c = sel ? white : gray;
         drawTextCentered(sel ? "> BACK <" : "BACK", y + 4, 20, c);
     }
@@ -8063,7 +8310,7 @@ void Game::renderJoinMenu() {
     if (ipTyping_) {
         static float blinkTimer = 0;
         blinkTimer += 0.016f;
-        if ((int)(blinkTimer * 3) % 2 == 0) addrDisplay += '_';
+        addrDisplay += ((int)(blinkTimer * 1.5f) % 2 == 0) ? '_' : ' ';
     }
 
     // Address box
@@ -8082,7 +8329,7 @@ void Game::renderJoinMenu() {
         std::string pDisp = joinPortTyping_ ? joinPortStr_ : std::to_string(joinPort_);
         if (joinPortTyping_) {
             static float pBlink = 0; pBlink += 0.016f;
-            if ((int)(pBlink * 3) % 2 == 0) pDisp += '_';
+            pDisp += ((int)(pBlink * 1.5f) % 2 == 0) ? '_' : ' ';
         }
         SDL_SetRenderDrawColor(renderer_, 20, 22, 35, 255);
         SDL_Rect pBox = {SCREEN_W / 2 - 200, pBoxY - 8, 400, 42};
@@ -8099,7 +8346,7 @@ void Game::renderJoinMenu() {
         std::string uDisp = config_.username;
         if (mpUsernameTyping_) {
             static float uBlink = 0; uBlink += 0.016f;
-            if ((int)(uBlink * 3) % 2 == 0) uDisp += '_';
+            uDisp += ((int)(uBlink * 1.5f) % 2 == 0) ? '_' : ' ';
         }
         SDL_SetRenderDrawColor(renderer_, 20, 22, 35, 255);
         SDL_Rect uBox = {SCREEN_W / 2 - 200, uBoxY - 8, 400, 42};
@@ -8110,89 +8357,28 @@ void Game::renderJoinMenu() {
         drawText(uDisp.c_str(), SCREEN_W / 2 - 50, uBoxY, 20, mpUsernameTyping_ ? cyan : white);
     }
 
-    if (ipTyping_) {
-        // Gamepad char picker
-        static const char ipPalette[] = "0123456789.";
-        int palLen = (int)strlen(ipPalette);
-        int cellW = 36, cellH = 36;
-        int totalW = palLen * cellW;
-        int startX = (SCREEN_W - totalW) / 2;
-        int palY = SCREEN_H / 2 + 10;
-
-        // Palette background
-        SDL_SetRenderDrawColor(renderer_, 15, 16, 28, 200);
-        SDL_Rect palBg = {startX - 8, palY - 8, totalW + 16, cellH + 16};
-        SDL_RenderFillRect(renderer_, &palBg);
-
-        for (int i = 0; i < palLen; i++) {
-            int cx = startX + i * cellW;
-            bool sel = (i == ipCharIdx_);
-            if (sel) {
-                SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 255);
-                SDL_Rect bg = {cx, palY, cellW - 4, cellH - 4};
-                SDL_RenderFillRect(renderer_, &bg);
-            }
-            char ch[2] = { ipPalette[i], 0 };
-            drawText(ch, cx + 10, palY + 6, sel ? 22 : 18, sel ? white : gray);
+    // Password box
+    {
+        int pwBoxY = boxY + 144;
+        std::string pwDisp;
+        if (joinPasswordTyping_) {
+            pwDisp = joinPassword_;
+            static float pwBlink = 0; pwBlink += 0.016f;
+            pwDisp += ((int)(pwBlink * 1.5f) % 2 == 0) ? '_' : ' ';
+        } else {
+            pwDisp = joinPassword_.empty() ? "" : std::string(joinPassword_.size(), '*');
         }
-        drawTextCentered("\xe2\x86\x90\xe2\x86\x92 cycle   A insert   Y delete   START connect   B cancel",
-                         palY + 56, 12, {80, 80, 90, 255});
-    } else if (mpUsernameTyping_) {
-        // Username editing palette
-        static const char userPalette[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
-        int palLen = (int)strlen(userPalette);
-        int cellW = 20, cellH = 26;
-        int cols = 16;
-        int rows = (palLen + cols - 1) / cols;
-        int totalW = cols * cellW;
-        int startX = (SCREEN_W - totalW) / 2;
-        int palY = SCREEN_H / 2 + 10;
+        SDL_SetRenderDrawColor(renderer_, 20, 22, 35, 255);
+        SDL_Rect pwBox = {SCREEN_W / 2 - 200, pwBoxY - 8, 400, 42};
+        SDL_RenderFillRect(renderer_, &pwBox);
+        SDL_SetRenderDrawColor(renderer_, joinPasswordTyping_ ? 0 : 60, joinPasswordTyping_ ? 200 : 60, joinPasswordTyping_ ? 180 : 80, 180);
+        SDL_RenderDrawRect(renderer_, &pwBox);
+        drawText("Password:", SCREEN_W / 2 - 190, pwBoxY, 20, gray);
+        drawText(pwDisp.empty() ? "(leave blank if no password)" : pwDisp.c_str(), SCREEN_W / 2 - 50, pwBoxY, 20, joinPasswordTyping_ ? cyan : (pwDisp.empty() ? gray : white));
+    }
 
-        SDL_SetRenderDrawColor(renderer_, 15, 16, 28, 200);
-        SDL_Rect palBg = {startX - 8, palY - 8, totalW + 16, rows * cellH + 16};
-        SDL_RenderFillRect(renderer_, &palBg);
-
-        for (int i = 0; i < palLen; i++) {
-            int col = i % cols, row = i / cols;
-            int cx = startX + col * cellW;
-            int cy = palY + row * cellH;
-            bool sel = (i == usernameCharIdx_);
-            if (sel) {
-                SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 255);
-                SDL_Rect bg = {cx, cy, cellW - 2, cellH - 2};
-                SDL_RenderFillRect(renderer_, &bg);
-            }
-            char ch[2] = { userPalette[i], 0 };
-            drawText(ch, cx + 4, cy + 3, sel ? 18 : 14, sel ? white : gray);
-        }
-        drawTextCentered("Type or use D-pad   A insert   Y delete   B/Enter confirm",
-                         palY + rows * cellH + 8, 12, {80, 80, 90, 255});
-    } else if (joinPortTyping_) {
-        // Port digit palette (gamepad)
-        static const char portPalette[] = "0123456789";
-        int palLen = (int)strlen(portPalette);
-        int cellW = 36, cellH = 36;
-        int totalW = palLen * cellW;
-        int startX = (SCREEN_W - totalW) / 2;
-        int palY = SCREEN_H / 2 + 30;
-
-        SDL_SetRenderDrawColor(renderer_, 15, 16, 28, 200);
-        SDL_Rect palBg = {startX - 8, palY - 8, totalW + 16, cellH + 16};
-        SDL_RenderFillRect(renderer_, &palBg);
-
-        for (int i = 0; i < palLen; i++) {
-            int cx = startX + i * cellW;
-            bool sel = (i == joinPortCharIdx_);
-            if (sel) {
-                SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 255);
-                SDL_Rect bg2 = {cx, palY, cellW - 4, cellH - 4};
-                SDL_RenderFillRect(renderer_, &bg2);
-            }
-            char ch[2] = { portPalette[i], 0 };
-            drawText(ch, cx + 10, palY + 6, sel ? 22 : 18, sel ? white : gray);
-        }
-        drawTextCentered("Type digits   ENTER confirm   BACKSPACE delete",
-                         palY + cellH + 8, 12, {80, 80, 90, 255});
+    if (softKB_.active) {
+        renderSoftKB(SCREEN_H / 2 + 10);
     } else {
         int btnY = SCREEN_H / 2 + 30;
         int btnStep = 36;
@@ -8219,22 +8405,32 @@ void Game::renderJoinMenu() {
             drawTextCentered(uBuf, btnY, sel ? 22 : 20, sel ? cyan : gray);
             btnY += btnStep;
         }
-        // Connect
+        // Edit password
         {
             bool sel = (joinMenuSelection_ == 3);
+            std::string pwDisplay = joinPassword_.empty() ? "" : std::string(joinPassword_.size(), '*');
+            char pwBuf[128];
+            snprintf(pwBuf, sizeof(pwBuf), sel ? "> PASSWORD: %s <" : "PASSWORD: %s",
+                     pwDisplay.empty() ? "(none)" : pwDisplay.c_str());
+            drawTextCentered(pwBuf, btnY, sel ? 22 : 20, sel ? cyan : gray);
+            btnY += btnStep;
+        }
+        // Connect
+        {
+            bool sel = (joinMenuSelection_ == 4);
             drawTextCentered(sel ? "> CONNECT <" : "CONNECT", btnY, sel ? 24 : 20, sel ? green : gray);
             btnY += btnStep;
         }
         // Save server
         {
-            bool sel = (joinMenuSelection_ == 4);
+            bool sel = (joinMenuSelection_ == 5);
             SDL_Color saveColor = {0, 200, 180, 255};
             drawTextCentered(sel ? "> SAVE SERVER <" : "SAVE SERVER", btnY, sel ? 22 : 18, sel ? saveColor : gray);
             btnY += btnStep;
         }
         // Back
         {
-            bool sel = (joinMenuSelection_ == 5);
+            bool sel = (joinMenuSelection_ == 6);
             drawTextCentered(sel ? "> BACK <" : "BACK", btnY, 20, sel ? white : gray);
         }
         drawTextCentered("A / ENTER - Select    B / ESC - Back", SCREEN_H - 40, 13, {80, 80, 90, 255});
@@ -8363,79 +8559,141 @@ void Game::renderLobby() {
             drawSettingRow(2, "Upgrades:", val);
         }
 
-        // 3: Map width
+        // 3: Map selection (Generated or custom map file)
         {
-            char v[16]; snprintf(v, sizeof(v), "%d", lobbySettings_.mapWidth);
-            drawSettingRow(3, "Map Width:", v);
+            std::string mapLabel = "Generated";
+            if (lobbyMapIdx_ > 0 && lobbyMapIdx_ <= (int)mapFiles_.size()) {
+                std::string mf = mapFiles_[lobbyMapIdx_ - 1];
+                size_t sl = mf.rfind('/'); if (sl == std::string::npos) sl = mf.rfind('\\');
+                std::string base = (sl != std::string::npos) ? mf.substr(sl + 1) : mf;
+                size_t dot = base.rfind('.'); if (dot != std::string::npos) base = base.substr(0, dot);
+                mapLabel = base;
+            }
+            if (mapFiles_.empty()) mapLabel = "Generated (no custom maps)";
+            drawSettingRow(3, "Map:", mapLabel.c_str());
         }
 
-        // 4: Map height
+        // 4: Map width (greyed out when custom map selected)
         {
-            char v[16]; snprintf(v, sizeof(v), "%d", lobbySettings_.mapHeight);
-            drawSettingRow(4, "Map Height:", v);
+            bool custom = (lobbyMapIdx_ > 0);
+            char v[16];
+            if (custom) snprintf(v, sizeof(v), "(custom)");
+            else        snprintf(v, sizeof(v), "%d", lobbySettings_.mapWidth);
+            SDL_Color dc = custom ? SDL_Color{55,55,65,255} : SDL_Color{255,255,255,255};
+            // dim the row text manually when custom map is active
+            bool saved_sel = isHostPlayer && (lobbySettingsSel_ == 4);
+            if (custom && !saved_sel) {
+                // draw as plain dim text, no arrows
+                char buf[128]; snprintf(buf, sizeof(buf), "Map Width:  %s", v);
+                drawText(buf, panelX + 4, rowY, 14, dc);
+                rowY += rowStep;
+            } else {
+                drawSettingRow(4, "Map Width:", v);
+            }
         }
 
-        // 5: Enemy HP
+        // 5: Map height (greyed out when custom map selected)
+        {
+            bool custom = (lobbyMapIdx_ > 0);
+            char v[16];
+            if (custom) snprintf(v, sizeof(v), "(custom)");
+            else        snprintf(v, sizeof(v), "%d", lobbySettings_.mapHeight);
+            SDL_Color dc = custom ? SDL_Color{55,55,65,255} : SDL_Color{255,255,255,255};
+            bool saved_sel = isHostPlayer && (lobbySettingsSel_ == 5);
+            if (custom && !saved_sel) {
+                char buf[128]; snprintf(buf, sizeof(buf), "Map Height:  %s", v);
+                drawText(buf, panelX + 4, rowY, 14, dc);
+                rowY += rowStep;
+            } else {
+                drawSettingRow(5, "Map Height:", v);
+            }
+        }
+
+        // 6: Enemy HP
         {
             char v[16]; snprintf(v, sizeof(v), "%.1fx", lobbySettings_.enemyHpScale);
-            drawSettingRow(5, "Enemy HP:", v);
+            drawSettingRow(6, "Enemy HP:", v);
         }
 
-        // 6: Enemy speed
+        // 7: Enemy speed
         {
             char v[16]; snprintf(v, sizeof(v), "%.1fx", lobbySettings_.enemySpeedScale);
-            drawSettingRow(6, "Enemy Speed:", v);
+            drawSettingRow(7, "Enemy Speed:", v);
         }
 
-        // 7: Spawn rate
+        // 8: Spawn rate
         {
             char v[16]; snprintf(v, sizeof(v), "%.1fx", lobbySettings_.spawnRateScale);
-            drawSettingRow(7, "Spawn Rate:", v);
+            drawSettingRow(8, "Spawn Rate:", v);
         }
 
-        // 8: Player HP
+        // 9: Player HP
         {
             char v[16]; snprintf(v, sizeof(v), "%d", lobbySettings_.playerMaxHp);
-            drawSettingRow(8, "Player HP:", v);
+            drawSettingRow(9, "Player HP:", v);
         }
 
-        // 9: Team count
+        // 10: Team count
         {
             const char* val = (lobbySettings_.teamCount == 4) ? "4 Teams" :
                               (lobbySettings_.teamCount == 2) ? "2 Teams" : "None";
-            drawSettingRow(9, "Teams:", val);
+            drawSettingRow(10, "Teams:", val);
         }
 
-        // 10: Lives per player (up to 100)
+        // 11: Lives per player (up to 100)
         {
             char v[16];
             if (lobbySettings_.livesPerPlayer == 0)
                 snprintf(v, sizeof(v), "Infinite");
             else
                 snprintf(v, sizeof(v), "%d", lobbySettings_.livesPerPlayer);
-            drawSettingRow(10, "Lives:", v);
+            drawSettingRow(11, "Lives:", v);
         }
 
-        // 11: Lives mode (only shown when lives are limited)
+        // 12: Lives mode (only shown when lives are limited)
         if (lobbySettings_.livesPerPlayer > 0) {
             const char* val = lobbySettings_.livesShared ? "Shared Pool" : "Individual";
-            drawSettingRow(11, "Lives Mode:", val);
+            drawSettingRow(12, "Lives Mode:", val);
         }
 
-        // 12: Crate Interval (PVP only)
-        if (lobbySettings_.isPvp) {
-            char v[16]; snprintf(v, sizeof(v), "%.0fs", lobbySettings_.crateInterval);
-            drawSettingRow(12, "Crate Interval:", v);
-        }
-
-        // 13: Wave Count (PVE only)
-        if (!lobbySettings_.isPvp) {
-            char v[16];
-            if (lobbySettings_.waveCount == 0)
-                snprintf(v, sizeof(v), "Endless");
-            else
-                snprintf(v, sizeof(v), "%d", lobbySettings_.waveCount);
-            drawSettingRow(13, "Waves:", v);
+        // 13 / 12: Crate Interval (PVP) or Wave Count (PVE) — index depends on whether LivesMode is visible
+        {
+            int condIdx = (lobbySettings_.livesPerPlayer > 0) ? 13 : 12;
+            if (lobbySettings_.isPvp) {
+                char v[16]; snprintf(v, sizeof(v), "%.0fs", lobbySettings_.crateInterval);
+                drawSettingRow(condIdx, "Crate Interval:", v);
+            } else {
+                char v[16];
+                if (lobbySettings_.waveCount == 0)
+                    snprintf(v, sizeof(v), "Endless");
+                else
+                    snprintf(v, sizeof(v), "%d", lobbySettings_.waveCount);
+                drawSettingRow(condIdx, "Waves:", v);
+            }
+            // Match Time (PVP only)
+            int matchTimeIdx  = -1;
+            int presetSaveIdx = condIdx + 1;
+            int presetLoadIdx = condIdx + 2;
+            if (lobbySettings_.isPvp) {
+                matchTimeIdx  = condIdx + 1;
+                presetSaveIdx = condIdx + 2;
+                presetLoadIdx = condIdx + 3;
+                char v[16];
+                if (lobbySettings_.pvpMatchDuration <= 0.0f)
+                    snprintf(v, sizeof(v), "Unlimited");
+                else
+                    snprintf(v, sizeof(v), "%d:%02d",
+                             (int)lobbySettings_.pvpMatchDuration / 60,
+                             (int)lobbySettings_.pvpMatchDuration % 60);
+                drawSettingRow(matchTimeIdx, "Match Time:", v);
+            }
+            drawSettingRow(presetSaveIdx, "Save Preset:", "[confirm]");
+            {
+                const char* presetLabel = serverPresets_.empty()
+                    ? "(none saved)"
+                    : serverPresets_[presetSelection_ % (int)serverPresets_.size()].name.c_str();
+                drawSettingRow(presetLoadIdx, "Load Preset:", presetLabel);
+            }
         }
     }
 
@@ -8445,6 +8703,16 @@ void Game::renderLobby() {
     int listX = 60;
     int listY = SCREEN_H / 10 + 60;
     drawText("PLAYERS", listX, listY, 16, gray);
+    bool isHostInKickMode = net.isHost() && (lobbyKickCursor_ >= 0);
+    if (net.isHost()) {
+        SDL_Color kickHint = isHostInKickMode
+            ? SDL_Color{255, 80, 80, 220}
+            : SDL_Color{80, 80, 90, 200};
+        const char* kickLabel = isHostInKickMode
+            ? "\xe2\x9c\x96 KICK MODE  [A] Kick  [X] Ban  [B] Cancel"
+            : "[Y/TAB] Kick/Ban player";
+        drawText(kickLabel, listX + 100, listY + 2, 12, kickHint);
+    }
     SDL_SetRenderDrawColor(renderer_, 60, 60, 70, 100);
     SDL_Rect hdr = {listX - 4, listY + 22, SCREEN_W / 2 - 60, 1};
     SDL_RenderFillRect(renderer_, &hdr);
@@ -8459,9 +8727,17 @@ void Game::renderLobby() {
     for (size_t i = 0; i < players.size(); i++) {
         bool isLocal = (players[i].id == net.localPlayerId());
         bool isHostP = (players[i].id == 0);
+        bool isKickTarget = isHostInKickMode && ((int)i == lobbyKickCursor_);
 
-        // Row background for local player
-        if (isLocal) {
+        // Row background — local player teal, kick target red
+        if (isKickTarget) {
+            SDL_SetRenderDrawColor(renderer_, 180, 30, 30, 40);
+            SDL_Rect row = {listX - 8, py - 4, SCREEN_W / 2 - 40, 28};
+            SDL_RenderFillRect(renderer_, &row);
+            SDL_SetRenderDrawColor(renderer_, 255, 80, 80, 180);
+            SDL_Rect bar = {listX - 8, py - 4, 3, 28};
+            SDL_RenderFillRect(renderer_, &bar);
+        } else if (isLocal) {
             SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 20);
             SDL_Rect row = {listX - 8, py - 4, SCREEN_W / 2 - 40, 28};
             SDL_RenderFillRect(renderer_, &row);
@@ -8478,12 +8754,15 @@ void Game::renderLobby() {
             SDL_RenderDrawRect(renderer_, &dotOutline);
         }
 
-        // Name (team-colored if team assigned)
+        // Name (team-colored if team assigned; kick target shown in red)
         char entryBuf[128];
-        snprintf(entryBuf, sizeof(entryBuf), "%s%s", players[i].username.c_str(),
-                 isHostP ? "  \xe2\x98\x85" : "");
-        SDL_Color nameC = isLocal ? yellow : (players[i].ready ? green : white);
-        if (players[i].team >= 0 && players[i].team < 4)
+        snprintf(entryBuf, sizeof(entryBuf), "%s%s%s", players[i].username.c_str(),
+                 isHostP ? "  \xe2\x98\x85" : "",
+                 isKickTarget ? "  \xe2\x9c\x96" : "");
+        SDL_Color nameC = isKickTarget ? SDL_Color{255, 90, 90, 255}
+                        : isLocal      ? yellow
+                        : (players[i].ready ? green : gray);
+        if (!isKickTarget && players[i].team >= 0 && players[i].team < 4)
             nameC = teamColors[players[i].team];
         drawText(entryBuf, listX + 16, py, 18, nameC);
 
@@ -8517,7 +8796,15 @@ void Game::renderLobby() {
         const char* rdyLabel = lobbyReady_ ? "> READY! <" : "> READY UP <";
         drawTextCentered(rdyLabel, btnY, 24, lobbyReady_ ? green : white);
     }
-    drawTextCentered("B / ESC - Leave    UP/DOWN navigate    LEFT/RIGHT adjust", SCREEN_H - 40, 13, {80, 80, 90, 255});
+    drawTextCentered("B / ESC - Leave    UP/DOWN navigate    LEFT/RIGHT adjust",
+                     SCREEN_H - 40, 13, {80, 80, 90, 255});
+    if (net.isHost()) {
+        const char* kickHintStr = isHostInKickMode
+            ? "[Y/TAB] Exit kick mode    [A] Kick    [X] Ban    [B] Cancel"
+            : "[Y/TAB] Kick/Ban player mode";
+        drawTextCentered(kickHintStr, SCREEN_H - 22, 12,
+                         isHostInKickMode ? SDL_Color{255, 120, 80, 220} : SDL_Color{80, 80, 90, 180});
+    }
 }
 
 void Game::renderMultiplayerGame() {
@@ -8575,30 +8862,58 @@ void Game::renderMultiplayerHUD() {
         SDL_RenderFillRectF(renderer_, &fgBar);
     }
 
-    // Kill/death counter and ping in corner
+    // Kill/death/score + ping — compact panel in top-right corner
     NetPlayer* local = net.localPlayer();
-    if (local) {
-        char kdStr[64];
-        snprintf(kdStr, sizeof(kdStr), "K:%d  D:%d  Score:%d", local->kills, local->deaths, local->score);
-        drawText(kdStr, SCREEN_W - 250, 10, 14, {200, 200, 200, 200});
-    }
 
-    // Ping display
+    // Match timer (PVP: center-top)
+    if (lobbySettings_.isPvp) {
+        char timeBuf[32];
+        SDL_Color timerCol = {220, 220, 220, 220};
+        if (lobbySettings_.pvpMatchDuration > 0.0f && matchTimer_ > 0.0f) {
+            int secs = (int)matchTimer_;
+            snprintf(timeBuf, sizeof(timeBuf), "%d:%02d", secs / 60, secs % 60);
+            // Turn red in last 30 seconds
+            if (matchTimer_ < 30.0f) timerCol = {255, 80, 80, 255};
+            else if (matchTimer_ < 60.0f) timerCol = {255, 200, 60, 255};
+        } else if (lobbySettings_.pvpMatchDuration <= 0.0f) {
+            int secs = (int)matchElapsed_;
+            snprintf(timeBuf, sizeof(timeBuf), "%d:%02d", secs / 60, secs % 60);
+            timerCol = {160, 160, 180, 180};
+        } else {
+            snprintf(timeBuf, sizeof(timeBuf), "0:00");
+            timerCol = {255, 80, 80, 255};
+        }
+        // Subtle background
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 70);
+        SDL_Rect tBg = {SCREEN_W / 2 - 50, 4, 100, 26};
+        SDL_RenderFillRect(renderer_, &tBg);
+        drawTextCentered(timeBuf, 6, 20, timerCol);
+    }
     {
         uint32_t ping = net.getPing();
-        char pingStr[32];
-        snprintf(pingStr, sizeof(pingStr), "Ping: %dms", ping);
-        SDL_Color pingColor = (ping < 50) ? SDL_Color{50, 255, 100, 200} :
-                              (ping < 100) ? SDL_Color{255, 220, 60, 200} :
-                              SDL_Color{255, 80, 80, 200};
-        drawText(pingStr, SCREEN_W - 120, 30, 12, pingColor);
-    }
+        char line1[80] = "";
+        if (local) {
+            snprintf(line1, sizeof(line1), "K:%d  D:%d  Score:%d",
+                     local->kills, local->deaths, local->score);
+        }
+        SDL_Color pingColor = (ping < 50)  ? SDL_Color{50, 255, 100, 220} :
+                              (ping < 100) ? SDL_Color{255, 220, 60, 220} :
+                                             SDL_Color{255, 80, 80, 220};
+        char line2[48];
+        snprintf(line2, sizeof(line2), "%dms  |  %d players", ping, (int)players.size());
 
-    // Player count
-    {
-        char plrStr[32];
-        snprintf(plrStr, sizeof(plrStr), "Players: %d", (int)players.size());
-        drawText(plrStr, 10, SCREEN_H - 20, 11, {150, 150, 160, 180});
+        // Subtle background panel
+        int pw = 220, ph = 38, pm = 10;
+        int px = SCREEN_W - pw - pm;
+        int py = pm;
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 90);
+        SDL_Rect panel = {px - 6, py - 4, pw + 12, ph + 8};
+        SDL_RenderFillRect(renderer_, &panel);
+
+        if (line1[0]) drawText(line1, px, py,     13, {220, 220, 220, 200});
+        drawText(line2,              px, py + 20, 11, pingColor);
     }
 }
 
@@ -8631,9 +8946,12 @@ void Game::renderMultiplayerPause() {
         int egIdx = itemCount;
         items[itemCount++] = { "END GAME",    (SDL_Color){255, 160, 60, 255}, egIdx };
     }
-    int dcIdx = itemCount;
-    const char* dcLabel = spectatorMode_ ? "BACK TO LOBBY" : "DISCONNECT";
-    items[itemCount++] = { dcLabel, red, dcIdx };
+    int dcIdx = -1;
+    if (!isHostPlayer) {
+        dcIdx = itemCount;
+        const char* dcLabel = spectatorMode_ ? "BACK TO LOBBY" : "DISCONNECT";
+        items[itemCount++] = { dcLabel, red, dcIdx };
+    }
 
     int panelW = 380;
     int panelH = 90 + itemCount * 50 + 20;
@@ -8841,13 +9159,137 @@ void Game::renderMultiplayerDeath() {
     auto& net = NetworkManager::instance();
     NetPlayer* local = net.localPlayer();
     if (local) {
+        float kd = (local->deaths > 0) ? (float)local->kills / local->deaths : (float)local->kills;
         char statBuf[128];
-        snprintf(statBuf, sizeof(statBuf), "Kills: %d   Deaths: %d   Score: %d",
-                 local->kills, local->deaths, local->score);
+        snprintf(statBuf, sizeof(statBuf), "K: %d   D: %d   K/D: %.1f   Score: %d",
+                 local->kills, local->deaths, kd, local->score);
         drawTextCentered(statBuf, SCREEN_H / 2 + 90, 16, gray);
     }
 
     drawTextCentered("TAB - Scoreboard", SCREEN_H - 40, 13, {80, 80, 90, 255});
+}
+
+void Game::renderWinLoss() {
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+
+    // Background — dark with a tinted overlay
+    SDL_SetRenderDrawColor(renderer_, 4, 6, 14, 255);
+    SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
+    SDL_RenderFillRect(renderer_, &full);
+
+    const bool isWin = matchResult_.isWin;
+
+    // Banner overlay tint — green for win, red for loss, grey for neutral
+    if (matchResult_.reason == MatchEndReason::HostEnded || matchResult_.reason == MatchEndReason::Unknown) {
+        SDL_SetRenderDrawColor(renderer_, 60, 60, 80, 40);
+    } else if (isWin) {
+        SDL_SetRenderDrawColor(renderer_, 20, 180, 60, 40);
+    } else {
+        SDL_SetRenderDrawColor(renderer_, 180, 20, 20, 40);
+    }
+    SDL_RenderFillRect(renderer_, &full);
+
+    // Headline colour
+    SDL_Color headCol = isWin
+        ? SDL_Color{80, 255, 120, 255}
+        : (matchResult_.reason == MatchEndReason::HostEnded || matchResult_.reason == MatchEndReason::Unknown)
+            ? SDL_Color{180, 180, 200, 255}
+            : SDL_Color{255, 60, 60, 255};
+
+    SDL_Color white = {220, 220, 220, 255};
+    SDL_Color gray  = {110, 110, 120, 255};
+    SDL_Color cyan  = {0, 255, 228, 255};
+    SDL_Color gold  = {255, 200, 50, 255};
+
+    // Headline (VICTORY / DEFEAT / GAME OVER)
+    int headY = SCREEN_H / 6;
+    drawTextCentered(matchResult_.headline.c_str(), headY, 54, headCol);
+
+    // Decorative separator
+    SDL_SetRenderDrawColor(renderer_, headCol.r, headCol.g, headCol.b, 80);
+    SDL_Rect sep = {SCREEN_W / 2 - 120, headY + 64, 240, 2};
+    SDL_RenderFillRect(renderer_, &sep);
+
+    // Subtitle
+    if (!matchResult_.subtitle.empty()) {
+        drawTextCentered(matchResult_.subtitle.c_str(), headY + 82, 20, white);
+    }
+
+    // Match duration
+    {
+        int secs = (int)matchResult_.matchElapsed;
+        char dur[32];
+        snprintf(dur, sizeof(dur), "Match time:  %d:%02d", secs / 60, secs % 60);
+        drawTextCentered(dur, headY + 116, 16, gray);
+    }
+
+    // Player / team highlight block
+    int blockY = headY + 158;
+
+    if (matchResult_.reason == MatchEndReason::TimeUp || matchResult_.reason == MatchEndReason::LastAlive) {
+        auto& netR = NetworkManager::instance();
+        auto  players = netR.players();
+
+        // Sort by kills descending
+        std::sort(players.begin(), players.end(),
+                  [](const NetPlayer& a, const NetPlayer& b){ return a.kills > b.kills; });
+
+        const int tableW = 480;
+        const int tableX = (SCREEN_W - tableW) / 2;
+
+        // Column headers
+        drawText("#",       tableX,         blockY, 13, gray);
+        drawText("PLAYER",  tableX + 32,    blockY, 13, gray);
+        drawText("KILLS",   tableX + 300,   blockY, 13, gray);
+        drawText("STATUS",  tableX + 388,   blockY, 13, gray);
+        blockY += 24;
+
+        for (size_t i = 0; i < players.size() && i < 8; i++) {
+            bool isLocal = (players[i].id == netR.localPlayerId());
+            bool survived = !players[i].spectating;
+            SDL_Color rc = isLocal ? gold : white;
+            if (!survived) { rc.r = (Uint8)(rc.r / 2); rc.g = (Uint8)(rc.g / 2); rc.b = (Uint8)(rc.b / 2); }
+
+            // Row bg
+            if (isLocal) {
+                SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 20);
+                SDL_Rect row = {tableX - 8, blockY - 2, tableW + 16, 24};
+                SDL_RenderFillRect(renderer_, &row);
+            }
+
+            char rankBuf[4], killBuf[8];
+            snprintf(rankBuf, sizeof(rankBuf), "%d", (int)i + 1);
+            snprintf(killBuf, sizeof(killBuf), "%d", players[i].kills);
+
+            drawText(rankBuf,               tableX,         blockY, 16, i == 0 ? gold : gray);
+            drawText(players[i].username.c_str(), tableX + 32, blockY, 16, rc);
+            drawText(killBuf,               tableX + 300,   blockY, 16, rc);
+            drawText(survived ? "Alive" : "Eliminated", tableX + 388, blockY, 14,
+                     survived ? SDL_Color{50, 220, 80, 255} : SDL_Color{200, 60, 60, 255});
+            blockY += 26;
+        }
+    } else if (matchResult_.reason == MatchEndReason::WavesCleared) {
+        // PVE win — show wave count
+        char waveBuf[64];
+        if (lobbySettings_.waveCount > 0)
+            snprintf(waveBuf, sizeof(waveBuf), "Cleared %d waves!", lobbySettings_.waveCount);
+        else
+            snprintf(waveBuf, sizeof(waveBuf), "All enemies defeated!");
+        drawTextCentered(waveBuf, blockY, 22, gold);
+        blockY += 36;
+
+        // Show all players survived
+        auto& netR = NetworkManager::instance();
+        drawTextCentered("All players survived", blockY, 16, {80, 220, 80, 255});
+        (void)netR;
+    }
+
+    // Hint
+    drawTextCentered("ENTER / A  \xe2\x80\x94  View full scoreboard", SCREEN_H - 44, 14, gray);
+    SDL_Color hintLine = isWin ? SDL_Color{50, 200, 80, 100} : SDL_Color{200, 60, 60, 100};
+    SDL_SetRenderDrawColor(renderer_, hintLine.r, hintLine.g, hintLine.b, hintLine.a);
+    SDL_Rect hintBar = {0, SCREEN_H - 52, SCREEN_W, 2};
+    SDL_RenderFillRect(renderer_, &hintBar);
 }
 
 void Game::renderScoreboard() {
