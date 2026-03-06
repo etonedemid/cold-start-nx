@@ -552,9 +552,22 @@ void MapEditor::handleInput(SDL_Event& e) {
 
             case SDLK_t:
                 if (currentTool_ == EditorTool::Trigger) {
-                    int v = (int)triggerGhost_.type + 1;
-                    if (v >= (int)TriggerType::COUNT) v = 0;
-                    triggerGhost_.type = (TriggerType)v;
+                    static const TriggerType kValidTypes[] = {
+                        TriggerType::LevelStart,
+                        TriggerType::LevelEnd,
+                        TriggerType::Crate,
+                        TriggerType::Effect,
+                        TriggerType::TeamSpawnRed,
+                        TriggerType::TeamSpawnBlue,
+                        TriggerType::TeamSpawnGreen,
+                        TriggerType::TeamSpawnYellow,
+                    };
+                    static const int kTypeCount = 8;
+                    int cur = 0;
+                    for (int i = 0; i < kTypeCount; i++) {
+                        if (kValidTypes[i] == triggerGhost_.type) { cur = i; break; }
+                    }
+                    triggerGhost_.type = kValidTypes[(cur + 1) % kTypeCount];
                 }
                 break;
             case SDLK_c:
@@ -881,6 +894,34 @@ void MapEditor::renderTriggers(SDL_Renderer* renderer) {
                 SDL_RenderDrawRect(renderer, &r);
                 drawEditorText(renderer, "EFFECT", r.x + 4, r.y + 4, 12, {180, 50, 255, 255});
                 break;
+            case TriggerType::TeamSpawnRed:
+                SDL_SetRenderDrawColor(renderer, 220, 50, 50, 110);
+                SDL_RenderFillRect(renderer, &r);
+                SDL_SetRenderDrawColor(renderer, 255, 70, 70, selected ? 255 : 200);
+                SDL_RenderDrawRect(renderer, &r);
+                drawEditorText(renderer, "SPAWN RED", r.x + 4, r.y + 4, 11, {255, 80, 80, 255});
+                break;
+            case TriggerType::TeamSpawnBlue:
+                SDL_SetRenderDrawColor(renderer, 50, 80, 220, 110);
+                SDL_RenderFillRect(renderer, &r);
+                SDL_SetRenderDrawColor(renderer, 70, 120, 255, selected ? 255 : 200);
+                SDL_RenderDrawRect(renderer, &r);
+                drawEditorText(renderer, "SPAWN BLUE", r.x + 4, r.y + 4, 11, {80, 140, 255, 255});
+                break;
+            case TriggerType::TeamSpawnGreen:
+                SDL_SetRenderDrawColor(renderer, 50, 200, 80, 110);
+                SDL_RenderFillRect(renderer, &r);
+                SDL_SetRenderDrawColor(renderer, 70, 230, 100, selected ? 255 : 200);
+                SDL_RenderDrawRect(renderer, &r);
+                drawEditorText(renderer, "SPAWN GREEN", r.x + 4, r.y + 4, 11, {80, 240, 110, 255});
+                break;
+            case TriggerType::TeamSpawnYellow:
+                SDL_SetRenderDrawColor(renderer, 220, 200, 30, 110);
+                SDL_RenderFillRect(renderer, &r);
+                SDL_SetRenderDrawColor(renderer, 255, 230, 40, selected ? 255 : 200);
+                SDL_RenderDrawRect(renderer, &r);
+                drawEditorText(renderer, "SPAWN YEL", r.x + 4, r.y + 4, 11, {255, 235, 50, 255});
+                break;
             default: break;
         }
 
@@ -1009,9 +1050,21 @@ void MapEditor::renderToolbar(SDL_Renderer* renderer) {
 
     // Tool-specific hint (second line of toolbar area)
     if (currentTool_ == EditorTool::Trigger) {
-        const char* typeNames[] = {"Start", "End/Goal", "Crate", "Effect"};
-        char tInfo[64];
-        snprintf(tInfo, sizeof(tInfo), "Type: %s  |  T:cycle  C:condition", typeNames[(int)triggerGhost_.type]);
+        const char* typeNames[] = {
+            "Start", "End/Goal", "Crate", "Effect",
+            "SpawnRed", "SpawnBlue", "SpawnGreen", "SpawnYellow"
+        };
+        // Map TriggerType value to name index
+        int typeIdx = 0;
+        static const TriggerType kValidTypes2[] = {
+            TriggerType::LevelStart, TriggerType::LevelEnd, TriggerType::Crate, TriggerType::Effect,
+            TriggerType::TeamSpawnRed, TriggerType::TeamSpawnBlue, TriggerType::TeamSpawnGreen, TriggerType::TeamSpawnYellow,
+        };
+        for (int i = 0; i < 8; i++) {
+            if (kValidTypes2[i] == triggerGhost_.type) { typeIdx = i; break; }
+        }
+        char tInfo[80];
+        snprintf(tInfo, sizeof(tInfo), "Type: %s  |  T:cycle  C:condition", typeNames[typeIdx]);
         drawEditorText(renderer, tInfo, 520, 22, 10, {200, 200, 100, 200});
     } else if (currentTool_ == EditorTool::Entity) {
         const char* entityNames[] = {"Melee", "Shooter", "Crate", "Upgrade Crate"};
