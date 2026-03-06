@@ -81,22 +81,30 @@ jobs:
         run: cmake --build build-windows --config Release --parallel
 
       - name: Collect artifacts
+        if: always()
+        shell: pwsh
         run: |
-          mkdir dist-windows
-          copy build-windows\Release\cold_start.exe dist-windows\
-          xcopy /E /I build-windows\Release\romfs dist-windows\romfs\
+          if (Test-Path "build-windows\Release\cold_start.exe") {
+            New-Item -ItemType Directory -Force dist-windows | Out-Null
+            Copy-Item "build-windows\Release\cold_start.exe" dist-windows\
+            if (Test-Path "build-windows\Release\romfs") {
+              Copy-Item -Recurse "build-windows\Release\romfs" dist-windows\romfs
+            }
+          }
 
       - name: Upload Windows artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: cold_start-windows
           path: dist-windows\
+          if-no-files-found: warn
 
   release:
     name: GitHub Release
     needs: [build-pc, build-windows, build-switch]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') && needs.build-pc.result == 'success' && needs.build-switch.result == 'success'
     steps:
       - uses: actions/checkout@v4
 
@@ -107,6 +115,7 @@ jobs:
           path: release-assets/pc
 
       - name: Download Windows artifact
+        if: needs.build-windows.result == 'success'
         uses: actions/download-artifact@v4
         with:
           name: cold_start-windows
@@ -125,6 +134,7 @@ jobs:
           zip ../../cold_start-linux-${{ github.ref_name }}.zip cold_start
 
       - name: Package Windows build
+        if: needs.build-windows.result == 'success'
         run: |
           cd release-assets/windows
           zip -r ../../cold_start-windows-${{ github.ref_name }}.zip .
@@ -135,9 +145,11 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
+          make_latest: true
           name: COLD START ${{ github.ref_name }}
           body: |
             See [README.md](README.md#changelog) for the full changelog.
+          fail_on_unmatched_files: false
           files: |
             cold_start-linux-${{ github.ref_name }}.zip
             cold_start-windows-${{ github.ref_name }}.zip
