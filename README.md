@@ -1,7 +1,7 @@
 
 <img width="848" height="204" alt="banner" src="https://github.com/user-attachments/assets/2a0af91e-a15e-462f-aa99-d2869a311675" />
 
-# COLD START  `v0.5.9`
+# COLD START  `v0.6.0`
 
 COLD START is a top-down action shooter built in C++ with SDL2 for PC and Nintendo Switch homebrew. It combines fast combat, local content editing, multiplayer support, and a lightweight modding pipeline aimed at rapid iteration.
 
@@ -230,6 +230,17 @@ When the host enables mods, lightweight mod data can be serialized and sent to j
 - First launch may create missing runtime content directories automatically
 
 ## Changelog
+
+### v0.6.0 (2026-03-06)
+- **Map selector in lobby settings** — host can now cycle through Generated / custom maps (`.csm` files + mod-provided maps) with LEFT/RIGHT on the new "Map:" settings row; selected map is sent to all clients and loaded correctly for both generated and custom-map sessions
+- **Mod maps included in lobby map list** — `scanMapFiles()` now runs after mods are initialised and appends all enabled-mod map paths; mod maps appear alongside local `.csm` files in the lobby map selector
+- **Map Width / Height disabled for custom maps** — the two dimension rows are greyed out and ignored in the input handler when a custom map is active, preventing confusing mismatches
+- **Ceiling tiles in map editor** — painting a palette entry from the "ceiling" category now writes to `map_.ceiling[]` and leaves the floor tile unchanged, matching in-game behaviour (transparent overlay, no hitbox)
+- **Undo / Redo in map editor** — 64-level undo stack; Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z on keyboard, L3 / R3 on gamepad; snapshot is taken once per continuous stroke
+- **Custom tile textures bundled with maps** — custom PNG tiles are saved alongside `.csm` files and reloaded correctly in both solo test-play and multiplayer
+- **Editor direct re-save** — Ctrl+S on an already-saved map skips the mod-save dialog and writes directly to the existing path
+- **Wayland-first display driver** — game prefers Wayland over X11 on Linux (`SDL_VIDEODRIVER=wayland,x11`), overridable by environment
+- **Bomb explosions leave scorch marks** — explosion decals use `DecalType::Scorch` (dark, near-black) instead of blood-coloured particles; enemy-death blood remains red
 
 ### v0.5.9
 - **Fix: enemies not spawning in solo play** — PvP flag from a previous multiplayer session was not reset when starting a new solo game; `startGame()` now explicitly resets `lobbySettings_.isPvp` so wave spawning always works in solo mode
