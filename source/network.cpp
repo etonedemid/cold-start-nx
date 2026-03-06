@@ -1,6 +1,7 @@
 // ─── network.cpp ─── ENet-based multiplayer networking ──────────────────────
 #include "network.h"
 #include "gamemode.h"
+#include "constants.h"
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -176,7 +177,7 @@ bool NetworkManager::host(uint16_t port, int maxClients) {
 #endif
 }
 
-bool NetworkManager::join(const std::string& address, uint16_t port) {
+bool NetworkManager::join(const std::string& address, uint16_t port, const std::string& password) {
 #if HAS_ENET
     if (enetHost_) disconnect();
 
@@ -200,6 +201,7 @@ bool NetworkManager::join(const std::string& address, uint16_t port) {
 
     isHost_ = false;
     state_ = NetState::Connecting;
+    pendingJoinPassword_ = password;
     printf("Network: Connecting to %s:%d...\n", address.c_str(), port);
     return true;
 #else
@@ -238,6 +240,8 @@ void NetworkManager::disconnect() {
     players_.clear();
     transfers_.clear();
     chat_.clear();
+    hostPassword_.clear();
+    pendingJoinPassword_.clear();
     state_ = NetState::Offline;
     isHost_ = false;
     tick_ = 0;
@@ -342,9 +346,15 @@ void NetworkManager::processEvent(ENetEvent& event) {
             state_ = NetState::InLobby;
             printf("Network: Connected to host\n");
 
-            // Send our username
+            // Send our version + username + password as [version\0][name\0][password\0]
+            std::string connectPayload = GAME_VERSION;
+            connectPayload += '\0';
+            connectPayload += username_;
+            connectPayload += '\0';
+            connectPayload += pendingJoinPassword_;
+            connectPayload += '\0';
             auto pkt = buildPacket(NetPacketType::Connect,
-                username_.c_str(), username_.size() + 1);
+                connectPayload.data(), connectPayload.size());
             sendReliable(pkt, event.peer);
         }
         break;
@@ -391,9 +401,40 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
     switch (type) {
     case NetPacketType::Connect: {
         if (isHost_ && payloadLen > 0) {
-            // Client sent username
-            std::string name((char*)payload, payloadLen - 1);
+            // Client sent [version\0][username\0][password\0]
+            const char* buf = (const char*)payload;
             uint8_t peerId = (uint8_t)(uintptr_t)from->data;
+
+            // Version check — reject if mismatched
+            std::string version(buf);
+            size_t versionEnd = version.size() + 1;
+            if (version != GAME_VERSION) {
+                printf("Network: Player %d rejected (version mismatch: client='%s' host='%s')\n",
+                       peerId, version.c_str(), GAME_VERSION);
+                enet_peer_disconnect(from, 0);
+                players_.erase(std::remove_if(players_.begin(), players_.end(),
+                    [peerId](const NetPlayer& p){ return p.id == peerId; }), players_.end());
+                lobby_.currentPlayers = (int)players_.size();
+                break;
+            }
+
+            std::string name;
+            if (versionEnd < payloadLen) name = std::string(buf + versionEnd);
+            size_t nameEnd = versionEnd + name.size() + 1;
+            std::string pw;
+            if (nameEnd < payloadLen)
+                pw = std::string(buf + nameEnd);
+
+            // Password check — reject if wrong
+            if (!hostPassword_.empty() && pw != hostPassword_) {
+                printf("Network: Player %d rejected (wrong password)\n", peerId);
+                enet_peer_disconnect(from, 0);
+                players_.erase(std::remove_if(players_.begin(), players_.end(),
+                    [peerId](const NetPlayer& p){ return p.id == peerId; }), players_.end());
+                lobby_.currentPlayers = (int)players_.size();
+                break;
+            }
+
             if (auto* p = findPlayer(peerId)) {
                 p->username = name;
                 printf("Network: Player %d is '%s'\n", peerId, name.c_str());
@@ -599,10 +640,26 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             Vec2 pos;
             memcpy(&pos.x, payload, 4);
             memcpy(&pos.y, payload + 4, 4);
-            if (onExplosionSpawned) onExplosionSpawned(pos);
+            uint8_t ownerId = (payloadLen >= 9) ? payload[8] : 255;
+            if (onExplosionSpawned) onExplosionSpawned(pos, ownerId);
             // Host relays explosions to all other clients
             if (isHost_) {
                 auto pkt = buildPacket(NetPacketType::ExplosionSpawn, payload, payloadLen);
+                for (auto& p : players_) {
+                    if (p.peer && p.peer != from) sendReliable(pkt, p.peer);
+                }
+            }
+        }
+        break;
+    }
+
+    case NetPacketType::BombOrbit: {
+        if (payloadLen >= 1) {
+            uint8_t ownerId = payload[0];
+            if (onBombOrbit) onBombOrbit(ownerId);
+            // Host relays to all other clients
+            if (isHost_) {
+                auto pkt = buildPacket(NetPacketType::BombOrbit, payload, payloadLen);
                 for (auto& p : players_) {
                     if (p.peer && p.peer != from) sendReliable(pkt, p.peer);
                 }
@@ -657,7 +714,8 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
 
     case NetPacketType::GameEnd: {
         state_ = NetState::InLobby;
-        if (onGameEnded) onGameEnded();
+        uint8_t reason = (payloadLen >= 1) ? payload[0] : 0;
+        if (onGameEnded) onGameEnded(reason);
         break;
     }
 
@@ -665,7 +723,7 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
         if (payloadLen >= 2) {
             uint8_t pid = payload[0];
             uint8_t killerId = payload[1];
-            if (auto* p = findPlayer(pid)) p->alive = false;
+            if (auto* p = findPlayer(pid)) { p->alive = false; p->deaths++; }
             // Credit kill to the attacker
             if (killerId != pid) {
                 if (auto* killer = findPlayer(killerId)) {
@@ -802,6 +860,32 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             uint8_t upType = payload[8];
             uint8_t pid = payload[9];
             if (onPickupCollected) onPickupCollected(pos, upType, pid);
+            // Host relays to all other clients
+            if (isHost_) {
+                auto pkt = buildPacket(NetPacketType::PickupCollect, payload, payloadLen);
+                for (auto& p : players_) {
+                    if (p.peer && p.peer != from) sendReliable(pkt, p.peer);
+                }
+            }
+        }
+        break;
+    }
+
+    case NetPacketType::EnemyBulletSpawn: {
+        if (payloadLen >= 16) {
+            Vec2 pos, dir;
+            memcpy(&pos.x, payload,     4);
+            memcpy(&pos.y, payload + 4, 4);
+            memcpy(&dir.x, payload + 8, 4);
+            memcpy(&dir.y, payload + 12, 4);
+            if (onEnemyBulletSpawned) onEnemyBulletSpawned(pos, dir);
+            // Host relays to all other clients
+            if (isHost_) {
+                auto pkt = buildPacket(NetPacketType::EnemyBulletSpawn, payload, payloadLen);
+                for (auto& p : players_) {
+                    if (p.peer && p.peer != from) sendUnreliable(pkt, p.peer);
+                }
+            }
         }
         break;
     }
@@ -954,6 +1038,10 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
                 settings.waveCount = wc;
                 settings.maxPlayers = payload[35];
             }
+            // Extended fields (v4, 41 bytes)
+            if (payloadLen >= 41) {
+                memcpy(&settings.pvpMatchDuration, payload + 37, 4);
+            }
             if (onConfigSyncReceived) onConfigSyncReceived(settings);
             // Host relays to all clients
             if (isHost_) {
@@ -1066,7 +1154,7 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
         if (!isHost_ && payloadLen >= 4) {
             int count;
             memcpy(&count, payload, 4);
-            size_t perEnemy = 4 + 4 + 4 + 4 + 1; // x, y, rot, hp, type
+            size_t perEnemy = 4 + 4 + 4 + 4 + 1 + 1 + 4 + 4; // x, y, rot, hp, type, flags, dashDir.x, dashDir.y = 26
             if (count > 0 && payloadLen >= (size_t)(4 + count * perEnemy)) {
                 if (onEnemyStatesReceived) {
                     onEnemyStatesReceived(payload + 4, count);
@@ -1275,23 +1363,31 @@ void NetworkManager::sendBombSpawn(Vec2 pos, Vec2 vel, uint8_t playerId) {
 #endif
 }
 
-void NetworkManager::sendExplosion(Vec2 pos) {
+void NetworkManager::sendBombOrbit(uint8_t ownerId) {
 #if HAS_ENET
-    uint8_t payload[8];
+    uint8_t payload[1] = { ownerId };
+    auto pkt = buildPacket(NetPacketType::BombOrbit, payload, 1);
+    sendReliable(pkt);
+#endif
+}
+
+void NetworkManager::sendExplosion(Vec2 pos, uint8_t ownerId) {
+#if HAS_ENET
+    uint8_t payload[9];
     memcpy(payload, &pos.x, 4);
     memcpy(payload + 4, &pos.y, 4);
-    auto pkt = buildPacket(NetPacketType::ExplosionSpawn, payload, 8);
+    payload[8] = ownerId;
+    auto pkt = buildPacket(NetPacketType::ExplosionSpawn, payload, 9);
     sendReliable(pkt);
 #endif
 }
 
 void NetworkManager::sendEnemyStates(const void* enemyData, int count) {
 #if HAS_ENET
-    // Batch: [count:4][{pos.x:4, pos.y:4, rot:4, hp:4, type:1}*count]
-    size_t perEnemy = 4 + 4 + 4 + 4 + 1;
+    // Batch: [count:4][{x:4,y:4,rot:4,hp:4,type:1,flags:1,dashDir.x:4,dashDir.y:4}*count] = 26 bytes/enemy
+    static const size_t perEnemy = 26;
     std::vector<uint8_t> payload(4 + count * perEnemy);
     memcpy(payload.data(), &count, 4);
-    // Caller fills the rest via the raw pointer
     if (enemyData && count > 0) {
         memcpy(payload.data() + 4, enemyData, count * perEnemy);
     }
@@ -1320,6 +1416,18 @@ void NetworkManager::sendPickupCollect(Vec2 pos, uint8_t upgradeType, uint8_t pl
     payload[9] = playerId;
     auto pkt = buildPacket(NetPacketType::PickupCollect, payload, 10);
     sendReliable(pkt);
+#endif
+}
+
+void NetworkManager::sendEnemyBulletSpawn(Vec2 pos, Vec2 dir) {
+#if HAS_ENET
+    uint8_t payload[16];
+    memcpy(payload,      &pos.x, 4);
+    memcpy(payload + 4,  &pos.y, 4);
+    memcpy(payload + 8,  &dir.x, 4);
+    memcpy(payload + 12, &dir.y, 4);
+    auto pkt = buildPacket(NetPacketType::EnemyBulletSpawn, payload, 16);
+    sendUnreliable(pkt);
 #endif
 }
 
@@ -1411,8 +1519,8 @@ void NetworkManager::sendModSync(const std::vector<uint8_t>& modData) {
 void NetworkManager::sendConfigSync(const LobbySettings& settings) {
 #if HAS_ENET
     // Serialize: flags:1, mapW:4, mapH:4, ehp:4, espd:4, srate:4, playerHp:4, teamCount:1, lives:1, livesShared:1,
-    //            isPvp:1, crateInterval:4, waveCount:2, maxPlayers:1 = 37 bytes
-    uint8_t payload[37];
+    //            isPvp:1, crateInterval:4, waveCount:2, maxPlayers:1, reserved:1, pvpMatchDuration:4 = 41 bytes
+    uint8_t payload[41];
     uint8_t flags = 0;
     if (settings.friendlyFire) flags |= 0x01;
     if (settings.pvpEnabled)   flags |= 0x02;
@@ -1436,7 +1544,9 @@ void NetworkManager::sendConfigSync(const LobbySettings& settings) {
     memcpy(payload + 33, &wc, 2);
     payload[35] = (uint8_t)settings.maxPlayers;
     payload[36] = 0; // reserved
-    auto pkt = buildPacket(NetPacketType::ConfigSync, payload, 37);
+    // v4: pvpMatchDuration
+    memcpy(payload + 37, &settings.pvpMatchDuration, 4);
+    auto pkt = buildPacket(NetPacketType::ConfigSync, payload, 41);
     sendReliable(pkt);
     printf("Network: Sent lobby settings sync\n");
 #endif
@@ -1505,12 +1615,12 @@ void NetworkManager::sendLivesUpdate(uint8_t playerId, int lives) {
 #endif
 }
 
-void NetworkManager::sendGameEnd() {
+void NetworkManager::sendGameEnd(uint8_t reason) {
 #if HAS_ENET
-    auto pkt = buildPacket(NetPacketType::GameEnd, nullptr, 0);
+    auto pkt = buildPacket(NetPacketType::GameEnd, &reason, 1);
     sendReliable(pkt);
     state_ = NetState::InLobby;
-    if (onGameEnded) onGameEnded();
+    if (onGameEnded) onGameEnded(reason);
 #endif
 }
 

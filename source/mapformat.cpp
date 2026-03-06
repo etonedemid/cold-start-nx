@@ -34,6 +34,16 @@ bool CustomMap::saveToFile(const std::string& path) const {
     if (spawnCount > 0)
         fwrite(enemySpawns.data(), sizeof(EnemySpawn), spawnCount, f);
 
+    // Custom tile texture paths (uint8 count, then len+data per path)
+    uint8_t customCount = 0;
+    for (int i = 0; i < 8; i++) if (!customTilePaths[i].empty()) customCount = (uint8_t)(i + 1);
+    fwrite(&customCount, 1, 1, f);
+    for (int i = 0; i < (int)customCount; i++) {
+        uint16_t len = (uint16_t)customTilePaths[i].size();
+        fwrite(&len, sizeof(uint16_t), 1, f);
+        if (len > 0) fwrite(customTilePaths[i].c_str(), 1, len, f);
+    }
+
     fclose(f);
     printf("Saved map: %s (%dx%d, %d triggers, %d spawns)\n",
         path.c_str(), width, height, (int)triggers.size(), (int)enemySpawns.size());
@@ -74,6 +84,21 @@ bool CustomMap::loadFromFile(const std::string& path) {
     enemySpawns.resize(spawnCount);
     if (spawnCount > 0)
         fread(enemySpawns.data(), sizeof(EnemySpawn), spawnCount, f);
+
+    // Read custom tile texture paths (optional — older maps simply won't have this)
+    for (int i = 0; i < 8; i++) customTilePaths[i].clear();
+    uint8_t customCount = 0;
+    if (fread(&customCount, 1, 1, f) == 1) {
+        for (int i = 0; i < (int)customCount && i < 8; i++) {
+            uint16_t len = 0;
+            if (fread(&len, sizeof(uint16_t), 1, f) != 1) break;
+            if (len > 0 && len < 512) {
+                char buf[513] = {};
+                if (fread(buf, 1, len, f) != (size_t)len) break;
+                customTilePaths[i] = buf;
+            }
+        }
+    }
 
     fclose(f);
     printf("Loaded map: %s (%dx%d, %d triggers, %d spawns)\n",

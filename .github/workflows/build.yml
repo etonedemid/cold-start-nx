@@ -53,6 +53,9 @@ jobs:
       - name: Build
         run: make -j$(nproc)
 
+      - name: Rename .nro
+        run: cp cold_start.nro cold-start-nx.nro
+
       - name: Upload Switch artifact
         uses: actions/upload-artifact@v4
         with:
@@ -140,7 +143,7 @@ jobs:
           zip -r ../../cold_start-windows-${{ github.ref_name }}.zip .
 
       - name: Rename Switch build
-        run: cp release-assets/switch/cold-start-nx.nro cold_start-switch-${{ github.ref_name }}.nro
+        run: cp release-assets/switch/cold-start-nx.nro cold-start-nx.nro
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -153,4 +156,4 @@ jobs:
           files: |
             cold_start-linux-${{ github.ref_name }}.zip
             cold_start-windows-${{ github.ref_name }}.zip
-            cold_start-switch-${{ github.ref_name }}.nro
+            cold-start-nx.nro
