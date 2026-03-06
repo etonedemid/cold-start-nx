@@ -20,11 +20,16 @@ constexpr uint16_t CSM_VERSION = 1;
 
 // ── Trigger types ──
 enum class TriggerType : uint8_t {
-    LevelStart  = 0, // player spawn point
-    LevelEnd    = 1, // goal (configurable unlock condition)
-    Crate       = 2, // breakable crate with optional loot
-    Effect      = 3, // visual/audio effect zone
-    COUNT
+    LevelStart       = 0, // player spawn point (solo / PvE)
+    LevelEnd         = 1, // goal (configurable unlock condition)
+    Crate            = 2, // breakable crate with optional loot
+    Effect           = 3, // visual/audio effect zone
+    // Team spawn points (PvP / team modes — team index 0–3)
+    TeamSpawnRed     = 10, // team 0 spawn
+    TeamSpawnBlue    = 11, // team 1 spawn
+    TeamSpawnGreen   = 12, // team 2 spawn
+    TeamSpawnYellow  = 13, // team 3 spawn
+    COUNT            = 14,
 };
 
 // ── End-goal unlock condition ──
@@ -81,5 +86,6 @@ struct CustomMap {
     // Find specific triggers
     MapTrigger* findStartTrigger();
     MapTrigger* findEndTrigger();
+    MapTrigger* findTeamSpawnTrigger(int team); // team 0-3 → TeamSpawnRed/Blue/Green/Yellow
     std::vector<MapTrigger*> findTriggersByType(TriggerType type);
 };

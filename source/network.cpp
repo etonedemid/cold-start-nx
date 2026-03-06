@@ -665,6 +665,54 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
         break;
     }
 
+    // ── PvP host-authoritative damage ──
+    case NetPacketType::HitRequest: {
+        // payload: bulletNetId(4) + damage(1) + ownerId(1)  — sent by a client to host
+        if (isHost_ && payloadLen >= 6) {
+            uint32_t bulletNetId;
+            memcpy(&bulletNetId, payload, 4);
+            int   damage  = (int)(int8_t)payload[4];
+            uint8_t owner = payload[5];
+            // Determine which player sent this (the target)
+            uint8_t senderPlayerId = 255;
+            for (auto& p : players_) {
+                if (p.peer == from) { senderPlayerId = p.id; break; }
+            }
+            bool accepted = true;
+            if (onHitRequest) accepted = onHitRequest(bulletNetId, damage, owner, senderPlayerId);
+            if (accepted && senderPlayerId != 255) {
+                // onHitRequest (in game.cpp) applies the damage and calls sendPlayerHpSync/sendPlayerDied
+                // Nothing extra needed here; the callback does it.
+            }
+        }
+        break;
+    }
+
+    case NetPacketType::PlayerHpSync: {
+        // payload: playerId(1) + hp(4) + maxHp(4) + killerId(1)
+        if (payloadLen >= 10) {
+            uint8_t  pid = payload[0];
+            int      hp, maxHp;
+            memcpy(&hp,    payload + 1, 4);
+            memcpy(&maxHp, payload + 5, 4);
+            uint8_t  killerId = payload[9];
+            if (auto* p = findPlayer(pid)) {
+                p->hp    = hp;
+                p->maxHp = maxHp;
+                if (hp <= 0) p->alive = false;
+            }
+            if (onPlayerHpSync) onPlayerHpSync(pid, hp, maxHp, killerId);
+            // Host relays to all other clients
+            if (isHost_) {
+                auto pkt = buildPacket(NetPacketType::PlayerHpSync, payload, payloadLen);
+                for (auto& p : players_) {
+                    if (p.peer && p.peer != from) sendReliable(pkt, p.peer);
+                }
+            }
+        }
+        break;
+    }
+
     case NetPacketType::CrateSpawn: {
         if (payloadLen >= 9) {
             Vec2 pos;
@@ -1231,6 +1279,35 @@ void NetworkManager::sendEnemyKilled(uint32_t enemyIdx, uint8_t killerId) {
     payload[4] = killerId;
     auto pkt = buildPacket(NetPacketType::EnemyKilled, payload, 5);
     sendReliable(pkt);
+#endif
+}
+
+void NetworkManager::sendHitRequest(uint32_t bulletNetId, int damage, uint8_t ownerId) {
+#if HAS_ENET
+    // Send to host only — reliable because it's a game event
+    uint8_t payload[6];
+    memcpy(payload, &bulletNetId, 4);
+    payload[4] = (uint8_t)(int8_t)std::min(damage, 127);
+    payload[5] = ownerId;
+    auto pkt = buildPacket(NetPacketType::HitRequest, payload, 6);
+    sendReliable(pkt);
+#endif
+}
+
+void NetworkManager::sendPlayerHpSync(uint8_t playerId, int hp, int maxHp, uint8_t killerId) {
+#if HAS_ENET
+    uint8_t payload[10];
+    payload[0] = playerId;
+    memcpy(payload + 1, &hp,    4);
+    memcpy(payload + 5, &maxHp, 4);
+    payload[9] = killerId;
+    auto pkt = buildPacket(NetPacketType::PlayerHpSync, payload, 10);
+    // Host broadcasts to all clients
+    for (auto& p : players_) {
+        if (p.peer) sendReliable(pkt, p.peer);
+    }
+    // Also fire callback locally on host
+    if (onPlayerHpSync) onPlayerHpSync(playerId, hp, maxHp, killerId);
 #endif
 }
 
