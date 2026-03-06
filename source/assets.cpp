@@ -34,6 +34,9 @@ SDL_Texture* Assets::loadTex(const std::string& path) {
     SDL_FreeSurface(s);
     if (t) {
         SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+        // Force nearest-neighbor per-texture; SDL_HINT_RENDER_SCALE_QUALITY is
+        // advisory only and ignored by OpenGL/Vulkan backends.
+        SDL_SetTextureScaleMode(t, SDL_ScaleModeNearest);
     }
     return t;
 }

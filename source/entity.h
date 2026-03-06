@@ -27,7 +27,11 @@ struct Entity {
     float age       = 0;
     Tag   tag       = TAG_NONE;
     bool  alive     = true;
+    bool  piercing   = false;   // bullet passes through enemies
     int   damage    = 1;
+    int   bounces   = 0;        // ricochet bounce count
+    uint32_t netId  = 0;        // network ID for remote bullet tracking (0 = not networked)
+    uint8_t ownerId = 255;      // player ID who fired this bullet (255 = unowned/local-only)
 
     // Sprite
     SDL_Texture* sprite = nullptr;

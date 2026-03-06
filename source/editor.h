@@ -21,17 +21,34 @@ struct EditorTile {
 // ── Editor tool mode ──
 enum class EditorTool : uint8_t {
     Tile     = 0,  // paint tiles
-    Trigger  = 1,  // place triggers
-    Enemy    = 2,  // place enemy spawns
+    Trigger  = 1,  // place triggers (start, end, effect)
+    Entity   = 2,  // place entities (enemies, crates)
     Erase    = 3,  // remove
     Select   = 4,  // select & configure
 };
+
+// ── Entity spawn subtypes (used in EnemySpawn::enemyType) ──
+static constexpr uint8_t ENTITY_MELEE        = 0;
+static constexpr uint8_t ENTITY_SHOOTER      = 1;
+static constexpr uint8_t ENTITY_CRATE        = 2;
+static constexpr uint8_t ENTITY_UPGRADE_CRATE= 3;
+static constexpr uint8_t ENTITY_TYPE_COUNT   = 4;
 
 // ── Trigger placement ghost ──
 struct TriggerGhost {
     TriggerType type = TriggerType::LevelStart;
     GoalCondition condition = GoalCondition::DefeatAll;
     uint8_t param = 0;
+};
+
+// ── Palette filter tab ──
+enum class PaletteTab : uint8_t {
+    All      = 0,
+    Ground   = 1,
+    Walls    = 2,
+    Ceiling  = 3,
+    Props    = 4,
+    TAB_COUNT= 5,
 };
 
 // ── Editor config screen (shown before entering editor) ──
@@ -42,6 +59,7 @@ struct EditorConfig {
     int    mapHeight = 20;
     std::string mapName    = "Untitled";
     std::string creator    = "Unknown";
+    int    gameMode  = 0;   // 0=Arena, 1=Sandbox
     std::string loadPath;        // path to .csm to load
     std::vector<std::string> availableMaps; // scanned .csm files
     int    field     = 0;        // currently selected field
@@ -49,7 +67,7 @@ struct EditorConfig {
     bool   textEditing = false;
     std::string textBuf;
     int    gpCharIdx = 0;        // gamepad char palette index
-    int    maxField  = 6;        // 0=action, 1=width, 2=height, 3=name, 4=creator, 5=OK, 6=Cancel
+    int    maxField  = 7;        // 0=action, 1=width, 2=height, 3=name, 4=creator, 5=gamemode, 6=OK, 7=Cancel
 };
 
 class MapEditor {
@@ -88,6 +106,12 @@ public:
 
     std::string savePath() const { return savePath_; }
 
+    // Mod-save handshake ── game.cpp queries this, confirms with performModSave()
+    bool wantsModSave() const   { return wantsModSave_; }
+    void clearWantsModSave()    { wantsModSave_ = false; }
+    std::string pendingMapName() const { return map_.name; }
+    void performModSave(const std::string& modFolder);
+
 private:
     bool active_ = false;
     SDL_Renderer* renderer_ = nullptr;
@@ -102,6 +126,9 @@ private:
     bool wantsBack_  = false;    // user cancelled
     EditorConfig config_;
     std::string savePath_ = "maps/editor_map.csm";
+    std::string saveMessage_;
+    float saveMessageTimer_ = 0;
+    bool  wantsModSave_ = false;
 
     // Palette
     std::vector<EditorTile> palette_;
@@ -112,7 +139,12 @@ private:
     // Tools
     EditorTool currentTool_ = EditorTool::Tile;
     TriggerGhost triggerGhost_;
-    uint8_t enemySpawnType_ = 0; // 0=Melee, 1=Shooter
+    uint8_t entitySpawnType_ = ENTITY_MELEE;
+
+    // Palette tab filtering
+    PaletteTab paletteTab_ = PaletteTab::All;
+    std::vector<int> filteredPalette_; // indices into palette_ for current tab
+    int filteredSelection_ = 0;         // selection within filtered list
 
     // Zoom
     float zoom_ = 1.0f;
@@ -179,9 +211,15 @@ private:
     void renderPalette(SDL_Renderer* renderer);
     void renderToolbar(SDL_Renderer* renderer);
     void renderTriggers(SDL_Renderer* renderer);
-    void renderEnemySpawns(SDL_Renderer* renderer);
+    void renderEntitySpawns(SDL_Renderer* renderer);
+    void rebuildFilteredPalette();
     void renderGrid(SDL_Renderer* renderer);
     void drawEditorText(SDL_Renderer* renderer, const char* text, int x, int y, int size, SDL_Color color);
+
+    // Palette scroll helpers
+    int  paletteItemRawY(int idx) const;  // Y of item idx ignoring scroll
+    void scrollPaletteToSelection();      // adjust paletteScroll_ so selectedPalette_ is visible
+    int  paletteContentHeight() const;    // total height of all palette items + headers
 
     // Generate thumbnail from current map view
     void generateThumbnail();
@@ -197,4 +235,7 @@ private:
     void updateGamepadCursor(float dt);
     void handleTouchInput(SDL_Event& e);
     void renderCursor(SDL_Renderer* renderer);
+
+    // Switch software keyboard
+    std::string showSoftwareKeyboard(const std::string& headerText, const std::string& initialText, int maxLen = 64);
 };

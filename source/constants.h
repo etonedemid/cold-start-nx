@@ -83,8 +83,8 @@ constexpr float WAVE_SPAWN_INTERVAL = 0.6f;  // delay between each enemy in a wa
 constexpr float WAVE_SHOOTER_CHANCE = 0.25f; // 25% shooter
 
 // Camera
-constexpr float CAM_SMOOTH  = 0.1f;
-constexpr float CAM_OFFSET  = 120.0f;
+constexpr float CAM_SMOOTH  = 0.18f;
+constexpr float CAM_OFFSET  = 75.0f;
 
 // Wander
 constexpr float WANDER_RADIUS = 300.0f;

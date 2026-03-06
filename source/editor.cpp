@@ -6,6 +6,9 @@
 #include <algorithm>
 #include <dirent.h>
 #include <sys/stat.h>
+#ifdef __SWITCH__
+#include <switch.h>
+#endif
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  Init / Shutdown
@@ -38,42 +41,81 @@ void MapEditor::shutdown() {
 void MapEditor::loadPalette() {
     palette_.clear();
 
+    // Scan all sprite/tile directories for PNG files
+    // Each subfolder maps to a category and default tile type
+    struct FolderDef { const char* path; const char* category; uint8_t defaultType; };
+    FolderDef folders[] = {
+        // Custom user tile folders
+        {"tiles/ground",  "ground",  TILE_GRASS},
+        {"tiles/walls",   "walls",   TILE_WALL},
+        {"tiles/ceiling", "ceiling", TILE_GLASS},
+        {"tiles/props",   "props",   TILE_DESK},
+        // RomFS tile folders (Switch)
+        {"romfs/tiles/ground",  "ground",  TILE_GRASS},
+        {"romfs/tiles/walls",   "walls",   TILE_WALL},
+        {"romfs/tiles/ceiling", "ceiling", TILE_GLASS},
+        {"romfs/tiles/props",   "props",   TILE_DESK},
+        // RomFS sprites/tiles (flat folder — auto-categorize)
+        {"romfs/sprites/tiles", "ground",  TILE_GRASS},
+        // Switch romfs: paths
+        {"romfs:/tiles/ground",  "ground",  TILE_GRASS},
+        {"romfs:/tiles/walls",   "walls",   TILE_WALL},
+        {"romfs:/tiles/ceiling", "ceiling", TILE_GLASS},
+        {"romfs:/tiles/props",   "props",   TILE_DESK},
+        {"romfs:/sprites/tiles", "ground",  TILE_GRASS},
+    };
+
+    for (auto& fd : folders) {
+        scanTileFolder(fd.path, fd.category, fd.defaultType);
+    }
+
+    // Also try to pick up tiles from the Assets system (already-loaded sprites)
     auto& a = Assets::instance();
-    auto addBuiltin = [&](const char* name, const char* spritePath, uint8_t type, const char* cat) {
+    auto tryAdd = [&](const char* name, const char* spritePath, uint8_t type, const char* cat) {
+        // Only add if not already in palette
+        for (auto& pt : palette_) {
+            if (pt.name == name && pt.category == cat) return;
+        }
+        SDL_Texture* t = a.tex(spritePath);
+        if (!t) return;
         EditorTile et;
         et.name     = name;
         et.path     = spritePath;
-        et.texture  = a.tex(spritePath);
+        et.texture  = t;
         et.tileType = type;
         et.category = cat;
         palette_.push_back(et);
     };
 
-    addBuiltin("Grass",    "sprites/tiles/grass.png",    TILE_GRASS,  "ground");
-    addBuiltin("Floor",    "sprites/tiles/floor.png",    TILE_FLOOR,  "ground");
-    addBuiltin("Gravel",   "sprites/tiles/gravel.png",   TILE_GRAVEL, "ground");
-    addBuiltin("Wood",     "sprites/tiles/wood.png",     TILE_WOOD,   "ground");
-    addBuiltin("Sand",     "sprites/tiles/sand.png",     TILE_SAND,   "ground");
-    addBuiltin("Wall",     "sprites/tiles/floor.png",    TILE_WALL,   "walls");
-    addBuiltin("Glass",    "sprites/tiles/glass.png",    TILE_GLASS,  "walls");
-    addBuiltin("Desk",     "sprites/tiles/desk.png",     TILE_DESK,   "walls");
-    addBuiltin("Box",      "sprites/props/box.png",      TILE_BOX,    "walls");
+    // Ensure a basic set of tiles is always available even if folders are empty
+    tryAdd("Grass",    "sprites/tiles/grass.png",    TILE_GRASS,  "ground");
+    tryAdd("Floor",    "sprites/tiles/floor.png",    TILE_FLOOR,  "ground");
+    tryAdd("Gravel",   "sprites/tiles/gravel.png",   TILE_GRAVEL, "ground");
+    tryAdd("Wall",     "sprites/tiles/floor.png",    TILE_WALL,   "walls");
+    tryAdd("Glass",    "sprites/tiles/glasstile.png", TILE_GLASS,  "walls");
+    tryAdd("Box",      "sprites/props/box.png",      TILE_BOX,    "props");
 
-    scanTileFolder("tiles/ground",  "ground",  TILE_GRASS);
-    scanTileFolder("tiles/walls",   "walls",   TILE_WALL);
-    scanTileFolder("tiles/ceiling", "ceiling", TILE_GLASS);
-    scanTileFolder("tiles/props",   "props",   TILE_DESK);
-    scanTileFolder("romfs/tiles/ground",  "ground",  TILE_GRASS);
-    scanTileFolder("romfs/tiles/walls",   "walls",   TILE_WALL);
-    scanTileFolder("romfs/tiles/ceiling", "ceiling", TILE_GLASS);
-    scanTileFolder("romfs/tiles/props",   "props",   TILE_DESK);
-
+    rebuildFilteredPalette();
     printf("Editor palette: %d tiles loaded\n", (int)palette_.size());
 }
 
 void MapEditor::scanTileFolder(const std::string& folder, const std::string& category, uint8_t defaultType) {
     DIR* dir = opendir(folder.c_str());
     if (!dir) return;
+
+    // Filename stem → tile type lookup (works across all folder scans)
+    auto tileTypeFromStem = [](const std::string& s) -> uint8_t {
+        if (s == "floor")                           return TILE_FLOOR;
+        if (s == "grass")                           return TILE_GRASS;
+        if (s.substr(0,6) == "gravel")              return TILE_GRAVEL;
+        if (s == "wood")                            return TILE_WOOD;
+        if (s == "sand")                            return TILE_SAND;
+        if (s == "wall")                            return TILE_WALL;
+        if (s == "glass" || s == "glasstile")       return TILE_GLASS;
+        if (s == "desk")                            return TILE_DESK;
+        if (s == "box")                             return TILE_BOX;
+        return 0xFF; // unknown — use defaultType
+    };
 
     struct dirent* entry;
     while ((entry = readdir(dir)) != nullptr) {
@@ -101,11 +143,72 @@ void MapEditor::scanTileFolder(const std::string& folder, const std::string& cat
         et.name     = displayName;
         et.path     = fullPath;
         et.texture  = tex;
-        et.tileType = defaultType;
+        uint8_t detectedType = tileTypeFromStem(displayName);
+        et.tileType = (detectedType != 0xFF) ? detectedType : defaultType;
         et.category = category;
         palette_.push_back(et);
     }
     closedir(dir);
+}
+
+void MapEditor::rebuildFilteredPalette() {
+    filteredPalette_.clear();
+    for (int i = 0; i < (int)palette_.size(); i++) {
+        bool match = false;
+        switch (paletteTab_) {
+            case PaletteTab::All:     match = true; break;
+            case PaletteTab::Ground:  match = (palette_[i].category == "ground"); break;
+            case PaletteTab::Walls:   match = (palette_[i].category == "walls"); break;
+            case PaletteTab::Ceiling: match = (palette_[i].category == "ceiling"); break;
+            case PaletteTab::Props:   match = (palette_[i].category == "props"); break;
+            default: match = true; break;
+        }
+        if (match) filteredPalette_.push_back(i);
+    }
+    if (filteredSelection_ >= (int)filteredPalette_.size())
+        filteredSelection_ = std::max(0, (int)filteredPalette_.size() - 1);
+    // Update selectedPalette_ from filtered selection
+    if (!filteredPalette_.empty() && filteredSelection_ >= 0)
+        selectedPalette_ = filteredPalette_[filteredSelection_];
+}
+
+// ── Palette scroll helpers ──
+
+int MapEditor::paletteContentHeight() const {
+    if (palette_.empty()) return 0;
+    int h = 10;  // initial top padding
+    std::string lastCat;
+    for (auto& pt : palette_) {
+        if (pt.category != lastCat) { lastCat = pt.category; h += 20; }
+        h += TILE_PREVIEW + 6;
+    }
+    return h + 10;  // bottom padding
+}
+
+int MapEditor::paletteItemRawY(int idx) const {
+    int y = TOOLBAR_H + 10;
+    std::string lastCat;
+    for (int i = 0; i < (int)palette_.size(); i++) {
+        if (palette_[i].category != lastCat) { lastCat = palette_[i].category; y += 20; }
+        if (i == idx) return y;
+        y += TILE_PREVIEW + 6;
+    }
+    return y;
+}
+
+void MapEditor::scrollPaletteToSelection() {
+    if (selectedPalette_ < 0 || selectedPalette_ >= (int)palette_.size()) return;
+    int rawY   = paletteItemRawY(selectedPalette_);
+    int viewH  = screenH_ - TOOLBAR_H;
+    // Scroll down if item is below the visible area
+    if (rawY - paletteScroll_ + TILE_PREVIEW > screenH_ - 10)
+        paletteScroll_ = rawY + TILE_PREVIEW - screenH_ + 10;
+    // Scroll up if item is above the visible area
+    if (rawY - paletteScroll_ < TOOLBAR_H + 4)
+        paletteScroll_ = rawY - TOOLBAR_H - 4;
+    if (paletteScroll_ < 0) paletteScroll_ = 0;
+    int maxScroll = paletteContentHeight() - viewH;
+    if (maxScroll > 0 && paletteScroll_ > maxScroll) paletteScroll_ = maxScroll;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -151,7 +254,29 @@ void MapEditor::newMap(int w, int h) {
 
 bool MapEditor::saveMap(const std::string& path) {
     generateThumbnail();
-    return map_.saveToFile(path);
+    bool ok = map_.saveToFile(path);
+    if (ok) {
+        saveMessage_ = "Saved to " + path;
+    } else {
+        saveMessage_ = "Save failed!";
+    }
+    saveMessageTimer_ = 2.5f;
+    return ok;
+}
+
+void MapEditor::performModSave(const std::string& modFolder) {
+    // Build a safe filename from the current map name
+    std::string safeName = map_.name;
+    for (char& c : safeName) {
+        if (c == ' ') c = '_';
+        if (c == '/' || c == '\\') c = '_';
+    }
+    if (safeName.empty()) safeName = "untitled";
+
+    std::string mapsDir = modFolder + "/maps";
+    mkdir(mapsDir.c_str(), 0755);
+    savePath_ = mapsDir + "/" + safeName + ".csm";
+    saveMap(savePath_);
 }
 
 bool MapEditor::loadMap(const std::string& path) {
@@ -383,6 +508,9 @@ void MapEditor::handleInput(SDL_Event& e) {
             // Palette scroll
             paletteScroll_ -= e.wheel.y * 30;
             if (paletteScroll_ < 0) paletteScroll_ = 0;
+            // Clamp to max
+            int maxScroll = paletteContentHeight() - (screenH_ - TOOLBAR_H);
+            if (maxScroll > 0 && paletteScroll_ > maxScroll) paletteScroll_ = maxScroll;
         } else {
             // ── Zoom in/out ──
             float oldZoom = zoom_;
@@ -401,7 +529,7 @@ void MapEditor::handleInput(SDL_Event& e) {
         switch (e.key.keysym.sym) {
             case SDLK_1: currentTool_ = EditorTool::Tile; break;
             case SDLK_2: currentTool_ = EditorTool::Trigger; break;
-            case SDLK_3: currentTool_ = EditorTool::Enemy; break;
+            case SDLK_3: currentTool_ = EditorTool::Entity; break;
             case SDLK_4: currentTool_ = EditorTool::Erase; break;
             case SDLK_5: currentTool_ = EditorTool::Select; break;
             case SDLK_g: showGrid_ = !showGrid_; break;
@@ -437,15 +565,13 @@ void MapEditor::handleInput(SDL_Event& e) {
                 }
                 break;
             case SDLK_e:
-                if (currentTool_ == EditorTool::Enemy) {
-                    enemySpawnType_ = (enemySpawnType_ + 1) % 2;
+                if (currentTool_ == EditorTool::Entity) {
+                    entitySpawnType_ = (entitySpawnType_ + 1) % ENTITY_TYPE_COUNT;
                 }
                 break;
             case SDLK_s:
                 if (SDL_GetModState() & KMOD_CTRL) {
-                    mkdir("maps", 0755);
-                    if (saveMap(savePath_))
-                        printf("Map saved to %s\n", savePath_.c_str());
+                    wantsModSave_ = true;
                 }
                 break;
         }
@@ -458,7 +584,10 @@ void MapEditor::handleInput(SDL_Event& e) {
 
 void MapEditor::update(float dt) {
     if (!active_) return;
-    if (showConfig_) return; // Config screen doesn't need update
+    if (showConfig_) return;
+
+    // Tick timers
+    if (saveMessageTimer_ > 0) saveMessageTimer_ -= dt;
 
     // Update gamepad virtual cursor
     updateGamepadCursor(dt);
@@ -488,7 +617,7 @@ void MapEditor::update(float dt) {
                     break;
                 }
                 case EditorTool::Trigger: placeTrigger(wx, wy); mouseDown_ = false; break;
-                case EditorTool::Enemy:   placeEnemy(wx, wy); mouseDown_ = false; break;
+                case EditorTool::Entity:  placeEnemy(wx, wy); mouseDown_ = false; break;
                 default: break;
             }
         }
@@ -550,7 +679,7 @@ void MapEditor::placeEnemy(float wx, float wy) {
     EnemySpawn es;
     es.x = wx;
     es.y = wy;
-    es.enemyType  = enemySpawnType_;
+    es.enemyType  = entitySpawnType_;
     es.waveGroup  = 0;
     memset(es.reserved, 0, sizeof(es.reserved));
     map_.enemySpawns.push_back(es);
@@ -569,7 +698,7 @@ void MapEditor::render(SDL_Renderer* renderer) {
         return;
     }
 
-    SDL_SetRenderDrawColor(renderer, 30, 30, 35, 255);
+    SDL_SetRenderDrawColor(renderer, 18, 20, 30, 255);
     SDL_RenderClear(renderer);
 
     float ts = TILE_SIZE * zoom_;
@@ -615,8 +744,20 @@ void MapEditor::render(SDL_Renderer* renderer) {
     }
 
     if (showGrid_) renderGrid(renderer);
+
+    // Map boundary outline
+    {
+        int bx0 = worldToScreenX(0);
+        int by0 = worldToScreenY(0);
+        int bx1 = worldToScreenX((float)(map_.width * TILE_SIZE));
+        int by1 = worldToScreenY((float)(map_.height * TILE_SIZE));
+        SDL_SetRenderDrawColor(renderer, 0, 200, 180, 120);
+        SDL_Rect border = {bx0, by0, bx1 - bx0, by1 - by0};
+        SDL_RenderDrawRect(renderer, &border);
+    }
+
     renderTriggers(renderer);
-    renderEnemySpawns(renderer);
+    renderEntitySpawns(renderer);
 
     // ── Cursor highlight ──
     if (mouseX_ < screenW_ - uiPaletteW() && mouseY_ > uiToolbarH()) {
@@ -649,11 +790,31 @@ void MapEditor::render(SDL_Renderer* renderer) {
         renderPalette(renderer);
     }
 
-    // ── Zoom indicator ──
+    // ── Status bar (bottom-left) ──
     {
+        SDL_SetRenderDrawColor(renderer, 12, 14, 24, 200);
+        SDL_Rect statusBg = {0, screenH_ - 28, screenW_ - uiPaletteW(), 28};
+        SDL_RenderFillRect(renderer, &statusBg);
+        SDL_SetRenderDrawColor(renderer, 0, 120, 110, 40);
+        SDL_RenderDrawLine(renderer, 0, screenH_ - 28, screenW_ - uiPaletteW(), screenH_ - 28);
+
         char zoomStr[32];
-        snprintf(zoomStr, sizeof(zoomStr), "%.0f%%", zoom_ * 100);
-        drawEditorText(renderer, zoomStr, 10, screenH_ - 30, 14, {180, 180, 180, 200});
+        snprintf(zoomStr, sizeof(zoomStr), "Zoom: %.0f%%", zoom_ * 100);
+        drawEditorText(renderer, zoomStr, 8, screenH_ - 24, 12, {100, 100, 110, 255});
+
+        // Tile count info
+        char countStr[64];
+        snprintf(countStr, sizeof(countStr), "Triggers: %d  Enemies: %d",
+                 (int)map_.triggers.size(), (int)map_.enemySpawns.size());
+        drawEditorText(renderer, countStr, 120, screenH_ - 24, 12, {100, 100, 110, 255});
+
+        // Save message
+        if (saveMessageTimer_ > 0) {
+            Uint8 alpha = (saveMessageTimer_ < 0.5f) ? (Uint8)(saveMessageTimer_ * 510) : 255;
+            bool isError = saveMessage_.find("failed") != std::string::npos;
+            SDL_Color msgC = isError ? SDL_Color{255, 80, 80, alpha} : SDL_Color{50, 255, 100, alpha};
+            drawEditorText(renderer, saveMessage_.c_str(), 360, screenH_ - 24, 12, msgC);
+        }
     }
 
     // ── Gamepad / touch cursor ──
@@ -737,7 +898,7 @@ void MapEditor::renderTriggers(SDL_Renderer* renderer) {
     }
 }
 
-void MapEditor::renderEnemySpawns(SDL_Renderer* renderer) {
+void MapEditor::renderEntitySpawns(SDL_Renderer* renderer) {
     for (int i = 0; i < (int)map_.enemySpawns.size(); i++) {
         auto& es = map_.enemySpawns[i];
         int sx = worldToScreenX(es.x);
@@ -747,120 +908,226 @@ void MapEditor::renderEnemySpawns(SDL_Renderer* renderer) {
 
         bool selected = (i == selectedEnemy_);
 
-        if (es.enemyType == 0) {
-            SDL_SetRenderDrawColor(renderer, 255, 60, 60, 200);
-        } else {
-            SDL_SetRenderDrawColor(renderer, 255, 160, 40, 200);
+        // Color by entity type
+        switch (es.enemyType) {
+            case ENTITY_MELEE:         SDL_SetRenderDrawColor(renderer, 255, 60, 60, 200); break;
+            case ENTITY_SHOOTER:       SDL_SetRenderDrawColor(renderer, 255, 160, 40, 200); break;
+            case ENTITY_CRATE:         SDL_SetRenderDrawColor(renderer, 160, 120, 60, 200); break;
+            case ENTITY_UPGRADE_CRATE: SDL_SetRenderDrawColor(renderer, 220, 180, 40, 200); break;
+            default:                   SDL_SetRenderDrawColor(renderer, 180, 180, 180, 200); break;
         }
         SDL_RenderFillRect(renderer, &r);
         SDL_SetRenderDrawColor(renderer, selected ? 0 : 255, 255, selected ? 0 : 255, 255);
         SDL_RenderDrawRect(renderer, &r);
 
-        const char* label = (es.enemyType == 0) ? "M" : "S";
+        const char* labels[] = {"M", "S", "C", "U"};
+        const char* label = (es.enemyType >= 0 && es.enemyType < ENTITY_TYPE_COUNT) ? labels[es.enemyType] : "?";
         drawEditorText(renderer, label, r.x + sz/4, r.y + 2, 14, {255, 255, 255, 255});
     }
 }
 
 void MapEditor::renderToolbar(SDL_Renderer* renderer) {
-    SDL_SetRenderDrawColor(renderer, 20, 20, 28, 240);
+    // Background
+    SDL_SetRenderDrawColor(renderer, 12, 14, 24, 245);
     SDL_Rect bg = {0, 0, screenW_, TOOLBAR_H};
     SDL_RenderFillRect(renderer, &bg);
+    // Bottom border
+    SDL_SetRenderDrawColor(renderer, 0, 120, 110, 60);
+    SDL_RenderDrawLine(renderer, 0, TOOLBAR_H - 1, screenW_, TOOLBAR_H - 1);
 
-    // Tool buttons (clickable)
-    const char* toolNames[] = {"1:Tile", "2:Trigger", "3:Enemy", "4:Erase", "5:Select"};
+    // Tool buttons
+    const char* toolNames[] = {"Tile", "Trigger", "Entity", "Erase", "Select"};
+    const char* toolKeys[]  = {"1", "2", "3", "4", "5"};
+    SDL_Color toolColors[] = {
+        {80, 200, 255, 255},   // Tile: blue
+        {255, 200, 50, 255},   // Trigger: yellow
+        {255, 80, 80, 255},    // Enemy: red
+        {200, 60, 60, 255},    // Erase: dark red
+        {100, 220, 200, 255},  // Select: teal
+    };
+
     for (int i = 0; i < 5; i++) {
-        int bx = 10 + i * 110;
-        SDL_Rect btn = {bx, 8, 100, 32};
+        int bx = 8 + i * 100;
+        SDL_Rect btn = {bx, 6, 90, 34};
         bool sel = ((int)currentTool_ == i);
-        SDL_SetRenderDrawColor(renderer, sel ? 0 : 50, sel ? 200 : 50, sel ? 180 : 60, 255);
-        SDL_RenderFillRect(renderer, &btn);
-        SDL_SetRenderDrawColor(renderer, 200, 200, 200, 255);
-        SDL_RenderDrawRect(renderer, &btn);
-        drawEditorText(renderer, toolNames[i], bx + 8, 14, 14, {255, 255, 255, 255});
+
+        if (sel) {
+            SDL_SetRenderDrawColor(renderer, toolColors[i].r / 4, toolColors[i].g / 4, toolColors[i].b / 4, 200);
+            SDL_RenderFillRect(renderer, &btn);
+            SDL_SetRenderDrawColor(renderer, toolColors[i].r, toolColors[i].g, toolColors[i].b, 200);
+            SDL_RenderDrawRect(renderer, &btn);
+            // Active indicator bar
+            SDL_Rect ind = {bx, TOOLBAR_H - 3, 90, 3};
+            SDL_RenderFillRect(renderer, &ind);
+        } else {
+            SDL_SetRenderDrawColor(renderer, 30, 32, 44, 200);
+            SDL_RenderFillRect(renderer, &btn);
+            SDL_SetRenderDrawColor(renderer, 50, 52, 64, 180);
+            SDL_RenderDrawRect(renderer, &btn);
+        }
+
+        // Key badge
+        SDL_Color keyC = sel ? toolColors[i] : SDL_Color{80, 80, 90, 255};
+        drawEditorText(renderer, toolKeys[i], bx + 6, 10, 12, keyC);
+        // Label
+        SDL_Color labelC = sel ? SDL_Color{255, 255, 255, 255} : SDL_Color{160, 160, 170, 255};
+        drawEditorText(renderer, toolNames[i], bx + 20, 12, 14, labelC);
     }
 
-    // Test Play button
+    // Test Play button (right side)
     {
-        int bx = screenW_ - 180;
-        SDL_Rect btn = {bx, 8, 100, 32};
-        SDL_SetRenderDrawColor(renderer, 30, 180, 60, 255);
+        int bx = screenW_ - 200;
+        SDL_Rect btn = {bx, 6, 110, 34};
+        SDL_SetRenderDrawColor(renderer, 20, 100, 40, 255);
         SDL_RenderFillRect(renderer, &btn);
-        SDL_SetRenderDrawColor(renderer, 200, 255, 200, 255);
+        SDL_SetRenderDrawColor(renderer, 60, 200, 80, 200);
         SDL_RenderDrawRect(renderer, &btn);
-        drawEditorText(renderer, "F5: PLAY", bx + 8, 14, 14, {255, 255, 255, 255});
+        // Green indicator
+        SDL_SetRenderDrawColor(renderer, 50, 255, 100, 255);
+        SDL_Rect ind = {bx, TOOLBAR_H - 3, 110, 3};
+        SDL_RenderFillRect(renderer, &ind);
+        drawEditorText(renderer, "\xe2\x96\xb6 F5 PLAY", bx + 12, 12, 14, {200, 255, 200, 255});
     }
 
-    // Info text
-    char info[128];
-    snprintf(info, sizeof(info), "%s | %dx%d | G:grid TAB:ui Ctrl+S:save",
-        map_.name.c_str(), map_.width, map_.height);
-    drawEditorText(renderer, info, 580, 6, 11, {180, 180, 180, 255});
+    // Save button
+    {
+        int bx = screenW_ - 310;
+        SDL_Rect btn = {bx, 6, 100, 34};
+        SDL_SetRenderDrawColor(renderer, 25, 28, 45, 220);
+        SDL_RenderFillRect(renderer, &btn);
+        SDL_SetRenderDrawColor(renderer, 50, 52, 64, 180);
+        SDL_RenderDrawRect(renderer, &btn);
+        drawEditorText(renderer, "Ctrl+S Save", bx + 8, 12, 12, {140, 140, 150, 255});
+    }
 
-    // Tool-specific info
+    // Info: map name + dimensions (second row inside toolbar)
+    {
+        char info[128];
+        snprintf(info, sizeof(info), "%s  %dx%d", map_.name.c_str(), map_.width, map_.height);
+        drawEditorText(renderer, info, 520, 6, 12, {100, 100, 110, 255});
+    }
+
+    // Tool-specific hint (second line of toolbar area)
     if (currentTool_ == EditorTool::Trigger) {
         const char* typeNames[] = {"Start", "End/Goal", "Crate", "Effect"};
         char tInfo[64];
-        snprintf(tInfo, sizeof(tInfo), "Trigger: %s (T:cycle C:condition)", typeNames[(int)triggerGhost_.type]);
-        drawEditorText(renderer, tInfo, 580, 22, 10, {200, 200, 100, 255});
-    } else if (currentTool_ == EditorTool::Enemy) {
+        snprintf(tInfo, sizeof(tInfo), "Type: %s  |  T:cycle  C:condition", typeNames[(int)triggerGhost_.type]);
+        drawEditorText(renderer, tInfo, 520, 22, 10, {200, 200, 100, 200});
+    } else if (currentTool_ == EditorTool::Entity) {
+        const char* entityNames[] = {"Melee", "Shooter", "Crate", "Upgrade Crate"};
+        const char* eName = (entitySpawnType_ >= 0 && entitySpawnType_ < ENTITY_TYPE_COUNT) ? entityNames[entitySpawnType_] : "?";
         char eInfo[64];
-        snprintf(eInfo, sizeof(eInfo), "Enemy: %s (E:toggle)", enemySpawnType_ == 0 ? "Melee" : "Shooter");
-        drawEditorText(renderer, eInfo, 580, 22, 10, {200, 100, 100, 255});
+        snprintf(eInfo, sizeof(eInfo), "Type: %s  |  E:cycle", eName);
+        drawEditorText(renderer, eInfo, 520, 22, 10, {200, 100, 100, 200});
     } else if (currentTool_ == EditorTool::Select) {
-        drawEditorText(renderer, "Click trigger/enemy to select, drag corners to resize, DEL to remove", 580, 22, 10, {100, 200, 200, 255});
+        drawEditorText(renderer, "Click to select  |  Drag corners to resize  |  DEL to remove", 520, 22, 10, {100, 200, 200, 200});
     } else if (currentTool_ == EditorTool::Erase) {
-        drawEditorText(renderer, "Click to erase tiles, triggers & enemies", 580, 22, 10, {200, 100, 100, 255});
+        drawEditorText(renderer, "Click to erase tiles, triggers & enemies", 520, 22, 10, {200, 100, 100, 200});
     }
 
     // Shortcut hints
-    drawEditorText(renderer, "Scroll: zoom | MMB: pan | RClick: erase", 580, 36, 9, {120, 120, 120, 255});
+    drawEditorText(renderer, "Scroll:zoom  MMB:pan  RClick:erase  G:grid  TAB:UI", 520, 36, 9, {70, 70, 80, 255});
 }
 
 void MapEditor::renderPalette(SDL_Renderer* renderer) {
     int px = screenW_ - PALETTE_W;
-    SDL_SetRenderDrawColor(renderer, 25, 25, 32, 240);
+
+    // Panel background
+    SDL_SetRenderDrawColor(renderer, 12, 14, 24, 245);
     SDL_Rect bg = {px, TOOLBAR_H, PALETTE_W, screenH_ - TOOLBAR_H};
     SDL_RenderFillRect(renderer, &bg);
+    // Left border
+    SDL_SetRenderDrawColor(renderer, 0, 120, 110, 40);
+    SDL_RenderDrawLine(renderer, px, TOOLBAR_H, px, screenH_);
+
+    // Clip rendering to palette panel so nothing bleeds below/above
+    SDL_Rect clip = {px, TOOLBAR_H, PALETTE_W, screenH_ - TOOLBAR_H};
+    SDL_RenderSetClipRect(renderer, &clip);
 
     // Rebuild palette item Y cache
     paletteItemY_.clear();
     paletteItemY_.resize(palette_.size(), -999);
 
-    int y = TOOLBAR_H + 8 - paletteScroll_;
+    int y = TOOLBAR_H + 10 - paletteScroll_;
     std::string lastCat;
 
     for (int i = 0; i < (int)palette_.size(); i++) {
         auto& pt = palette_[i];
 
+        // Category header — always advance by fixed height, render only if visible
         if (pt.category != lastCat) {
             lastCat = pt.category;
-            if (y >= TOOLBAR_H && y < screenH_)
-                drawEditorText(renderer, pt.category.c_str(), px + 8, y, 12, {0, 200, 180, 255});
-            y += 20;
+            if (y >= TOOLBAR_H && y < screenH_) {
+                SDL_SetRenderDrawColor(renderer, 0, 120, 110, 40);
+                SDL_RenderDrawLine(renderer, px + 8, y, px + PALETTE_W - 8, y);
+                y += 4;
+                std::string catLabel = pt.category;
+                for (auto& c : catLabel) c = (char)toupper(c);
+                drawEditorText(renderer, catLabel.c_str(), px + 10, y, 11, {0, 180, 160, 200});
+                y += 16;
+            } else {
+                y += 20;  // same total as rendered path (4 + 16)
+            }
         }
 
-        paletteItemY_[i] = y;  // cache actual screen Y
+        paletteItemY_[i] = y;
 
         if (y >= TOOLBAR_H - TILE_PREVIEW && y < screenH_) {
-            SDL_Rect dst = {px + 8, y, TILE_PREVIEW, TILE_PREVIEW};
+            bool sel = (i == selectedPalette_);
+
+            if (sel) {
+                SDL_SetRenderDrawColor(renderer, 0, 180, 160, 30);
+                SDL_Rect hl = {px + 2, y - 2, PALETTE_W - 4, TILE_PREVIEW + 4};
+                SDL_RenderFillRect(renderer, &hl);
+                SDL_SetRenderDrawColor(renderer, 0, 255, 228, 200);
+                SDL_Rect acc = {px + 2, y - 2, 3, TILE_PREVIEW + 4};
+                SDL_RenderFillRect(renderer, &acc);
+            }
+
+            SDL_Rect dst = {px + 10, y, TILE_PREVIEW, TILE_PREVIEW};
             if (pt.texture) {
                 SDL_RenderCopy(renderer, pt.texture, nullptr, &dst);
             } else {
-                SDL_SetRenderDrawColor(renderer, 80, 80, 80, 255);
+                SDL_SetRenderDrawColor(renderer, 50, 50, 60, 255);
                 SDL_RenderFillRect(renderer, &dst);
             }
 
-            if (i == selectedPalette_) {
-                SDL_SetRenderDrawColor(renderer, 0, 255, 200, 255);
-                SDL_Rect hl = {dst.x - 2, dst.y - 2, dst.w + 4, dst.h + 4};
-                SDL_RenderDrawRect(renderer, &hl);
+            if (sel) {
+                SDL_SetRenderDrawColor(renderer, 0, 255, 228, 200);
+            } else {
+                SDL_SetRenderDrawColor(renderer, 40, 42, 55, 180);
             }
+            SDL_RenderDrawRect(renderer, &dst);
 
-            drawEditorText(renderer, pt.name.c_str(), px + TILE_PREVIEW + 16, y + 14, 12,
-                {200, 200, 200, 255});
+            SDL_Color nameC = sel ? SDL_Color{255, 255, 255, 255} : SDL_Color{160, 160, 170, 255};
+            drawEditorText(renderer, pt.name.c_str(), px + TILE_PREVIEW + 18, y + 4, 13, nameC);
+
+            if (sel) {
+                drawEditorText(renderer, pt.category.c_str(), px + TILE_PREVIEW + 18, y + 22, 9, {80, 80, 90, 200});
+            }
         }
 
-        y += TILE_PREVIEW + 4;
+        y += TILE_PREVIEW + 6;
+    }
+
+    SDL_RenderSetClipRect(renderer, nullptr);
+
+    // Scroll bar
+    {
+        int totalH = paletteContentHeight();
+        int viewH  = screenH_ - TOOLBAR_H;
+        if (totalH > viewH) {
+            float ratio  = (float)viewH / totalH;
+            int barH = std::max(20, (int)(viewH * ratio));
+            float scrollRatio = (float)paletteScroll_ / (totalH - viewH);
+            int barY = TOOLBAR_H + (int)((viewH - barH) * scrollRatio);
+            SDL_SetRenderDrawColor(renderer, 0, 120, 110, 60);
+            SDL_Rect scrollBar = {px + PALETTE_W - 6, barY, 4, barH};
+            SDL_RenderFillRect(renderer, &scrollBar);
+
+            // Scroll hint at bottom
+            drawEditorText(renderer, "\xe2\x86\x91\xe2\x86\x93 scroll", px + 8, screenH_ - 20, 9, {60, 60, 70, 200});
+        }
     }
 }
 
@@ -1016,14 +1283,14 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
         switch (e.key.keysym.sym) {
             case SDLK_UP:
                 cfg.field--;
-                // In load mode, skip fields 2/3/4 which are for new map only
-                if (cfg.action == EditorConfig::Action::LoadMap && cfg.field > 1 && cfg.field < 5)
+                // In load mode, skip fields 2/3/4/5 which are for new map only
+                if (cfg.action == EditorConfig::Action::LoadMap && cfg.field > 1 && cfg.field < 6)
                     cfg.field = 1;
                 break;
             case SDLK_DOWN:
                 cfg.field++;
-                if (cfg.action == EditorConfig::Action::LoadMap && cfg.field > 1 && cfg.field < 5)
-                    cfg.field = 5;
+                if (cfg.action == EditorConfig::Action::LoadMap && cfg.field > 1 && cfg.field < 6)
+                    cfg.field = 6;
                 break;
             case SDLK_LEFT:
                 if (cfg.field == 0) cfg.action = EditorConfig::Action::NewMap;
@@ -1034,6 +1301,7 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
                     cfg.loadIdx--; if (cfg.loadIdx < 0) cfg.loadIdx = 0;
                 }
                 else if (cfg.field == 2) { cfg.mapHeight -= 2; if (cfg.mapHeight < 10) cfg.mapHeight = 10; }
+                else if (cfg.field == 5) { cfg.gameMode = 1 - cfg.gameMode; }
                 break;
             case SDLK_RIGHT:
                 if (cfg.field == 0) {
@@ -1049,6 +1317,7 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
                         cfg.loadIdx = std::max(0, (int)cfg.availableMaps.size() - 1);
                 }
                 else if (cfg.field == 2) { cfg.mapHeight += 2; if (cfg.mapHeight > 200) cfg.mapHeight = 200; }
+                else if (cfg.field == 5) { cfg.gameMode = 1 - cfg.gameMode; }
                 break;
             case SDLK_RETURN:
                 if ((cfg.field == 3 || cfg.field == 4) && cfg.action == EditorConfig::Action::NewMap) {
@@ -1058,7 +1327,7 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
                     SDL_StartTextInput();
 #endif
                 }
-                else if (cfg.field == 5) { // OK
+                else if (cfg.field == 6) { // OK
                     if (cfg.action == EditorConfig::Action::LoadMap && !cfg.availableMaps.empty()) {
                         int idx = cfg.loadIdx;
                         if (idx >= 0 && idx < (int)cfg.availableMaps.size()) {
@@ -1069,6 +1338,7 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
                         newMap(cfg.mapWidth, cfg.mapHeight);
                         map_.name = cfg.mapName;
                         map_.creator = cfg.creator;
+                        map_.gameMode = (uint8_t)cfg.gameMode;
                         std::string safeName = cfg.mapName;
                         for (char& c : safeName) {
                             if (c == ' ') c = '_';
@@ -1078,7 +1348,7 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
                     }
                     showConfig_ = false;
                 }
-                else if (cfg.field == 6) { // Cancel
+                else if (cfg.field == 7) { // Cancel
                     wantsBack_ = true;
                     showConfig_ = false;
                 }
@@ -1091,7 +1361,7 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
         }
         // Clamp field
         if (cfg.field < 0) cfg.field = 0;
-        if (cfg.field > 6) cfg.field = 6;
+        if (cfg.field > 7) cfg.field = 7;
     }
 
     // Navigation via gamepad
@@ -1099,13 +1369,13 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
         switch (e.cbutton.button) {
             case SDL_CONTROLLER_BUTTON_DPAD_UP:
                 cfg.field--;
-                if (cfg.action == EditorConfig::Action::LoadMap && cfg.field > 1 && cfg.field < 5)
+                if (cfg.action == EditorConfig::Action::LoadMap && cfg.field > 1 && cfg.field < 6)
                     cfg.field = 1;
                 break;
             case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
                 cfg.field++;
-                if (cfg.action == EditorConfig::Action::LoadMap && cfg.field > 1 && cfg.field < 5)
-                    cfg.field = 5;
+                if (cfg.action == EditorConfig::Action::LoadMap && cfg.field > 1 && cfg.field < 6)
+                    cfg.field = 6;
                 break;
             case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
                 if (cfg.field == 0) cfg.action = EditorConfig::Action::NewMap;
@@ -1116,6 +1386,7 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
                     cfg.loadIdx--; if (cfg.loadIdx < 0) cfg.loadIdx = 0;
                 }
                 else if (cfg.field == 2) { cfg.mapHeight -= 2; if (cfg.mapHeight < 10) cfg.mapHeight = 10; }
+                else if (cfg.field == 5) { cfg.gameMode = 1 - cfg.gameMode; }
                 break;
             case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
                 if (cfg.field == 0) {
@@ -1131,6 +1402,7 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
                         cfg.loadIdx = std::max(0, (int)cfg.availableMaps.size() - 1);
                 }
                 else if (cfg.field == 2) { cfg.mapHeight += 2; if (cfg.mapHeight > 200) cfg.mapHeight = 200; }
+                else if (cfg.field == 5) { cfg.gameMode = 1 - cfg.gameMode; }
                 break;
             case SDL_CONTROLLER_BUTTON_A: {
                 // Handle A button directly for each field (no recursive call)
@@ -1138,7 +1410,7 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
                     cfg.textEditing = true;
                     cfg.textBuf = (cfg.field == 3) ? cfg.mapName : cfg.creator;
                 }
-                else if (cfg.field == 5) { // OK
+                else if (cfg.field == 6) { // OK
                     if (cfg.action == EditorConfig::Action::LoadMap && !cfg.availableMaps.empty()) {
                         int idx = cfg.loadIdx;
                         if (idx >= 0 && idx < (int)cfg.availableMaps.size()) {
@@ -1149,6 +1421,7 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
                         newMap(cfg.mapWidth, cfg.mapHeight);
                         map_.name = cfg.mapName;
                         map_.creator = cfg.creator;
+                        map_.gameMode = (uint8_t)cfg.gameMode;
                         std::string safeName = cfg.mapName;
                         for (char& c : safeName) {
                             if (c == ' ') c = '_';
@@ -1158,7 +1431,7 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
                     }
                     showConfig_ = false;
                 }
-                else if (cfg.field == 6) { // Cancel
+                else if (cfg.field == 7) { // Cancel
                     wantsBack_ = true;
                     showConfig_ = false;
                 }
@@ -1178,158 +1451,210 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
                 break;
         }
         if (cfg.field < 0) cfg.field = 0;
-        if (cfg.field > 6) cfg.field = 6;
+        if (cfg.field > 7) cfg.field = 7;
     }
 }
 
 void MapEditor::renderConfig(SDL_Renderer* renderer) {
-    SDL_SetRenderDrawColor(renderer, 10, 10, 16, 255);
+    SDL_SetRenderDrawColor(renderer, 6, 8, 16, 255);
     SDL_Rect full = {0, 0, screenW_, screenH_};
     SDL_RenderFillRect(renderer, &full);
 
     auto& cfg = config_;
-    SDL_Color title = {0, 255, 228, 255};
-    SDL_Color white = {255, 255, 255, 255};
-    SDL_Color gray  = {150, 150, 150, 255};
-    SDL_Color cyan  = {0, 255, 228, 255};
+    SDL_Color cyan   = {0, 255, 228, 255};
+    SDL_Color white  = {255, 255, 255, 255};
+    SDL_Color gray   = {120, 120, 130, 255};
+    SDL_Color dimGray= {80, 80, 90, 255};
     SDL_Color yellow = {255, 220, 50, 255};
+    SDL_Color green  = {50, 255, 100, 255};
 
-    drawEditorText(renderer, "MAP EDITOR SETUP", screenW_ / 2 - 140, 30, 30, title);
+    // Title
+    drawEditorText(renderer, "MAP EDITOR", screenW_ / 2 - 100, 28, 32, cyan);
+    SDL_SetRenderDrawColor(renderer, 0, 180, 160, 60);
+    SDL_Rect tl = {screenW_ / 2 - 80, 68, 160, 1};
+    SDL_RenderFillRect(renderer, &tl);
 
-    int y = 100;
-    int step = 42;
+    // Panel background
+    int panelX = screenW_ / 2 - 320;
+    int panelW = 640;
+    int panelY = 88;
+    int panelH = screenH_ - 140;
+    SDL_SetRenderDrawColor(renderer, 12, 14, 26, 200);
+    SDL_Rect panel = {panelX, panelY, panelW, panelH};
+    SDL_RenderFillRect(renderer, &panel);
+    SDL_SetRenderDrawColor(renderer, 0, 120, 110, 40);
+    SDL_RenderDrawRect(renderer, &panel);
+
+    int y = panelY + 16;
+    int step = 44;
+    int labelX = panelX + 30;
+    int valX   = panelX + 240;
     char buf[256];
 
-    auto fieldColor = [&](int idx) -> SDL_Color { return cfg.field == idx ? white : gray; };
-    auto valColor   = [&](int idx) -> SDL_Color { return cfg.field == idx ? cyan : gray; };
+    auto drawField = [&](int idx, const char* label, const char* value, bool hasArrows = false) {
+        bool sel = (cfg.field == idx);
+        if (sel) {
+            SDL_SetRenderDrawColor(renderer, 0, 180, 160, 30);
+            SDL_Rect bar = {panelX + 4, y - 4, panelW - 8, 34};
+            SDL_RenderFillRect(renderer, &bar);
+            SDL_SetRenderDrawColor(renderer, 0, 200, 180, 180);
+            SDL_Rect acc = {panelX + 4, y - 4, 3, 34};
+            SDL_RenderFillRect(renderer, &acc);
+        }
+        drawEditorText(renderer, label, labelX, y, 18, sel ? white : gray);
+        if (hasArrows && sel) {
+            drawEditorText(renderer, "\xe2\x97\x80", valX - 24, y, 16, yellow);
+            drawEditorText(renderer, value, valX, y, 18, cyan);
+            int tw = (int)strlen(value) * 10 + 8;
+            drawEditorText(renderer, "\xe2\x96\xb6", valX + tw, y, 16, yellow);
+        } else {
+            drawEditorText(renderer, value, valX, y, 18, sel ? cyan : dimGray);
+        }
+        y += step;
+    };
 
-    // Field 0: Action (New / Load)
-    drawEditorText(renderer, "ACTION:", 100, y, 20, fieldColor(0));
-    if (cfg.field == 0) {
-        drawEditorText(renderer, "<", 420, y, 20, yellow);
-        drawEditorText(renderer, cfg.action == EditorConfig::Action::NewMap ? "NEW MAP" : "LOAD MAP", 460, y, 20, valColor(0));
-        drawEditorText(renderer, ">", 700, y, 20, yellow);
-    } else {
-        drawEditorText(renderer, cfg.action == EditorConfig::Action::NewMap ? "NEW MAP" : "LOAD MAP", 460, y, 20, valColor(0));
-    }
-    y += step;
+    auto drawTextFieldEditing = [&](int idx, const char* label) {
+        bool sel   = (cfg.field == idx);
+        bool edit  = (cfg.textEditing && cfg.field == idx);
+        if (sel) {
+            SDL_SetRenderDrawColor(renderer, 0, 180, 160, 30);
+            SDL_Rect bar = {panelX + 4, y - 4, panelW - 8, 34};
+            SDL_RenderFillRect(renderer, &bar);
+            SDL_SetRenderDrawColor(renderer, 0, 200, 180, 180);
+            SDL_Rect acc = {panelX + 4, y - 4, 3, 34};
+            SDL_RenderFillRect(renderer, &acc);
+        }
+        drawEditorText(renderer, label, labelX, y, 18, sel ? white : gray);
+        const char* curVal = (idx == 3) ? cfg.mapName.c_str() : cfg.creator.c_str();
+        if (edit) {
+            // Text input box
+            SDL_SetRenderDrawColor(renderer, 20, 22, 38, 255);
+            SDL_Rect box = {valX - 4, y - 4, 280, 28};
+            SDL_RenderFillRect(renderer, &box);
+            SDL_SetRenderDrawColor(renderer, 0, 200, 180, 180);
+            SDL_RenderDrawRect(renderer, &box);
+            std::string disp = cfg.textBuf + "_";
+            drawEditorText(renderer, disp.c_str(), valX, y, 18, yellow);
+
+            // Gamepad char palette (below field)
+            static const char charPalette[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 _-!@#.";
+            int palLen = (int)strlen(charPalette);
+            int cellW = 18, cellH = 22;
+            int cols = 20;
+            int rows = (palLen + cols - 1) / cols;
+            int palStartX = panelX + 30;
+            int palStartY = y + 34;
+
+            SDL_SetRenderDrawColor(renderer, 14, 16, 28, 240);
+            SDL_Rect palBg = {palStartX - 6, palStartY - 4, cols * cellW + 12, rows * cellH + 8};
+            SDL_RenderFillRect(renderer, &palBg);
+
+            for (int ci = 0; ci < palLen; ci++) {
+                int col = ci % cols;
+                int row = ci / cols;
+                int cx = palStartX + col * cellW;
+                int cy = palStartY + row * cellH;
+                bool isSel = (ci == cfg.gpCharIdx);
+                if (isSel) {
+                    SDL_SetRenderDrawColor(renderer, 0, 180, 160, 255);
+                    SDL_Rect bg = {cx - 1, cy - 1, cellW - 2, cellH - 2};
+                    SDL_RenderFillRect(renderer, &bg);
+                }
+                char ch[2] = { charPalette[ci], 0 };
+                drawEditorText(renderer, ch, cx + 3, cy + 2, isSel ? 16 : 13, isSel ? white : dimGray);
+            }
+            drawEditorText(renderer, "A:type  Y:del  X/START:done  B:cancel", palStartX, palStartY + rows * cellH + 6, 11, dimGray);
+            y += 34 + rows * cellH + 28; // Extra space for palette
+        } else {
+            drawEditorText(renderer, curVal, valX, y, 18, sel ? cyan : dimGray);
+            if (sel) drawEditorText(renderer, "[A / ENTER]", valX + 200, y + 2, 12, dimGray);
+            y += step;
+        }
+    };
+
+    // ── Field 0: Action ──
+    const char* actionStr = (cfg.action == EditorConfig::Action::NewMap) ? "NEW MAP" : "LOAD MAP";
+    drawField(0, "ACTION", actionStr, true);
+
+    // Separator
+    SDL_SetRenderDrawColor(renderer, 40, 42, 55, 120);
+    SDL_Rect sep = {panelX + 20, y - step / 2 + 4, panelW - 40, 1};
+    SDL_RenderFillRect(renderer, &sep);
 
     if (cfg.action == EditorConfig::Action::NewMap) {
-        // Field 1: Width
+        // ── Field 1: Width ──
         snprintf(buf, sizeof(buf), "%d", cfg.mapWidth);
-        drawEditorText(renderer, "WIDTH:", 100, y, 20, fieldColor(1));
-        if (cfg.field == 1) {
-            drawEditorText(renderer, "<", 420, y, 20, yellow);
-            drawEditorText(renderer, buf, 460, y, 20, valColor(1));
-            drawEditorText(renderer, ">", 560, y, 20, yellow);
-        } else {
-            drawEditorText(renderer, buf, 460, y, 20, valColor(1));
-        }
-        y += step;
+        drawField(1, "WIDTH", buf, true);
 
-        // Field 2: Height
+        // ── Field 2: Height ──
         snprintf(buf, sizeof(buf), "%d", cfg.mapHeight);
-        drawEditorText(renderer, "HEIGHT:", 100, y, 20, fieldColor(2));
-        if (cfg.field == 2) {
-            drawEditorText(renderer, "<", 420, y, 20, yellow);
-            drawEditorText(renderer, buf, 460, y, 20, valColor(2));
-            drawEditorText(renderer, ">", 560, y, 20, yellow);
-        } else {
-            drawEditorText(renderer, buf, 460, y, 20, valColor(2));
-        }
-        y += step;
+        drawField(2, "HEIGHT", buf, true);
 
-        // Field 3: Map Name
-        drawEditorText(renderer, "MAP NAME:", 100, y, 20, fieldColor(3));
-        if (cfg.textEditing && cfg.field == 3) {
-            std::string disp = cfg.textBuf + "_";
-            drawEditorText(renderer, disp.c_str(), 460, y, 20, yellow);
-            // Show gamepad char palette
-            static const char charPalette[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 _-!@#.";
-            int pi = cfg.gpCharIdx;
-            int palLen = (int)strlen(charPalette);
-            char charRow[48];
-            int cx = 0;
-            for (int d = -5; d <= 5; d++) {
-                int idx = (pi + d + palLen) % palLen;
-                charRow[cx++] = (d == 0) ? '[' : ' ';
-                charRow[cx++] = charPalette[idx];
-                charRow[cx++] = (d == 0) ? ']' : ' ';
-            }
-            charRow[cx] = 0;
-            drawEditorText(renderer, charRow, 100, y + 24, 16, cyan);
-            drawEditorText(renderer, "DPad:select  A:type  Y:del  X:done  B:cancel", 100, y + 44, 12, gray);
-        } else {
-            drawEditorText(renderer, cfg.mapName.c_str(), 460, y, 20, valColor(3));
-            if (cfg.field == 3) drawEditorText(renderer, "[A / ENTER to edit]", 700, y, 14, gray);
-        }
-        y += step;
+        // ── Field 3: Map Name ──
+        drawTextFieldEditing(3, "MAP NAME");
 
-        // Field 4: Creator
-        drawEditorText(renderer, "CREATOR:", 100, y, 20, fieldColor(4));
-        if (cfg.textEditing && cfg.field == 4) {
-            std::string disp = cfg.textBuf + "_";
-            drawEditorText(renderer, disp.c_str(), 460, y, 20, yellow);
-            static const char charPalette2[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 _-!@#.";
-            int pi = cfg.gpCharIdx;
-            int palLen = (int)strlen(charPalette2);
-            char charRow[48];
-            int cx = 0;
-            for (int d = -5; d <= 5; d++) {
-                int idx = (pi + d + palLen) % palLen;
-                charRow[cx++] = (d == 0) ? '[' : ' ';
-                charRow[cx++] = charPalette2[idx];
-                charRow[cx++] = (d == 0) ? ']' : ' ';
-            }
-            charRow[cx] = 0;
-            drawEditorText(renderer, charRow, 100, y + 24, 16, cyan);
-            drawEditorText(renderer, "DPad:select  A:type  Y:del  X:done  B:cancel", 100, y + 44, 12, gray);
-        } else {
-            drawEditorText(renderer, cfg.creator.c_str(), 460, y, 20, valColor(4));
-            if (cfg.field == 4) drawEditorText(renderer, "[A / ENTER to edit]", 700, y, 14, gray);
-        }
-        y += step;
+        // ── Field 4: Creator ──
+        drawTextFieldEditing(4, "CREATOR");
+
+        // ── Field 5: Game Mode ──
+        drawField(5, "GAME MODE", cfg.gameMode == 0 ? "ARENA" : "SANDBOX", true);
     } else {
-        // Load mode — show available maps
-        drawEditorText(renderer, "SELECT MAP:", 100, y, 20, fieldColor(1));
-        y += 28;
+        // ── Load mode: map list ──
+        bool sel = (cfg.field == 1);
+        if (sel) {
+            SDL_SetRenderDrawColor(renderer, 0, 180, 160, 30);
+            SDL_Rect bar = {panelX + 4, y - 4, panelW - 8, 34};
+            SDL_RenderFillRect(renderer, &bar);
+        }
+        drawEditorText(renderer, "SELECT MAP", labelX, y, 18, sel ? white : gray);
+        y += 30;
 
         if (cfg.availableMaps.empty()) {
-            drawEditorText(renderer, "No maps found in maps/ folder", 140, y, 16, gray);
-            y += step * 3;
+            drawEditorText(renderer, "No .csm files found in maps/", labelX + 20, y, 16, dimGray);
+            y += step * 2;
         } else {
-            int startShow = std::max(0, cfg.loadIdx - 3);
+            int startShow = std::max(0, cfg.loadIdx - 4);
             int endShow = std::min((int)cfg.availableMaps.size(), startShow + 8);
             for (int i = startShow; i < endShow; i++) {
                 std::string fname = cfg.availableMaps[i];
                 size_t slash = fname.find_last_of('/');
                 if (slash != std::string::npos) fname = fname.substr(slash + 1);
-                SDL_Color mc = (i == cfg.loadIdx) ? cyan : gray;
-                if (i == cfg.loadIdx) {
-                    snprintf(buf, sizeof(buf), "> %s", fname.c_str());
-                } else {
-                    snprintf(buf, sizeof(buf), "  %s", fname.c_str());
+                bool isCur = (i == cfg.loadIdx);
+                if (isCur) {
+                    SDL_SetRenderDrawColor(renderer, 0, 120, 110, 40);
+                    SDL_Rect row = {labelX + 12, y - 2, panelW - 80, 24};
+                    SDL_RenderFillRect(renderer, &row);
                 }
-                drawEditorText(renderer, buf, 140, y, 16, mc);
-                y += 26;
+                snprintf(buf, sizeof(buf), "%s %s", isCur ? "\xe2\x96\xb6" : " ", fname.c_str());
+                drawEditorText(renderer, buf, labelX + 20, y, isCur ? 16 : 14, isCur ? cyan : dimGray);
+                y += 24;
             }
-            y += 10;
+            y += 8;
         }
     }
 
-    y = screenH_ - 140;
-    // Field 5: OK button
-    SDL_Color okC = (cfg.field == 5) ? white : gray;
-    drawEditorText(renderer, cfg.field == 5 ? "> START EDITOR <" : "START EDITOR", screenW_ / 2 - 80, y, 22, okC);
-    y += step;
+    // ── Bottom buttons ──
+    int btnY = screenH_ - 100;
 
-    // Field 6: Cancel
-    SDL_Color cancelC = (cfg.field == 6) ? white : gray;
-    drawEditorText(renderer, cfg.field == 6 ? "> BACK <" : "BACK", screenW_ / 2 - 40, y, 22, cancelC);
+    // Field 6: OK
+    bool okSel = (cfg.field == 6);
+    if (okSel) {
+        SDL_SetRenderDrawColor(renderer, 0, 180, 160, 40);
+        SDL_Rect bar = {screenW_ / 2 - 120, btnY - 4, 240, 32};
+        SDL_RenderFillRect(renderer, &bar);
+    }
+    drawEditorText(renderer, okSel ? "> START EDITOR <" : "START EDITOR",
+                   screenW_ / 2 - 80, btnY, 22, okSel ? green : gray);
+    btnY += step;
 
-    // Instructions
-    drawEditorText(renderer, "UP/DOWN navigate  LEFT/RIGHT adjust  ENTER confirm  BACKSPACE back",
-        screenW_ / 2 - 280, screenH_ - 35, 14, gray);
+    // Field 7: Cancel
+    bool cancelSel = (cfg.field == 7);
+    drawEditorText(renderer, cancelSel ? "> BACK <" : "BACK",
+                   screenW_ / 2 - 32, btnY, 20, cancelSel ? white : dimGray);
+
+    // Controls hint
+    drawEditorText(renderer, "\xe2\x86\x91\xe2\x86\x93 navigate   \xe2\x86\x90\xe2\x86\x92 adjust   ENTER confirm   ESC back",
+        screenW_ / 2 - 200, screenH_ - 30, 12, {60, 60, 70, 255});
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1364,8 +1689,7 @@ void MapEditor::handleGamepadInput(SDL_Event& e) {
                 selectedEnemy_ = -1;
                 break;
             case SDL_CONTROLLER_BUTTON_Y: // Quick save
-                if (saveMap(savePath_))
-                    printf("Map saved to %s\n", savePath_.c_str());
+                wantsModSave_ = true;
                 break;
             case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: // Zoom out
                 zoom_ /= 1.15f;
@@ -1379,6 +1703,7 @@ void MapEditor::handleGamepadInput(SDL_Event& e) {
                 if (currentTool_ == EditorTool::Tile && !palette_.empty()) {
                     selectedPalette_--;
                     if (selectedPalette_ < 0) selectedPalette_ = (int)palette_.size() - 1;
+                    scrollPaletteToSelection();
                 }
                 if (currentTool_ == EditorTool::Trigger) {
                     int v = (int)triggerGhost_.type + 1;
@@ -1390,8 +1715,9 @@ void MapEditor::handleGamepadInput(SDL_Event& e) {
                 if (currentTool_ == EditorTool::Tile && !palette_.empty()) {
                     selectedPalette_++;
                     if (selectedPalette_ >= (int)palette_.size()) selectedPalette_ = 0;
+                    scrollPaletteToSelection();
                 }
-                if (currentTool_ == EditorTool::Enemy) enemySpawnType_ = (enemySpawnType_ + 1) % 2;
+                if (currentTool_ == EditorTool::Entity) entitySpawnType_ = (entitySpawnType_ + 1) % ENTITY_TYPE_COUNT;
                 break;
             case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
                 showGrid_ = !showGrid_;
@@ -1402,14 +1728,19 @@ void MapEditor::handleGamepadInput(SDL_Event& e) {
             case SDL_CONTROLLER_BUTTON_START:
                 wantsTestPlay_ = true;
                 break;
-            case SDL_CONTROLLER_BUTTON_BACK: // Delete selection
-                if (selectedTrigger_ >= 0 && selectedTrigger_ < (int)map_.triggers.size()) {
-                    map_.triggers.erase(map_.triggers.begin() + selectedTrigger_);
-                    selectedTrigger_ = -1;
-                }
-                if (selectedEnemy_ >= 0 && selectedEnemy_ < (int)map_.enemySpawns.size()) {
-                    map_.enemySpawns.erase(map_.enemySpawns.begin() + selectedEnemy_);
-                    selectedEnemy_ = -1;
+            case SDL_CONTROLLER_BUTTON_BACK: // Delete selection  (- button on Switch)
+                // If nothing selected, treat as exit-to-menu
+                if (selectedTrigger_ < 0 && selectedEnemy_ < 0) {
+                    wantsBack_ = true;
+                } else {
+                    if (selectedTrigger_ >= 0 && selectedTrigger_ < (int)map_.triggers.size()) {
+                        map_.triggers.erase(map_.triggers.begin() + selectedTrigger_);
+                        selectedTrigger_ = -1;
+                    }
+                    if (selectedEnemy_ >= 0 && selectedEnemy_ < (int)map_.enemySpawns.size()) {
+                        map_.enemySpawns.erase(map_.enemySpawns.begin() + selectedEnemy_);
+                        selectedEnemy_ = -1;
+                    }
                 }
                 break;
         }
@@ -1424,7 +1755,11 @@ void MapEditor::handleGamepadInput(SDL_Event& e) {
 void MapEditor::updateGamepadCursor(float dt) {
     SDL_GameController* gc = nullptr;
     for (int i = 0; i < SDL_NumJoysticks(); i++) {
-        if (SDL_IsGameController(i)) { gc = SDL_GameControllerFromInstanceID(i); break; }
+        if (SDL_IsGameController(i)) {
+            SDL_JoystickID jid = SDL_JoystickGetDeviceInstanceID(i);
+            gc = SDL_GameControllerFromInstanceID(jid);
+            break;
+        }
     }
     if (!gc) return;
 
