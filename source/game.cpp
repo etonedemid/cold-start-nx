@@ -4780,6 +4780,14 @@ void Game::renderMainMenu() {
         drawTextCentered(charStr, SCREEN_H - 72, 14, dimCyan);
     }
 
+    // Version tag (bottom-right corner)
+    {
+        char verBuf[32];
+        snprintf(verBuf, sizeof(verBuf), "v%s", GAME_VERSION);
+        int vw = (int)(strlen(verBuf) * 8);
+        drawText(verBuf, SCREEN_W - vw - 12, SCREEN_H - 22, 12, {60, 80, 70, 200});
+    }
+
     // Bottom hint
     drawTextCentered("A / ENTER - Select     D-Pad / Arrows - Navigate", SCREEN_H - 36, 13, {80, 80, 90, 255});
 }
