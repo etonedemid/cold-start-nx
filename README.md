@@ -22,8 +22,7 @@ COLD START is a top-down action shooter built in C++ with SDL2 for PC and Ninten
 ![2026030516054100-FC1A835C590C06D4071528FDF96C9516](https://github.com/user-attachments/assets/dff2c7bc-5693-4395-b25a-260d1d97414a)
 ![2026030522145200-99584FB39514334B3ED85316B5F4C344](https://github.com/user-attachments/assets/e466ca9d-418d-4829-acb1-30453b330efd)
 ![2026030522150100-99584FB39514334B3ED85316B5F4C344](https://github.com/user-attachments/assets/1b99b04d-2426-407f-b596-bbc2cccf13f5)
-![2026030522152200-99584FB39514334B3ED85316B5F4C344](https://github.com/user-attachments/assets/63370a2a-55ec-4138-a777-9818b5b4d5f4)
-
+<img width="1917" height="1080" alt="изображение" src="https://github.com/user-attachments/assets/3aa5fe08-f4f7-443d-8a20-8176400c379d" />
 
 
 ## Feature Set
