@@ -67,7 +67,7 @@ jobs:
 
       - name: Install SDL2 via vcpkg
         run: |
-          vcpkg install sdl2 sdl2-image sdl2-ttf sdl2-mixer libenet --triplet x64-windows
+          vcpkg install sdl2 sdl2-image sdl2-ttf sdl2-mixer enet --triplet x64-windows
           vcpkg integrate install
 
       - name: Configure
@@ -84,7 +84,7 @@ jobs:
         run: |
           mkdir dist-windows
           copy build-windows\Release\cold_start.exe dist-windows\
-          xcopy /E /I build-windows\romfs dist-windows\romfs\
+          xcopy /E /I build-windows\Release\romfs dist-windows\romfs\
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
