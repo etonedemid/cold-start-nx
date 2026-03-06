@@ -1950,6 +1950,7 @@ void Game::handleInput() {
                                 fread(customMapData.data(), 1, sz, f);
                                 fclose(f);
                                 startCustomMapMultiplayer(customMapFile);
+                                if (lobbySettings_.isPvp) player_.invulnDuration = 0.01f;
                                 state_ = GameState::MultiplayerGame;
                                 net.startGame(0, map_.width, map_.height, customMapData);
                                 respawnTimer_ = currentRules_.respawnTime;
@@ -1959,6 +1960,7 @@ void Game::handleInput() {
                             uint32_t mapSeed = (uint32_t)time(nullptr) ^ (uint32_t)rand();
                             mapSrand(mapSeed);
                             startGame();
+                            if (lobbySettings_.isPvp) player_.invulnDuration = 0.01f;
                             state_ = GameState::MultiplayerGame;
                             net.startGame(mapSeed, config_.mapWidth, config_.mapHeight);
                             respawnTimer_ = currentRules_.respawnTime;
@@ -2361,7 +2363,7 @@ void Player::takeDamage(int dmg) {
     if (invulnerable || dead) return;
     hp -= dmg;
     invulnerable = true;
-    invulnTimer = PLAYER_INVULN_TIME;
+    invulnTimer = invulnDuration;
     if (hp <= 0) die();
 }
 
@@ -2934,6 +2936,12 @@ void Game::updateExplosions(float dt) {
                     if (e.hp <= 0) killEnemy(e);
                 }
             }
+            // In PvP, explosions deal 3 HP damage to the local player
+            if ((lobbySettings_.isPvp || currentRules_.pvpEnabled) &&
+                !player_.dead &&
+                Vec2::dist(ex.pos, player_.pos) < ex.radius) {
+                player_.takeDamage(3);
+            }
             ex.dealtDmg = true;
         }
     }
@@ -3053,8 +3061,8 @@ void Game::updateSpawning(float dt) {
         auto& net = NetworkManager::instance();
         if (net.isOnline() && !net.isHost()) return;
     }
-    // In sandbox mode skip all wave spawning
-    if (sandboxMode_) return;
+    // In sandbox mode or PvP mode skip all wave spawning
+    if (sandboxMode_ || lobbySettings_.isPvp) return;
     // Wave-based spawning system
     if (waveActive_) {
         // Spawning enemies within current wave
@@ -6898,6 +6906,9 @@ void Game::setupNetworkCallbacks() {
                 startGame();                // generates map, resets player & camera
             }
         }
+        // PvP: near-zero damage cooldown so rapid shots register
+        // Set AFTER startGame/startCustomMapMultiplayer which reset the Player struct
+        player_.invulnDuration = lobbySettings_.isPvp ? 0.01f : PLAYER_INVULN_TIME;
         state_ = GameState::MultiplayerGame;
         menuSelection_ = 0;
         respawnTimer_ = currentRules_.respawnTime;
@@ -7236,6 +7247,7 @@ void Game::startMultiplayerGame() {
 
             // Load custom map for host
             startCustomMapMultiplayer(customMapFile);
+            if (lobbySettings_.isPvp) player_.invulnDuration = 0.01f;
             state_ = GameState::MultiplayerGame;
             net.startGame(0, map_.width, map_.height, customMapData);
             respawnTimer_ = currentRules_.respawnTime;
@@ -7251,6 +7263,7 @@ void Game::startMultiplayerGame() {
 
     // Start the game — use generated map
     startGame();
+    if (lobbySettings_.isPvp) player_.invulnDuration = 0.01f;
     state_ = GameState::MultiplayerGame;
     net.startGame(mapSeed, config_.mapWidth, config_.mapHeight);
     respawnTimer_ = currentRules_.respawnTime;
@@ -7504,7 +7517,7 @@ void Game::renderMultiplayerMenu() {
     struct MenuItem { const char* label; const char* desc; SDL_Color accent; };
     MenuItem items[] = {
         {"HOST GAME",       "Create a server for others to join", {50, 255, 150, 255}},
-        {"QUICK CONNECT",   "Enter IP and connect directly",      blue},
+        {"IP CONNECT",   "Enter IP and connect directly",      blue},
         {"BACK",            "",                                    {255, 100, 100, 255}},
     };
     int count = 3;
