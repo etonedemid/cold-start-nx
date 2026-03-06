@@ -93,6 +93,19 @@ MapTrigger* CustomMap::findEndTrigger() {
     return nullptr;
 }
 
+MapTrigger* CustomMap::findTeamSpawnTrigger(int team) {
+    static const TriggerType teamTypes[4] = {
+        TriggerType::TeamSpawnRed,
+        TriggerType::TeamSpawnBlue,
+        TriggerType::TeamSpawnGreen,
+        TriggerType::TeamSpawnYellow,
+    };
+    if (team < 0 || team > 3) return nullptr;
+    for (auto& t : triggers)
+        if (t.type == teamTypes[team]) return &t;
+    return nullptr;
+}
+
 std::vector<MapTrigger*> CustomMap::findTriggersByType(TriggerType type) {
     std::vector<MapTrigger*> result;
     for (auto& t : triggers)
