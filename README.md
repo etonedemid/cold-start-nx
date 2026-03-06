@@ -1,4 +1,4 @@
-# COLD START  `v0.5.8`
+# COLD START  `v0.5.9`
 
 COLD START is a top-down action shooter built in C++ with SDL2 for PC and Nintendo Switch homebrew. It combines fast combat, local content editing, multiplayer support, and a lightweight modding pipeline aimed at rapid iteration.
 
@@ -215,6 +215,11 @@ When the host enables mods, lightweight mod data can be serialized and sent to j
 - First launch may create missing runtime content directories automatically
 
 ## Changelog
+
+### v0.5.9
+- **Fix: enemies not spawning in solo play** — PvP flag from a previous multiplayer session was not reset when starting a new solo game; `startGame()` now explicitly resets `lobbySettings_.isPvp` so wave spawning always works in solo mode
+- **Version displayed in main menu** — version number now shown under the "COLD START" title on the main menu
+- **UPnP port forwarding** — when hosting a multiplayer game the game now sends a UPnP port-mapping request to the router automatically (async background thread, requires miniupnpc; gracefully no-ops if not available)
 
 ### v0.5.8
 - **No damage invulnerability in PvP** — `invulnDuration` set to `0` in PvP modes (was 10 ms); rapid hits always register with no grace window
