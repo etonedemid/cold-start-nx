@@ -126,10 +126,12 @@ bool Game::init() {
 
     // Scan for custom characters and maps
     scanCharacters();
-    scanMapFiles();
 
     // Initialize mod system
     initMods();
+
+    // Scan map files after mods are loaded so mod maps are included
+    scanMapFiles();
 
     // Initialize multiplayer
     initMultiplayer();
@@ -5423,6 +5425,16 @@ void Game::scanMapFiles() {
         }
         closedir(d);
     }
+
+    // Also include maps from all enabled mods
+    auto modMaps = ModManager::instance().allMapPaths();
+    for (auto& mp : modMaps) {
+        // Avoid duplicates
+        bool found = false;
+        for (auto& ex : mapFiles_) if (ex == mp) { found = true; break; }
+        if (!found) mapFiles_.push_back(mp);
+    }
+
     printf("Found %d map files\n", (int)mapFiles_.size());
 }
 
