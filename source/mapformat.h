@@ -79,6 +79,8 @@ struct CustomMap {
     std::string name;
     std::string creator;
     uint8_t gameMode = 0;  // 0=Arena, 1=Sandbox
+    // Texture paths for TILE_CUSTOM_0..7 (empty = not used)
+    std::string customTilePaths[8];
 
     bool saveToFile(const std::string& path) const;
     bool loadFromFile(const std::string& path);
