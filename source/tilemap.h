@@ -5,6 +5,24 @@
 #include <cstdint>
 #include <vector>
 
+// ── Portable PRNG for deterministic map generation across platforms ──
+// (stdlib rand() produces different sequences on different libc implementations,
+//  e.g. glibc on PC vs newlib on Switch)
+namespace MapRng {
+    inline uint32_t& state() { static uint32_t s = 1; return s; }
+    inline void seed(uint32_t v) { state() = v ? v : 1; }
+    inline int next() {
+        uint32_t x = state();
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        state() = x;
+        return (int)(x & 0x7FFFFFFF);
+    }
+};
+inline void mapSrand(uint32_t s) { MapRng::seed(s); }
+inline int  mapRand()            { return MapRng::next(); }
+
 enum TileType : uint8_t {
     TILE_FLOOR = 0,
     TILE_GRASS,
