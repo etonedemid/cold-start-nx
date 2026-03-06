@@ -28,38 +28,67 @@ if(ANDROID)
     target_compile_definitions(cold_start PRIVATE PLATFORM_ANDROID)
 else()
     # PC (Linux / macOS / Windows)
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(SDL2       REQUIRED sdl2)
-    pkg_check_modules(SDL2_IMAGE REQUIRED SDL2_image)
-    pkg_check_modules(SDL2_TTF   REQUIRED SDL2_ttf)
-    pkg_check_modules(SDL2_MIXER REQUIRED SDL2_mixer)
+    if(WIN32)
+        # Windows — use vcpkg CMake config packages
+        find_package(SDL2       CONFIG REQUIRED)
+        find_package(SDL2_image CONFIG REQUIRED)
+        find_package(SDL2_ttf   CONFIG REQUIRED)
+        find_package(SDL2_mixer CONFIG REQUIRED)
 
-    # ENet (optional — multiplayer support)
-    pkg_check_modules(ENET libenet)
+        target_link_libraries(cold_start PRIVATE
+            SDL2::SDL2main
+            SDL2::SDL2
+            SDL2_image::SDL2_image
+            SDL2_ttf::SDL2_ttf
+            SDL2_mixer::SDL2_mixer
+        )
 
-    target_include_directories(cold_start PRIVATE
-        ${SDL2_INCLUDE_DIRS}
-        ${SDL2_IMAGE_INCLUDE_DIRS}
-        ${SDL2_TTF_INCLUDE_DIRS}
-        ${SDL2_MIXER_INCLUDE_DIRS}
-    )
-    target_link_libraries(cold_start
-        ${SDL2_LIBRARIES}
-        ${SDL2_IMAGE_LIBRARIES}
-        ${SDL2_TTF_LIBRARIES}
-        ${SDL2_MIXER_LIBRARIES}
-    )
-    target_compile_definitions(cold_start PRIVATE PLATFORM_PC)
-
-    if(ENET_FOUND)
-        target_include_directories(cold_start PRIVATE ${ENET_INCLUDE_DIRS})
-        target_link_libraries(cold_start ${ENET_LIBRARIES})
-        target_compile_definitions(cold_start PRIVATE HAS_ENET=1)
-        message(STATUS "ENet found — multiplayer enabled")
+        # ENet (optional — multiplayer support)
+        find_package(unofficial-enet CONFIG)
+        if(unofficial-enet_FOUND)
+            target_link_libraries(cold_start PRIVATE unofficial::enet::enet)
+            target_compile_definitions(cold_start PRIVATE HAS_ENET=1)
+            message(STATUS "ENet found — multiplayer enabled")
+        else()
+            target_compile_definitions(cold_start PRIVATE HAS_ENET=0)
+            message(STATUS "ENet NOT found — multiplayer disabled (stub)")
+        endif()
     else()
-        target_compile_definitions(cold_start PRIVATE HAS_ENET=0)
-        message(STATUS "ENet NOT found — multiplayer disabled (stub)")
+        # Linux / macOS — use pkg-config
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(SDL2       REQUIRED sdl2)
+        pkg_check_modules(SDL2_IMAGE REQUIRED SDL2_image)
+        pkg_check_modules(SDL2_TTF   REQUIRED SDL2_ttf)
+        pkg_check_modules(SDL2_MIXER REQUIRED SDL2_mixer)
+
+        # ENet (optional — multiplayer support)
+        pkg_check_modules(ENET libenet)
+
+        target_include_directories(cold_start PRIVATE
+            ${SDL2_INCLUDE_DIRS}
+            ${SDL2_IMAGE_INCLUDE_DIRS}
+            ${SDL2_TTF_INCLUDE_DIRS}
+            ${SDL2_MIXER_INCLUDE_DIRS}
+        )
+        target_link_libraries(cold_start
+            ${SDL2_LIBRARIES}
+            ${SDL2_IMAGE_LIBRARIES}
+            ${SDL2_TTF_LIBRARIES}
+            ${SDL2_MIXER_LIBRARIES}
+        )
+
+        if(ENET_FOUND)
+            target_include_directories(cold_start PRIVATE ${ENET_INCLUDE_DIRS})
+            target_link_libraries(cold_start ${ENET_LIBRARIES})
+            target_compile_definitions(cold_start PRIVATE HAS_ENET=1)
+            message(STATUS "ENet found — multiplayer enabled")
+        else()
+            target_compile_definitions(cold_start PRIVATE HAS_ENET=0)
+            message(STATUS "ENet NOT found — multiplayer disabled (stub)")
+        endif()
     endif()
+
+    target_compile_definitions(cold_start PRIVATE PLATFORM_PC)
 
     # Copy romfs to build dir as "romfs/" so asset paths work during development
     add_custom_command(TARGET cold_start POST_BUILD
