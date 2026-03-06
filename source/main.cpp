@@ -7,6 +7,7 @@
 #endif
 
 int main(int argc, char* argv[]) {
+    SDL_SetHint(SDL_HINT_RENDER_BATCHING, "0");
 #ifdef __SWITCH__
     socketInitializeDefault();
     nxlinkStdio();

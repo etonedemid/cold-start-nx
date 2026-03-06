@@ -34,6 +34,9 @@ else()
     pkg_check_modules(SDL2_TTF   REQUIRED SDL2_ttf)
     pkg_check_modules(SDL2_MIXER REQUIRED SDL2_mixer)
 
+    # ENet (optional — multiplayer support)
+    pkg_check_modules(ENET libenet)
+
     target_include_directories(cold_start PRIVATE
         ${SDL2_INCLUDE_DIRS}
         ${SDL2_IMAGE_INCLUDE_DIRS}
@@ -48,11 +51,40 @@ else()
     )
     target_compile_definitions(cold_start PRIVATE PLATFORM_PC)
 
-    # Copy romfs to build dir as "romfs/" so asset paths work
+    if(ENET_FOUND)
+        target_include_directories(cold_start PRIVATE ${ENET_INCLUDE_DIRS})
+        target_link_libraries(cold_start ${ENET_LIBRARIES})
+        target_compile_definitions(cold_start PRIVATE HAS_ENET=1)
+        message(STATUS "ENet found — multiplayer enabled")
+    else()
+        target_compile_definitions(cold_start PRIVATE HAS_ENET=0)
+        message(STATUS "ENet NOT found — multiplayer disabled (stub)")
+    endif()
+
+    # Copy romfs to build dir as "romfs/" so asset paths work during development
     add_custom_command(TARGET cold_start POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_SOURCE_DIR}/romfs
             $<TARGET_FILE_DIR:cold_start>/romfs
+    )
+
+    # ── dist target — self-contained bundle ─────────────────────────────────
+    # Usage:  make dist
+    # Output: build-pc/dist/  containing the exe, romfs/, libs/, and run.sh
+    configure_file(
+        ${CMAKE_SOURCE_DIR}/bundle.sh.in
+        ${CMAKE_BINARY_DIR}/bundle.sh
+        @ONLY
+    )
+    file(CHMOD ${CMAKE_BINARY_DIR}/bundle.sh PERMISSIONS
+        OWNER_READ OWNER_WRITE OWNER_EXECUTE
+        GROUP_READ GROUP_EXECUTE
+        WORLD_READ WORLD_EXECUTE)
+
+    add_custom_target(dist
+        DEPENDS cold_start
+        COMMAND ${CMAKE_BINARY_DIR}/bundle.sh
+        COMMENT "Building distributable bundle -> dist/"
     )
 endif()
 

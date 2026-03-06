@@ -7,7 +7,7 @@ struct Camera {
     Vec2  pos = {0, 0};          // top-left in world coords
     Vec2  vel = {0, 0};
     float shake      = 0;
-    float shakeDecay = 4.0f;
+    float shakeDecay = 5.5f;
     Vec2  shakeOffset= {0, 0};
     float worldW     = WORLD_W;
     float worldH     = WORLD_H;

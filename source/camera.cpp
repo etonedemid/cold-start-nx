@@ -40,7 +40,7 @@ void Camera::update(Vec2 target, Vec2 aimDir, float dt) {
 
 void Camera::addShake(float amount) {
     shake += amount;
-    if (shake > 30.0f) shake = 30.0f;
+    if (shake > 20.0f) shake = 20.0f;
 }
 
 Vec2 Camera::worldToScreen(Vec2 world) const {

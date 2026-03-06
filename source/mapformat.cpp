@@ -16,6 +16,7 @@ bool CustomMap::saveToFile(const std::string& path) const {
     hdr.height  = (uint16_t)height;
     strncpy(hdr.name, name.c_str(), sizeof(hdr.name) - 1);
     strncpy(hdr.creator, creator.c_str(), sizeof(hdr.creator) - 1);
+    hdr.reserved[0] = gameMode;  // store game mode in first reserved byte
     // thumbnail is set externally before saving
     memcpy(hdr.thumbnail, header.thumbnail, sizeof(hdr.thumbnail));
 
@@ -53,6 +54,7 @@ bool CustomMap::loadFromFile(const std::string& path) {
     height = hdr.height;
     name    = std::string(hdr.name);
     creator = std::string(hdr.creator);
+    gameMode = hdr.reserved[0];  // 0=Arena, 1=Sandbox
 
     int area = width * height;
     tiles.resize(area);
