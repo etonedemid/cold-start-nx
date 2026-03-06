@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <algorithm>
 #include <fstream>
+#include <thread>
 
 // Networking: ENet for multiplayer
 // On Switch: use bundled ENet + libnx BSD sockets (source/enet/)
@@ -25,6 +26,65 @@
 #  ifndef HAS_ENET
 #    define HAS_ENET 0
 #  endif
+#endif
+
+#ifndef HAS_UPNP
+#  define HAS_UPNP 0
+#endif
+
+#if HAS_UPNP
+#  include <miniupnpc/miniupnpc.h>
+#  include <miniupnpc/upnpcommands.h>
+#  include <miniupnpc/upnperrors.h>
+struct UpnpState {
+    UPNPUrls  urls;
+    IGDdatas  data;
+    uint16_t  port  = 0;
+    bool      mapped = false;
+};
+static UpnpState s_upnp;
+
+static void upnpMapPort(uint16_t port) {
+    char portStr[8];
+    snprintf(portStr, sizeof(portStr), "%u", port);
+    int disc_error = 0;
+    struct UPNPDev* devlist = upnpDiscover(2000, nullptr, nullptr, 0, 0, 2, &disc_error);
+    if (!devlist) {
+        printf("UPnP: no devices found (err=%d)\n", disc_error);
+        return;
+    }
+    char lanaddr[64] = {};
+    char wanaddr[64] = {};
+    int r = UPNP_GetValidIGD(devlist, &s_upnp.urls, &s_upnp.data, lanaddr, sizeof(lanaddr), wanaddr, sizeof(wanaddr));
+    freeUPNPDevlist(devlist);
+    if (r != 1) {
+        printf("UPnP: no valid IGD (r=%d)\n", r);
+        return;
+    }
+    int res = UPNP_AddPortMapping(
+        s_upnp.urls.controlURL, s_upnp.data.first.servicetype,
+        portStr, portStr, lanaddr, "COLD START", "UDP", nullptr, "86400");
+    if (res == UPNPCOMMAND_SUCCESS) {
+        s_upnp.mapped = true;
+        s_upnp.port   = port;
+        printf("UPnP: mapped UDP port %s\n", portStr);
+    } else {
+        FreeUPNPUrls(&s_upnp.urls);
+        printf("UPnP: mapping failed (err=%d: %s)\n", res, strupnperror(res));
+    }
+}
+
+static void upnpUnmap() {
+    if (!s_upnp.mapped) return;
+    char portStr[8];
+    snprintf(portStr, sizeof(portStr), "%u", s_upnp.port);
+    UPNP_DeletePortMapping(
+        s_upnp.urls.controlURL, s_upnp.data.first.servicetype,
+        portStr, "UDP", nullptr);
+    FreeUPNPUrls(&s_upnp.urls);
+    s_upnp.mapped = false;
+    printf("UPnP: unmapped port %s\n", portStr);
+}
 #endif
 
 static constexpr uint16_t DEFAULT_PORT = 7777;
@@ -104,6 +164,12 @@ bool NetworkManager::host(uint16_t port, int maxClients) {
     lobby_.maxPlayers = maxClients + 1;
 
     printf("Network: Hosting on port %d (max %d clients)\n", port, maxClients);
+    // Async UPnP port mapping so routers/firewalls automatically forward the port
+#if HAS_UPNP
+    if (s_upnp.mapped) upnpUnmap();  // remove any stale mapping first
+    std::thread(upnpMapPort, port).detach();
+    printf("UPnP: port mapping requested (async)\n");
+#endif
     return true;
 #else
     return false;
@@ -163,6 +229,10 @@ void NetworkManager::disconnect() {
     enet_host_flush(enetHost_);
     enet_host_destroy(enetHost_);
     enetHost_ = nullptr;
+#endif
+
+#if HAS_UPNP
+    upnpUnmap();
 #endif
 
     players_.clear();

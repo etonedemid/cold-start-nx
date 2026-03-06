@@ -5,6 +5,9 @@ build-pc/
 # Local distribution folder (created during release packaging)
 dist/
 
+# Release zip archives (created locally, uploaded to GitHub)
+cold_start-*.zip
+
 # Nintendo Switch compiled outputs
 *.elf
 *.nacp
