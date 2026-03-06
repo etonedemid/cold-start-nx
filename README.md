@@ -1,4 +1,4 @@
-# COLD START  `v0.5.7`
+# COLD START  `v0.5.8`
 
 COLD START is a top-down action shooter built in C++ with SDL2 for PC and Nintendo Switch homebrew. It combines fast combat, local content editing, multiplayer support, and a lightweight modding pipeline aimed at rapid iteration.
 
@@ -215,6 +215,11 @@ When the host enables mods, lightweight mod data can be serialized and sent to j
 - First launch may create missing runtime content directories automatically
 
 ## Changelog
+
+### v0.5.8
+- **No damage invulnerability in PvP** — `invulnDuration` set to `0` in PvP modes (was 10 ms); rapid hits always register with no grace window
+- **Bomb homing targets enemy players** — dashed bombs now lock onto the nearest enemy player (remote players on opposing teams) in PvP within a 45° cone, in addition to AI enemies
+- **Bomb–player collision** — dashed bombs now explode on contact with and proximity to remote enemy players; host-authoritative explosion damage applies to all players hit
 
 ### v0.5.7 (2026-03-05)
 - **Team spawn triggers** — editor now supports `TeamSpawnRed/Blue/Green/Yellow` trigger types; multiplayer spawns and respawns use the matching trigger when team mode is active, falling back to corner logic for generated maps
