@@ -61,6 +61,18 @@ else()
         message(STATUS "ENet NOT found — multiplayer disabled (stub)")
     endif()
 
+    # miniupnpc (optional — automatic UPnP port forwarding when hosting)
+    pkg_check_modules(MINIUPNPC miniupnpc)
+    if(MINIUPNPC_FOUND)
+        target_include_directories(cold_start PRIVATE ${MINIUPNPC_INCLUDE_DIRS})
+        target_link_libraries(cold_start ${MINIUPNPC_LIBRARIES})
+        target_compile_definitions(cold_start PRIVATE HAS_UPNP=1)
+        message(STATUS "miniupnpc found — UPnP port forwarding enabled")
+    else()
+        target_compile_definitions(cold_start PRIVATE HAS_UPNP=0)
+        message(STATUS "miniupnpc NOT found — UPnP disabled")
+    endif()
+
     # Copy romfs to build dir as "romfs/" so asset paths work during development
     add_custom_command(TARGET cold_start POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
