@@ -2,6 +2,9 @@
 // ─── constants.h ─── Game tuning constants ──────────────────────────────────
 #include "vec2.h"
 
+// ── Version ──
+constexpr const char* GAME_VERSION = "0.5.7";
+
 // Screen
 constexpr int SCREEN_W = 1280;
 constexpr int SCREEN_H = 720;
