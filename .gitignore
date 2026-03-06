@@ -2,6 +2,9 @@
 build/
 build-pc/
 
+# Local distribution folder (created during release packaging)
+dist/
+
 # Nintendo Switch compiled outputs
 *.elf
 *.nacp

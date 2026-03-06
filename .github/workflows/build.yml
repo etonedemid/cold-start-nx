@@ -59,9 +59,42 @@ jobs:
           name: cold_start-switch
           path: cold-start-nx.nro
 
+  build-windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SDL2 via vcpkg
+        run: |
+          vcpkg install sdl2 sdl2-image sdl2-ttf sdl2-mixer libenet --triplet x64-windows
+          vcpkg integrate install
+
+      - name: Configure
+        run: >
+          cmake -B build-windows -S .
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_TARGET_TRIPLET=x64-windows
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build-windows --config Release --parallel
+
+      - name: Collect artifacts
+        run: |
+          mkdir dist-windows
+          copy build-windows\Release\cold_start.exe dist-windows\
+          xcopy /E /I build-windows\romfs dist-windows\romfs\
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cold_start-windows
+          path: dist-windows\
+
   release:
     name: GitHub Release
-    needs: [build-pc, build-switch]
+    needs: [build-pc, build-windows, build-switch]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
@@ -72,6 +105,12 @@ jobs:
         with:
           name: cold_start-pc
           path: release-assets/pc
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: cold_start-windows
+          path: release-assets/windows
 
       - name: Download Switch artifact
         uses: actions/download-artifact@v4
@@ -85,6 +124,11 @@ jobs:
           chmod +x cold_start
           zip ../../cold_start-linux-${{ github.ref_name }}.zip cold_start
 
+      - name: Package Windows build
+        run: |
+          cd release-assets/windows
+          zip -r ../../cold_start-windows-${{ github.ref_name }}.zip .
+
       - name: Rename Switch build
         run: cp release-assets/switch/cold-start-nx.nro cold_start-switch-${{ github.ref_name }}.nro
 
@@ -96,4 +140,5 @@ jobs:
             See [README.md](README.md#changelog) for the full changelog.
           files: |
             cold_start-linux-${{ github.ref_name }}.zip
+            cold_start-windows-${{ github.ref_name }}.zip
             cold_start-switch-${{ github.ref_name }}.nro
