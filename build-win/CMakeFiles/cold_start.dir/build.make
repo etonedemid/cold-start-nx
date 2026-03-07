@@ -282,6 +282,126 @@ CMakeFiles/cold_start.dir/source/tilemap.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/cold_start.dir/source/tilemap.cpp.s"
 	/usr/bin/x86_64-w64-mingw32-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/etonedemid/topdown-nx/cold_start/source/tilemap.cpp -o CMakeFiles/cold_start.dir/source/tilemap.cpp.s
 
+CMakeFiles/cold_start.dir/source/enet/callbacks.c.obj: CMakeFiles/cold_start.dir/flags.make
+CMakeFiles/cold_start.dir/source/enet/callbacks.c.obj: CMakeFiles/cold_start.dir/includes_C.rsp
+CMakeFiles/cold_start.dir/source/enet/callbacks.c.obj: /home/etonedemid/topdown-nx/cold_start/source/enet/callbacks.c
+CMakeFiles/cold_start.dir/source/enet/callbacks.c.obj: CMakeFiles/cold_start.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles --progress-num=$(CMAKE_PROGRESS_15) "Building C object CMakeFiles/cold_start.dir/source/enet/callbacks.c.obj"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT CMakeFiles/cold_start.dir/source/enet/callbacks.c.obj -MF CMakeFiles/cold_start.dir/source/enet/callbacks.c.obj.d -o CMakeFiles/cold_start.dir/source/enet/callbacks.c.obj -c /home/etonedemid/topdown-nx/cold_start/source/enet/callbacks.c
+
+CMakeFiles/cold_start.dir/source/enet/callbacks.c.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/cold_start.dir/source/enet/callbacks.c.i"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/etonedemid/topdown-nx/cold_start/source/enet/callbacks.c > CMakeFiles/cold_start.dir/source/enet/callbacks.c.i
+
+CMakeFiles/cold_start.dir/source/enet/callbacks.c.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/cold_start.dir/source/enet/callbacks.c.s"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/etonedemid/topdown-nx/cold_start/source/enet/callbacks.c -o CMakeFiles/cold_start.dir/source/enet/callbacks.c.s
+
+CMakeFiles/cold_start.dir/source/enet/compress.c.obj: CMakeFiles/cold_start.dir/flags.make
+CMakeFiles/cold_start.dir/source/enet/compress.c.obj: CMakeFiles/cold_start.dir/includes_C.rsp
+CMakeFiles/cold_start.dir/source/enet/compress.c.obj: /home/etonedemid/topdown-nx/cold_start/source/enet/compress.c
+CMakeFiles/cold_start.dir/source/enet/compress.c.obj: CMakeFiles/cold_start.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles --progress-num=$(CMAKE_PROGRESS_16) "Building C object CMakeFiles/cold_start.dir/source/enet/compress.c.obj"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT CMakeFiles/cold_start.dir/source/enet/compress.c.obj -MF CMakeFiles/cold_start.dir/source/enet/compress.c.obj.d -o CMakeFiles/cold_start.dir/source/enet/compress.c.obj -c /home/etonedemid/topdown-nx/cold_start/source/enet/compress.c
+
+CMakeFiles/cold_start.dir/source/enet/compress.c.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/cold_start.dir/source/enet/compress.c.i"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/etonedemid/topdown-nx/cold_start/source/enet/compress.c > CMakeFiles/cold_start.dir/source/enet/compress.c.i
+
+CMakeFiles/cold_start.dir/source/enet/compress.c.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/cold_start.dir/source/enet/compress.c.s"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/etonedemid/topdown-nx/cold_start/source/enet/compress.c -o CMakeFiles/cold_start.dir/source/enet/compress.c.s
+
+CMakeFiles/cold_start.dir/source/enet/host.c.obj: CMakeFiles/cold_start.dir/flags.make
+CMakeFiles/cold_start.dir/source/enet/host.c.obj: CMakeFiles/cold_start.dir/includes_C.rsp
+CMakeFiles/cold_start.dir/source/enet/host.c.obj: /home/etonedemid/topdown-nx/cold_start/source/enet/host.c
+CMakeFiles/cold_start.dir/source/enet/host.c.obj: CMakeFiles/cold_start.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles --progress-num=$(CMAKE_PROGRESS_17) "Building C object CMakeFiles/cold_start.dir/source/enet/host.c.obj"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT CMakeFiles/cold_start.dir/source/enet/host.c.obj -MF CMakeFiles/cold_start.dir/source/enet/host.c.obj.d -o CMakeFiles/cold_start.dir/source/enet/host.c.obj -c /home/etonedemid/topdown-nx/cold_start/source/enet/host.c
+
+CMakeFiles/cold_start.dir/source/enet/host.c.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/cold_start.dir/source/enet/host.c.i"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/etonedemid/topdown-nx/cold_start/source/enet/host.c > CMakeFiles/cold_start.dir/source/enet/host.c.i
+
+CMakeFiles/cold_start.dir/source/enet/host.c.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/cold_start.dir/source/enet/host.c.s"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/etonedemid/topdown-nx/cold_start/source/enet/host.c -o CMakeFiles/cold_start.dir/source/enet/host.c.s
+
+CMakeFiles/cold_start.dir/source/enet/list.c.obj: CMakeFiles/cold_start.dir/flags.make
+CMakeFiles/cold_start.dir/source/enet/list.c.obj: CMakeFiles/cold_start.dir/includes_C.rsp
+CMakeFiles/cold_start.dir/source/enet/list.c.obj: /home/etonedemid/topdown-nx/cold_start/source/enet/list.c
+CMakeFiles/cold_start.dir/source/enet/list.c.obj: CMakeFiles/cold_start.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles --progress-num=$(CMAKE_PROGRESS_18) "Building C object CMakeFiles/cold_start.dir/source/enet/list.c.obj"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT CMakeFiles/cold_start.dir/source/enet/list.c.obj -MF CMakeFiles/cold_start.dir/source/enet/list.c.obj.d -o CMakeFiles/cold_start.dir/source/enet/list.c.obj -c /home/etonedemid/topdown-nx/cold_start/source/enet/list.c
+
+CMakeFiles/cold_start.dir/source/enet/list.c.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/cold_start.dir/source/enet/list.c.i"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/etonedemid/topdown-nx/cold_start/source/enet/list.c > CMakeFiles/cold_start.dir/source/enet/list.c.i
+
+CMakeFiles/cold_start.dir/source/enet/list.c.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/cold_start.dir/source/enet/list.c.s"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/etonedemid/topdown-nx/cold_start/source/enet/list.c -o CMakeFiles/cold_start.dir/source/enet/list.c.s
+
+CMakeFiles/cold_start.dir/source/enet/packet.c.obj: CMakeFiles/cold_start.dir/flags.make
+CMakeFiles/cold_start.dir/source/enet/packet.c.obj: CMakeFiles/cold_start.dir/includes_C.rsp
+CMakeFiles/cold_start.dir/source/enet/packet.c.obj: /home/etonedemid/topdown-nx/cold_start/source/enet/packet.c
+CMakeFiles/cold_start.dir/source/enet/packet.c.obj: CMakeFiles/cold_start.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles --progress-num=$(CMAKE_PROGRESS_19) "Building C object CMakeFiles/cold_start.dir/source/enet/packet.c.obj"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT CMakeFiles/cold_start.dir/source/enet/packet.c.obj -MF CMakeFiles/cold_start.dir/source/enet/packet.c.obj.d -o CMakeFiles/cold_start.dir/source/enet/packet.c.obj -c /home/etonedemid/topdown-nx/cold_start/source/enet/packet.c
+
+CMakeFiles/cold_start.dir/source/enet/packet.c.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/cold_start.dir/source/enet/packet.c.i"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/etonedemid/topdown-nx/cold_start/source/enet/packet.c > CMakeFiles/cold_start.dir/source/enet/packet.c.i
+
+CMakeFiles/cold_start.dir/source/enet/packet.c.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/cold_start.dir/source/enet/packet.c.s"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/etonedemid/topdown-nx/cold_start/source/enet/packet.c -o CMakeFiles/cold_start.dir/source/enet/packet.c.s
+
+CMakeFiles/cold_start.dir/source/enet/peer.c.obj: CMakeFiles/cold_start.dir/flags.make
+CMakeFiles/cold_start.dir/source/enet/peer.c.obj: CMakeFiles/cold_start.dir/includes_C.rsp
+CMakeFiles/cold_start.dir/source/enet/peer.c.obj: /home/etonedemid/topdown-nx/cold_start/source/enet/peer.c
+CMakeFiles/cold_start.dir/source/enet/peer.c.obj: CMakeFiles/cold_start.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles --progress-num=$(CMAKE_PROGRESS_20) "Building C object CMakeFiles/cold_start.dir/source/enet/peer.c.obj"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT CMakeFiles/cold_start.dir/source/enet/peer.c.obj -MF CMakeFiles/cold_start.dir/source/enet/peer.c.obj.d -o CMakeFiles/cold_start.dir/source/enet/peer.c.obj -c /home/etonedemid/topdown-nx/cold_start/source/enet/peer.c
+
+CMakeFiles/cold_start.dir/source/enet/peer.c.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/cold_start.dir/source/enet/peer.c.i"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/etonedemid/topdown-nx/cold_start/source/enet/peer.c > CMakeFiles/cold_start.dir/source/enet/peer.c.i
+
+CMakeFiles/cold_start.dir/source/enet/peer.c.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/cold_start.dir/source/enet/peer.c.s"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/etonedemid/topdown-nx/cold_start/source/enet/peer.c -o CMakeFiles/cold_start.dir/source/enet/peer.c.s
+
+CMakeFiles/cold_start.dir/source/enet/protocol.c.obj: CMakeFiles/cold_start.dir/flags.make
+CMakeFiles/cold_start.dir/source/enet/protocol.c.obj: CMakeFiles/cold_start.dir/includes_C.rsp
+CMakeFiles/cold_start.dir/source/enet/protocol.c.obj: /home/etonedemid/topdown-nx/cold_start/source/enet/protocol.c
+CMakeFiles/cold_start.dir/source/enet/protocol.c.obj: CMakeFiles/cold_start.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles --progress-num=$(CMAKE_PROGRESS_21) "Building C object CMakeFiles/cold_start.dir/source/enet/protocol.c.obj"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT CMakeFiles/cold_start.dir/source/enet/protocol.c.obj -MF CMakeFiles/cold_start.dir/source/enet/protocol.c.obj.d -o CMakeFiles/cold_start.dir/source/enet/protocol.c.obj -c /home/etonedemid/topdown-nx/cold_start/source/enet/protocol.c
+
+CMakeFiles/cold_start.dir/source/enet/protocol.c.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/cold_start.dir/source/enet/protocol.c.i"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/etonedemid/topdown-nx/cold_start/source/enet/protocol.c > CMakeFiles/cold_start.dir/source/enet/protocol.c.i
+
+CMakeFiles/cold_start.dir/source/enet/protocol.c.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/cold_start.dir/source/enet/protocol.c.s"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/etonedemid/topdown-nx/cold_start/source/enet/protocol.c -o CMakeFiles/cold_start.dir/source/enet/protocol.c.s
+
+CMakeFiles/cold_start.dir/source/enet/win32.c.obj: CMakeFiles/cold_start.dir/flags.make
+CMakeFiles/cold_start.dir/source/enet/win32.c.obj: CMakeFiles/cold_start.dir/includes_C.rsp
+CMakeFiles/cold_start.dir/source/enet/win32.c.obj: /home/etonedemid/topdown-nx/cold_start/source/enet/win32.c
+CMakeFiles/cold_start.dir/source/enet/win32.c.obj: CMakeFiles/cold_start.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles --progress-num=$(CMAKE_PROGRESS_22) "Building C object CMakeFiles/cold_start.dir/source/enet/win32.c.obj"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT CMakeFiles/cold_start.dir/source/enet/win32.c.obj -MF CMakeFiles/cold_start.dir/source/enet/win32.c.obj.d -o CMakeFiles/cold_start.dir/source/enet/win32.c.obj -c /home/etonedemid/topdown-nx/cold_start/source/enet/win32.c
+
+CMakeFiles/cold_start.dir/source/enet/win32.c.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/cold_start.dir/source/enet/win32.c.i"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/etonedemid/topdown-nx/cold_start/source/enet/win32.c > CMakeFiles/cold_start.dir/source/enet/win32.c.i
+
+CMakeFiles/cold_start.dir/source/enet/win32.c.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/cold_start.dir/source/enet/win32.c.s"
+	/usr/bin/x86_64-w64-mingw32-gcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/etonedemid/topdown-nx/cold_start/source/enet/win32.c -o CMakeFiles/cold_start.dir/source/enet/win32.c.s
+
 # Object files for target cold_start
 cold_start_OBJECTS = \
 "CMakeFiles/cold_start.dir/source/assets.cpp.obj" \
@@ -297,7 +417,15 @@ cold_start_OBJECTS = \
 "CMakeFiles/cold_start.dir/source/network.cpp.obj" \
 "CMakeFiles/cold_start.dir/source/pickup.cpp.obj" \
 "CMakeFiles/cold_start.dir/source/texeditor.cpp.obj" \
-"CMakeFiles/cold_start.dir/source/tilemap.cpp.obj"
+"CMakeFiles/cold_start.dir/source/tilemap.cpp.obj" \
+"CMakeFiles/cold_start.dir/source/enet/callbacks.c.obj" \
+"CMakeFiles/cold_start.dir/source/enet/compress.c.obj" \
+"CMakeFiles/cold_start.dir/source/enet/host.c.obj" \
+"CMakeFiles/cold_start.dir/source/enet/list.c.obj" \
+"CMakeFiles/cold_start.dir/source/enet/packet.c.obj" \
+"CMakeFiles/cold_start.dir/source/enet/peer.c.obj" \
+"CMakeFiles/cold_start.dir/source/enet/protocol.c.obj" \
+"CMakeFiles/cold_start.dir/source/enet/win32.c.obj"
 
 # External object files for target cold_start
 cold_start_EXTERNAL_OBJECTS =
@@ -316,6 +444,14 @@ cold_start.exe: CMakeFiles/cold_start.dir/source/network.cpp.obj
 cold_start.exe: CMakeFiles/cold_start.dir/source/pickup.cpp.obj
 cold_start.exe: CMakeFiles/cold_start.dir/source/texeditor.cpp.obj
 cold_start.exe: CMakeFiles/cold_start.dir/source/tilemap.cpp.obj
+cold_start.exe: CMakeFiles/cold_start.dir/source/enet/callbacks.c.obj
+cold_start.exe: CMakeFiles/cold_start.dir/source/enet/compress.c.obj
+cold_start.exe: CMakeFiles/cold_start.dir/source/enet/host.c.obj
+cold_start.exe: CMakeFiles/cold_start.dir/source/enet/list.c.obj
+cold_start.exe: CMakeFiles/cold_start.dir/source/enet/packet.c.obj
+cold_start.exe: CMakeFiles/cold_start.dir/source/enet/peer.c.obj
+cold_start.exe: CMakeFiles/cold_start.dir/source/enet/protocol.c.obj
+cold_start.exe: CMakeFiles/cold_start.dir/source/enet/win32.c.obj
 cold_start.exe: CMakeFiles/cold_start.dir/build.make
 cold_start.exe: /usr/x86_64-w64-mingw32/lib/libSDL2main.a
 cold_start.exe: /usr/x86_64-w64-mingw32/lib/libSDL2.a
@@ -327,7 +463,7 @@ cold_start.exe: /usr/x86_64-w64-mingw32/static/lib/libwebpdemux.a
 cold_start.exe: CMakeFiles/cold_start.dir/linkLibs.rsp
 cold_start.exe: CMakeFiles/cold_start.dir/objects1.rsp
 cold_start.exe: CMakeFiles/cold_start.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles --progress-num=$(CMAKE_PROGRESS_15) "Linking CXX executable cold_start.exe"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles --progress-num=$(CMAKE_PROGRESS_23) "Linking CXX executable cold_start.exe"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/cold_start.dir/link.txt --verbose=$(VERBOSE)
 	/usr/bin/cmake -E copy_directory /home/etonedemid/topdown-nx/cold_start/romfs /home/etonedemid/topdown-nx/cold_start/build-win/romfs
 

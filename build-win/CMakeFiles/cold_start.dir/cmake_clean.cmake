@@ -7,6 +7,22 @@ file(REMOVE_RECURSE
   "CMakeFiles/cold_start.dir/source/charformat.cpp.obj.d"
   "CMakeFiles/cold_start.dir/source/editor.cpp.obj"
   "CMakeFiles/cold_start.dir/source/editor.cpp.obj.d"
+  "CMakeFiles/cold_start.dir/source/enet/callbacks.c.obj"
+  "CMakeFiles/cold_start.dir/source/enet/callbacks.c.obj.d"
+  "CMakeFiles/cold_start.dir/source/enet/compress.c.obj"
+  "CMakeFiles/cold_start.dir/source/enet/compress.c.obj.d"
+  "CMakeFiles/cold_start.dir/source/enet/host.c.obj"
+  "CMakeFiles/cold_start.dir/source/enet/host.c.obj.d"
+  "CMakeFiles/cold_start.dir/source/enet/list.c.obj"
+  "CMakeFiles/cold_start.dir/source/enet/list.c.obj.d"
+  "CMakeFiles/cold_start.dir/source/enet/packet.c.obj"
+  "CMakeFiles/cold_start.dir/source/enet/packet.c.obj.d"
+  "CMakeFiles/cold_start.dir/source/enet/peer.c.obj"
+  "CMakeFiles/cold_start.dir/source/enet/peer.c.obj.d"
+  "CMakeFiles/cold_start.dir/source/enet/protocol.c.obj"
+  "CMakeFiles/cold_start.dir/source/enet/protocol.c.obj.d"
+  "CMakeFiles/cold_start.dir/source/enet/win32.c.obj"
+  "CMakeFiles/cold_start.dir/source/enet/win32.c.obj.d"
   "CMakeFiles/cold_start.dir/source/game.cpp.obj"
   "CMakeFiles/cold_start.dir/source/game.cpp.obj.d"
   "CMakeFiles/cold_start.dir/source/gamemode.cpp.obj"
@@ -33,6 +49,6 @@ file(REMOVE_RECURSE
 )
 
 # Per-language clean rules from dependency scanning.
-foreach(lang CXX)
+foreach(lang C CXX)
   include(CMakeFiles/cold_start.dir/cmake_clean_${lang}.cmake OPTIONAL)
 endforeach()
