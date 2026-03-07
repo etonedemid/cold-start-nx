@@ -3469,8 +3469,10 @@ void Game::resolveCollisions() {
                     if (b.ownerId != 255) e.targetPlayerId = b.ownerId;
                     if (e.hp <= 0) {
                         uint32_t eIdx = (uint32_t)(&e - &enemies_[0]);
-                        // Only credit the host's own bomb counter for their own bullets
-                        killEnemy(e, b.ownerId == net.localPlayerId());
+                        // In singleplayer b.ownerId is 255 (default), so always track.
+                        // In multiplayer, only credit kills for the local player's bullets.
+                        bool trackKill = !net.isOnline() || b.ownerId == net.localPlayerId();
+                        killEnemy(e, trackKill);
                         // Broadcast kill — pass actual killer so clients credit the right player
                         if (net.isInGame()) {
                             net.sendEnemyKilled(eIdx, b.ownerId);
