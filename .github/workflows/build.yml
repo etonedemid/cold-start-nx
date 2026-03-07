@@ -65,43 +65,65 @@ jobs:
   build-windows:
     name: Windows
     runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install SDL2 via vcpkg
-        run: |
-          vcpkg install sdl2 sdl2-image sdl2-ttf sdl2-mixer enet --triplet x64-windows
-          vcpkg integrate install
+      - name: Set up MSYS2 MinGW64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-SDL2
+            mingw-w64-x86_64-SDL2_image
+            mingw-w64-x86_64-SDL2_ttf
+            mingw-w64-x86_64-SDL2_mixer
 
       - name: Configure
-        run: >
-          cmake -B build-windows -S .
-          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
-          -DVCPKG_TARGET_TRIPLET=x64-windows
-          -DCMAKE_BUILD_TYPE=Release
+        run: |
+          cmake -B build-windows -S . \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: cmake --build build-windows --config Release --parallel
+        run: cmake --build build-windows --parallel
 
-      - name: Collect artifacts
-        if: always()
-        shell: pwsh
+      - name: Bundle required MinGW DLLs
         run: |
-          if (Test-Path "build-windows\Release\cold_start.exe") {
-            New-Item -ItemType Directory -Force dist-windows | Out-Null
-            Copy-Item "build-windows\Release\cold_start.exe" dist-windows\
-            if (Test-Path "build-windows\Release\romfs") {
-              Copy-Item -Recurse "build-windows\Release\romfs" dist-windows\romfs
-            }
-          }
+          # Copy any non-system DLL that the exe depends on from the MinGW bin dir.
+          # System DLLs (kernel32, user32, etc.) are present on every Windows install.
+          SYSTEM="KERNEL32 USER32 GDI32 ADVAPI32 SHELL32 WINMM IMMI32 IMM32 \
+                  OLE32 OLEAUT32 RPCRT4 SETUPAPI VERSION USP10 WS2_32 DINPUT8 \
+                  COMDLG32 SHLWAPI CFGMGR32 NTDLL MSVCRT API-MS-WIN D3D"
+          for dll in $(objdump -p build-windows/cold_start.exe | awk '/DLL Name:/{print $3}'); do
+            upper=$(echo "$dll" | tr '[:lower:]' '[:upper:]')
+            needed=true
+            for sys in $SYSTEM; do
+              if echo "$upper" | grep -q "^$sys"; then needed=false; break; fi
+            done
+            if $needed; then
+              src="/mingw64/bin/$dll"
+              if [ -f "$src" ]; then
+                cp "$src" build-windows/
+                echo "Bundled $dll"
+              fi
+            fi
+          done
 
       - name: Upload Windows artifact
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: cold_start-windows
-          path: dist-windows\
-          if-no-files-found: warn
+          path: |
+            build-windows/cold_start.exe
+            build-windows/*.dll
+            build-windows/romfs/
 
   release:
     name: GitHub Release
