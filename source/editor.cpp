@@ -19,8 +19,9 @@
 //  Init / Shutdown
 // ═════════════════════════════════════════════════════════════════════════════
 
-bool MapEditor::init(SDL_Renderer* renderer, int screenW, int screenH) {
+bool MapEditor::init(SDL_Renderer* renderer, int screenW, int screenH, UI::Context* ui) {
     renderer_ = renderer;
+    ui_       = ui;
     screenW_  = screenW;
     screenH_  = screenH;
     zoom_     = 1.0f;
@@ -1069,6 +1070,11 @@ void MapEditor::render(SDL_Renderer* renderer) {
         renderPalette(renderer);
     }
 
+    // ── Properties panel for selected entity/trigger ──
+    if (showUI_ && (selectedEnemy_ >= 0 || selectedTrigger_ >= 0)) {
+        renderPropertiesPanel(renderer);
+    }
+
     // ── Status bar (bottom-left) ──
     {
         SDL_SetRenderDrawColor(renderer, 12, 14, 24, 200);
@@ -1233,6 +1239,196 @@ void MapEditor::renderEntitySpawns(SDL_Renderer* renderer) {
     }
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+//  Properties Panel (inspector for selected entity/trigger)
+// ═════════════════════════════════════════════════════════════════════════════
+
+void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
+    const int panelW = 220;
+    const int panelH = 260;
+    const int panelX = 8;
+    const int panelY = TOOLBAR_H + 8;
+    char buf[128];
+
+    // Panel background
+    if (ui_) ui_->drawPanel(panelX, panelY, panelW, panelH);
+    else {
+        SDL_SetRenderDrawColor(renderer, 10, 12, 24, 230);
+        SDL_Rect bg = {panelX, panelY, panelW, panelH};
+        SDL_RenderFillRect(renderer, &bg);
+        SDL_SetRenderDrawColor(renderer, 0, 120, 110, 60);
+        SDL_RenderDrawRect(renderer, &bg);
+    }
+
+    int y = panelY + 8;
+    int lx = panelX + 10;
+    int vx = panelX + 100;
+
+    if (selectedEnemy_ >= 0 && selectedEnemy_ < (int)map_.enemySpawns.size()) {
+        auto& es = map_.enemySpawns[selectedEnemy_];
+        drawEditorText(renderer, "ENTITY", lx, y, 14, UI::Color::Cyan);
+        y += 24;
+
+        // Separator
+        SDL_SetRenderDrawColor(renderer, 0, 120, 110, 40);
+        SDL_RenderDrawLine(renderer, lx, y, panelX + panelW - 10, y);
+        y += 8;
+
+        // Type
+        static const char* eNames[] = {"Melee", "Shooter", "Crate", "Upgrade"};
+        const char* typeName = (es.enemyType < ENTITY_TYPE_COUNT) ? eNames[es.enemyType] : "Unknown";
+        drawEditorText(renderer, "Type", lx, y, 12, UI::Color::Gray);
+        // Left arrow
+        bool hoverL = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY, vx - 16, y - 2, 14, 18);
+        drawEditorText(renderer, "\xe2\x97\x80", vx - 16, y, 11, hoverL ? UI::Color::White : UI::Color::Yellow);
+        drawEditorText(renderer, typeName, vx + 4, y, 12, UI::Color::Cyan);
+        int tw = ui_ ? ui_->textWidth(typeName, 12) : (int)strlen(typeName) * 8;
+        bool hoverR = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY, vx + tw + 8, y - 2, 14, 18);
+        drawEditorText(renderer, "\xe2\x96\xb6", vx + tw + 8, y, 11, hoverR ? UI::Color::White : UI::Color::Yellow);
+        if (hoverL && ui_ && ui_->mouseClicked) {
+            pushUndo();
+            es.enemyType = (es.enemyType + ENTITY_TYPE_COUNT - 1) % ENTITY_TYPE_COUNT;
+        }
+        if (hoverR && ui_ && ui_->mouseClicked) {
+            pushUndo();
+            es.enemyType = (es.enemyType + 1) % ENTITY_TYPE_COUNT;
+        }
+        y += 22;
+
+        // Wave Group
+        drawEditorText(renderer, "Wave", lx, y, 12, UI::Color::Gray);
+        snprintf(buf, sizeof(buf), "%d", es.waveGroup);
+        bool hoverWL = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY, vx - 16, y - 2, 14, 18);
+        drawEditorText(renderer, "\xe2\x97\x80", vx - 16, y, 11, hoverWL ? UI::Color::White : UI::Color::Yellow);
+        drawEditorText(renderer, buf, vx + 4, y, 12, UI::Color::Cyan);
+        tw = ui_ ? ui_->textWidth(buf, 12) : (int)strlen(buf) * 8;
+        bool hoverWR = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY, vx + tw + 8, y - 2, 14, 18);
+        drawEditorText(renderer, "\xe2\x96\xb6", vx + tw + 8, y, 11, hoverWR ? UI::Color::White : UI::Color::Yellow);
+        if (hoverWL && ui_ && ui_->mouseClicked) {
+            pushUndo();
+            if (es.waveGroup > 0) es.waveGroup--;
+        }
+        if (hoverWR && ui_ && ui_->mouseClicked) {
+            pushUndo();
+            if (es.waveGroup < 255) es.waveGroup++;
+        }
+        y += 22;
+
+        // Position
+        drawEditorText(renderer, "Pos", lx, y, 12, UI::Color::Gray);
+        snprintf(buf, sizeof(buf), "%.0f, %.0f", es.x, es.y);
+        drawEditorText(renderer, buf, vx, y, 12, UI::Color::HintGray);
+        y += 22;
+
+        // Delete button
+        y += 8;
+        bool hoverDel = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY,
+                            lx, y - 2, panelW - 20, 22);
+        SDL_SetRenderDrawColor(renderer, hoverDel ? 80 : 40, 20, 20, 200);
+        SDL_Rect delBg = {lx, y - 2, panelW - 20, 22};
+        SDL_RenderFillRect(renderer, &delBg);
+        SDL_SetRenderDrawColor(renderer, 200, 60, 60, 200);
+        SDL_RenderDrawRect(renderer, &delBg);
+        drawEditorText(renderer, "DELETE", lx + (panelW - 20) / 2 - 20, y, 12,
+                       hoverDel ? UI::Color::White : UI::Color::Red);
+        if (hoverDel && ui_ && ui_->mouseClicked) {
+            pushUndo();
+            map_.enemySpawns.erase(map_.enemySpawns.begin() + selectedEnemy_);
+            selectedEnemy_ = -1;
+        }
+    }
+    else if (selectedTrigger_ >= 0 && selectedTrigger_ < (int)map_.triggers.size()) {
+        auto& t = map_.triggers[selectedTrigger_];
+        drawEditorText(renderer, "TRIGGER", lx, y, 14, UI::Color::Yellow);
+        y += 24;
+
+        SDL_SetRenderDrawColor(renderer, 0, 120, 110, 40);
+        SDL_RenderDrawLine(renderer, lx, y, panelX + panelW - 10, y);
+        y += 8;
+
+        // Type
+        static const char* tTypeNames[] = {"Start", "End", "Crate", "Effect", "SpawnR", "SpawnB", "SpawnG", "SpawnY"};
+        static const TriggerType kTypes[] = {
+            TriggerType::LevelStart, TriggerType::LevelEnd, TriggerType::Crate, TriggerType::Effect,
+            TriggerType::TeamSpawnRed, TriggerType::TeamSpawnBlue, TriggerType::TeamSpawnGreen, TriggerType::TeamSpawnYellow,
+        };
+        int typeIdx = 0;
+        for (int j = 0; j < 8; j++) { if (kTypes[j] == t.type) { typeIdx = j; break; } }
+        drawEditorText(renderer, "Type", lx, y, 12, UI::Color::Gray);
+        bool hoverTL = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY, vx - 16, y - 2, 14, 18);
+        drawEditorText(renderer, "\xe2\x97\x80", vx - 16, y, 11, hoverTL ? UI::Color::White : UI::Color::Yellow);
+        drawEditorText(renderer, tTypeNames[typeIdx], vx + 4, y, 12, UI::Color::Cyan);
+        int tw = ui_ ? ui_->textWidth(tTypeNames[typeIdx], 12) : (int)strlen(tTypeNames[typeIdx]) * 8;
+        bool hoverTR = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY, vx + tw + 8, y - 2, 14, 18);
+        drawEditorText(renderer, "\xe2\x96\xb6", vx + tw + 8, y, 11, hoverTR ? UI::Color::White : UI::Color::Yellow);
+        if (hoverTL && ui_ && ui_->mouseClicked) {
+            pushUndo();
+            typeIdx = (typeIdx + 7) % 8;
+            t.type = kTypes[typeIdx];
+        }
+        if (hoverTR && ui_ && ui_->mouseClicked) {
+            pushUndo();
+            typeIdx = (typeIdx + 1) % 8;
+            t.type = kTypes[typeIdx];
+        }
+        y += 22;
+
+        // Condition (only for LevelEnd)
+        if (t.type == TriggerType::LevelEnd) {
+            static const char* condNames[] = {"Open", "Kill All", "Trigger"};
+            int condIdx = (int)t.condition;
+            if (condIdx < 0 || condIdx > 2) condIdx = 0;
+            drawEditorText(renderer, "Goal", lx, y, 12, UI::Color::Gray);
+            bool hoverCL = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY, vx - 16, y - 2, 14, 18);
+            drawEditorText(renderer, "\xe2\x97\x80", vx - 16, y, 11, hoverCL ? UI::Color::White : UI::Color::Yellow);
+            drawEditorText(renderer, condNames[condIdx], vx + 4, y, 12, UI::Color::Cyan);
+            tw = ui_ ? ui_->textWidth(condNames[condIdx], 12) : (int)strlen(condNames[condIdx]) * 8;
+            bool hoverCR = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY, vx + tw + 8, y - 2, 14, 18);
+            drawEditorText(renderer, "\xe2\x96\xb6", vx + tw + 8, y, 11, hoverCR ? UI::Color::White : UI::Color::Yellow);
+            if (hoverCL && ui_ && ui_->mouseClicked) {
+                pushUndo();
+                condIdx = (condIdx + 2) % 3;
+                t.condition = (GoalCondition)condIdx;
+            }
+            if (hoverCR && ui_ && ui_->mouseClicked) {
+                pushUndo();
+                condIdx = (condIdx + 1) % 3;
+                t.condition = (GoalCondition)condIdx;
+            }
+            y += 22;
+        }
+
+        // Size
+        drawEditorText(renderer, "Size", lx, y, 12, UI::Color::Gray);
+        snprintf(buf, sizeof(buf), "%.0fx%.0f", t.width, t.height);
+        drawEditorText(renderer, buf, vx, y, 12, UI::Color::HintGray);
+        y += 22;
+
+        // Position
+        drawEditorText(renderer, "Pos", lx, y, 12, UI::Color::Gray);
+        snprintf(buf, sizeof(buf), "%.0f, %.0f", t.x, t.y);
+        drawEditorText(renderer, buf, vx, y, 12, UI::Color::HintGray);
+        y += 22;
+
+        // Delete button
+        y += 8;
+        bool hoverDel = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY,
+                            lx, y - 2, panelW - 20, 22);
+        SDL_SetRenderDrawColor(renderer, hoverDel ? 80 : 40, 20, 20, 200);
+        SDL_Rect delBg = {lx, y - 2, panelW - 20, 22};
+        SDL_RenderFillRect(renderer, &delBg);
+        SDL_SetRenderDrawColor(renderer, 200, 60, 60, 200);
+        SDL_RenderDrawRect(renderer, &delBg);
+        drawEditorText(renderer, "DELETE", lx + (panelW - 20) / 2 - 20, y, 12,
+                       hoverDel ? UI::Color::White : UI::Color::Red);
+        if (hoverDel && ui_ && ui_->mouseClicked) {
+            pushUndo();
+            map_.triggers.erase(map_.triggers.begin() + selectedTrigger_);
+            selectedTrigger_ = -1;
+        }
+    }
+}
+
 void MapEditor::renderToolbar(SDL_Renderer* renderer) {
     // Background
     SDL_SetRenderDrawColor(renderer, 12, 14, 24, 245);
@@ -1260,6 +1456,7 @@ void MapEditor::renderToolbar(SDL_Renderer* renderer) {
         int bx = toolStartX + i * (toolBtnW + toolGap);
         SDL_Rect btn = {bx, 4, toolBtnW, TOOLBAR_H - 8};
         bool sel = ((int)currentTool_ == i);
+        bool hover = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY, bx, 4, toolBtnW, TOOLBAR_H - 8);
 
         if (sel) {
             SDL_SetRenderDrawColor(renderer, toolColors[i].r / 5, toolColors[i].g / 5, toolColors[i].b / 5, 220);
@@ -1268,14 +1465,28 @@ void MapEditor::renderToolbar(SDL_Renderer* renderer) {
             SDL_RenderDrawRect(renderer, &btn);
             SDL_Rect ind = {bx, TOOLBAR_H - 3, toolBtnW, 3};
             SDL_RenderFillRect(renderer, &ind);
+        } else if (hover) {
+            SDL_SetRenderDrawColor(renderer, 36, 38, 50, 230);
+            SDL_RenderFillRect(renderer, &btn);
+            SDL_SetRenderDrawColor(renderer, toolColors[i].r / 2, toolColors[i].g / 2, toolColors[i].b / 2, 140);
+            SDL_RenderDrawRect(renderer, &btn);
         } else {
             SDL_SetRenderDrawColor(renderer, 26, 28, 38, 200);
             SDL_RenderFillRect(renderer, &btn);
             SDL_SetRenderDrawColor(renderer, 46, 48, 58, 180);
             SDL_RenderDrawRect(renderer, &btn);
         }
-        SDL_Color keyC   = sel ? toolColors[i] : SDL_Color{70, 70, 80, 255};
-        SDL_Color labelC = sel ? SDL_Color{255,255,255,255} : SDL_Color{140,140,150,255};
+
+        // Click detection for tool buttons
+        if (hover && ui_ && ui_->mouseClicked) {
+            currentTool_ = (EditorTool)i;
+            selectedTrigger_ = -1;
+            selectedEnemy_   = -1;
+            rectStartTX_ = -1; rectStartTY_ = -1;
+        }
+
+        SDL_Color keyC   = sel ? toolColors[i] : (hover ? SDL_Color{100, 100, 115, 255} : SDL_Color{70, 70, 80, 255});
+        SDL_Color labelC = sel ? SDL_Color{255,255,255,255} : (hover ? SDL_Color{200,200,210,255} : SDL_Color{140,140,150,255});
         drawEditorText(renderer, toolKeys[i],  bx + 4, 8, 10, keyC);
         drawEditorText(renderer, toolNames[i], bx + 14, 7, 13, labelC);
         // Second row: tool-specific subtitle
@@ -1307,38 +1518,42 @@ void MapEditor::renderToolbar(SDL_Renderer* renderer) {
     if (centerX < rightEdge) {
         char info[128];
         snprintf(info, sizeof(info), "%s  %dx%d", map_.name.c_str(), map_.width, map_.height);
-        drawEditorText(renderer, info, centerX, 6, 12, {120, 120, 130, 255});
-        drawEditorText(renderer, "Scroll:zoom  MMB:pan  G:grid  TAB:ui  [/]:brush  F:rectfill", centerX, 24, 9, {60, 60, 70, 255});
+        drawEditorText(renderer, info, centerX, 6, 12, UI::Color::Gray);
+        drawEditorText(renderer, "Scroll:zoom  MMB:pan  G:grid  TAB:ui  [/]:brush  F:rectfill", centerX, 24, 9, UI::Color::HintGray);
     }
 
     // ── Save button ──
     {
         int bx = screenW_ - PALETTE_W - 230;
+        bool hover = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY, bx, 6, 106, TOOLBAR_H - 12);
         SDL_Rect btn = {bx, 6, 106, TOOLBAR_H - 12};
-        SDL_SetRenderDrawColor(renderer, 10, 55, 35, 220);
+        SDL_SetRenderDrawColor(renderer, hover ? 15 : 10, hover ? 70 : 55, hover ? 45 : 35, 220);
         SDL_RenderFillRect(renderer, &btn);
-        SDL_SetRenderDrawColor(renderer, 40, 170, 90, 200);
+        SDL_SetRenderDrawColor(renderer, hover ? 60 : 40, hover ? 200 : 170, hover ? 110 : 90, 200);
         SDL_RenderDrawRect(renderer, &btn);
         SDL_Rect ind = {bx, TOOLBAR_H - 3, 106, 3};
         SDL_SetRenderDrawColor(renderer, 40, 190, 100, 255);
         SDL_RenderFillRect(renderer, &ind);
-        drawEditorText(renderer, "Save", bx + 30, 8, 14, {160, 255, 180, 255});
+        drawEditorText(renderer, "Save", bx + 30, 8, 14, hover ? SDL_Color{200, 255, 210, 255} : SDL_Color{160, 255, 180, 255});
         drawEditorText(renderer, "Ctrl+S", bx + 24, 24, 9, {80, 140, 100, 200});
+        if (hover && ui_ && ui_->mouseClicked) wantsModSave_ = true;
     }
 
     // ── Play button ──
     {
         int bx = screenW_ - PALETTE_W - 118;
+        bool hover = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY, bx, 6, 106, TOOLBAR_H - 12);
         SDL_Rect btn = {bx, 6, 106, TOOLBAR_H - 12};
-        SDL_SetRenderDrawColor(renderer, 20, 80, 40, 255);
+        SDL_SetRenderDrawColor(renderer, hover ? 30 : 20, hover ? 100 : 80, hover ? 55 : 40, 255);
         SDL_RenderFillRect(renderer, &btn);
-        SDL_SetRenderDrawColor(renderer, 60, 200, 80, 200);
+        SDL_SetRenderDrawColor(renderer, hover ? 80 : 60, hover ? 230 : 200, hover ? 100 : 80, 200);
         SDL_RenderDrawRect(renderer, &btn);
         SDL_Rect ind = {bx, TOOLBAR_H - 3, 106, 3};
         SDL_SetRenderDrawColor(renderer, 50, 255, 100, 255);
         SDL_RenderFillRect(renderer, &ind);
-        drawEditorText(renderer, "\xe2\x96\xb6 Play", bx + 22, 8, 14, {200, 255, 200, 255});
+        drawEditorText(renderer, "\xe2\x96\xb6 Play", bx + 22, 8, 14, hover ? SDL_Color{230, 255, 230, 255} : SDL_Color{200, 255, 200, 255});
         drawEditorText(renderer, "F5", bx + 42, 24, 9, {100, 180, 120, 200});
+        if (hover && ui_ && ui_->mouseClicked) wantsTestPlay_ = true;
     }
 }
 
@@ -1349,28 +1564,74 @@ void MapEditor::renderPalette(SDL_Renderer* renderer) {
     SDL_SetRenderDrawColor(renderer, 12, 14, 24, 245);
     SDL_Rect bg = {px, TOOLBAR_H, PALETTE_W, screenH_ - TOOLBAR_H};
     SDL_RenderFillRect(renderer, &bg);
-    // Left border
     SDL_SetRenderDrawColor(renderer, 0, 120, 110, 40);
     SDL_RenderDrawLine(renderer, px, TOOLBAR_H, px, screenH_);
 
-    // Clip rendering to palette panel so nothing bleeds below/above
-    SDL_Rect clip = {px, TOOLBAR_H, PALETTE_W, screenH_ - TOOLBAR_H};
+    // ── Tab buttons ──
+    static const char* tabNames[] = {"All", "Gnd", "Wall", "Ceil", "Prop"};
+    int tabCount = (int)PaletteTab::TAB_COUNT;
+    int tabW = (PALETTE_W - 8) / tabCount;
+    int tabY = TOOLBAR_H + 4;
+    int tabH = 22;
+    for (int t = 0; t < tabCount; t++) {
+        int tx = px + 4 + t * tabW;
+        bool active = ((int)paletteTab_ == t);
+        bool hover = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY, tx, tabY, tabW - 2, tabH);
+        if (active) {
+            SDL_SetRenderDrawColor(renderer, 0, 120, 110, 120);
+            SDL_Rect tabBg = {tx, tabY, tabW - 2, tabH};
+            SDL_RenderFillRect(renderer, &tabBg);
+            SDL_SetRenderDrawColor(renderer, 0, 255, 228, 180);
+            SDL_Rect ind = {tx, tabY + tabH - 2, tabW - 2, 2};
+            SDL_RenderFillRect(renderer, &ind);
+        } else if (hover) {
+            SDL_SetRenderDrawColor(renderer, 30, 32, 44, 200);
+            SDL_Rect tabBg = {tx, tabY, tabW - 2, tabH};
+            SDL_RenderFillRect(renderer, &tabBg);
+        }
+        drawEditorText(renderer, tabNames[t], tx + 4, tabY + 3, 11,
+                       active ? UI::Color::Cyan : (hover ? UI::Color::White : UI::Color::Gray));
+        // Click to switch tab
+        if (hover && ui_ && ui_->mouseClicked) {
+            paletteTab_ = (PaletteTab)t;
+            rebuildFilteredPalette();
+            paletteScroll_ = 0;
+        }
+    }
+
+    int contentTop = TOOLBAR_H + tabH + 10;
+
+    // Clip rendering to palette panel below tabs
+    SDL_Rect clip = {px, contentTop, PALETTE_W, screenH_ - contentTop};
     SDL_RenderSetClipRect(renderer, &clip);
 
     // Rebuild palette item Y cache
     paletteItemY_.clear();
     paletteItemY_.resize(palette_.size(), -999);
 
-    int y = TOOLBAR_H + 10 - paletteScroll_;
+    int y = contentTop + 4 - paletteScroll_;
     std::string lastCat;
 
     for (int i = 0; i < (int)palette_.size(); i++) {
         auto& pt = palette_[i];
 
-        // Category header — always advance by fixed height, render only if visible
+        // Filter based on current tab
+        if (paletteTab_ != PaletteTab::All) {
+            bool match = false;
+            switch (paletteTab_) {
+                case PaletteTab::Ground:  match = (pt.category == "ground"); break;
+                case PaletteTab::Walls:   match = (pt.category == "walls"); break;
+                case PaletteTab::Ceiling: match = (pt.category == "ceiling"); break;
+                case PaletteTab::Props:   match = (pt.category == "props"); break;
+                default: match = true; break;
+            }
+            if (!match) continue;
+        }
+
+        // Category header
         if (pt.category != lastCat) {
             lastCat = pt.category;
-            if (y >= TOOLBAR_H && y < screenH_) {
+            if (y >= contentTop && y < screenH_) {
                 SDL_SetRenderDrawColor(renderer, 0, 120, 110, 40);
                 SDL_RenderDrawLine(renderer, px + 8, y, px + PALETTE_W - 8, y);
                 y += 4;
@@ -1379,14 +1640,16 @@ void MapEditor::renderPalette(SDL_Renderer* renderer) {
                 drawEditorText(renderer, catLabel.c_str(), px + 10, y, 11, {0, 180, 160, 200});
                 y += 16;
             } else {
-                y += 20;  // same total as rendered path (4 + 16)
+                y += 20;
             }
         }
 
         paletteItemY_[i] = y;
 
-        if (y >= TOOLBAR_H - TILE_PREVIEW && y < screenH_) {
+        if (y >= contentTop - TILE_PREVIEW && y < screenH_) {
             bool sel = (i == selectedPalette_);
+            bool hover = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY,
+                             px + 2, y - 2, PALETTE_W - 4, TILE_PREVIEW + 4);
 
             if (sel) {
                 SDL_SetRenderDrawColor(renderer, 0, 180, 160, 30);
@@ -1395,6 +1658,15 @@ void MapEditor::renderPalette(SDL_Renderer* renderer) {
                 SDL_SetRenderDrawColor(renderer, 0, 255, 228, 200);
                 SDL_Rect acc = {px + 2, y - 2, 3, TILE_PREVIEW + 4};
                 SDL_RenderFillRect(renderer, &acc);
+            } else if (hover) {
+                SDL_SetRenderDrawColor(renderer, 0, 100, 90, 20);
+                SDL_Rect hl = {px + 2, y - 2, PALETTE_W - 4, TILE_PREVIEW + 4};
+                SDL_RenderFillRect(renderer, &hl);
+            }
+
+            // Click to select palette item
+            if (hover && ui_ && ui_->mouseClicked) {
+                selectedPalette_ = i;
             }
 
             SDL_Rect dst = {px + 10, y, TILE_PREVIEW, TILE_PREVIEW};
@@ -1407,12 +1679,16 @@ void MapEditor::renderPalette(SDL_Renderer* renderer) {
 
             if (sel) {
                 SDL_SetRenderDrawColor(renderer, 0, 255, 228, 200);
+            } else if (hover) {
+                SDL_SetRenderDrawColor(renderer, 0, 200, 180, 120);
             } else {
                 SDL_SetRenderDrawColor(renderer, 40, 42, 55, 180);
             }
             SDL_RenderDrawRect(renderer, &dst);
 
-            SDL_Color nameC = sel ? SDL_Color{255, 255, 255, 255} : SDL_Color{160, 160, 170, 255};
+            SDL_Color nameC = sel ? SDL_Color{255, 255, 255, 255}
+                            : (hover ? SDL_Color{200, 200, 210, 255}
+                                     : SDL_Color{160, 160, 170, 255});
             drawEditorText(renderer, pt.name.c_str(), px + TILE_PREVIEW + 18, y + 4, 13, nameC);
 
             if (sel) {
@@ -1428,23 +1704,25 @@ void MapEditor::renderPalette(SDL_Renderer* renderer) {
     // Scroll bar
     {
         int totalH = paletteContentHeight();
-        int viewH  = screenH_ - TOOLBAR_H;
+        int viewH  = screenH_ - contentTop;
         if (totalH > viewH) {
             float ratio  = (float)viewH / totalH;
             int barH = std::max(20, (int)(viewH * ratio));
             float scrollRatio = (float)paletteScroll_ / (totalH - viewH);
-            int barY = TOOLBAR_H + (int)((viewH - barH) * scrollRatio);
+            int barY = contentTop + (int)((viewH - barH) * scrollRatio);
             SDL_SetRenderDrawColor(renderer, 0, 120, 110, 60);
             SDL_Rect scrollBar = {px + PALETTE_W - 6, barY, 4, barH};
             SDL_RenderFillRect(renderer, &scrollBar);
-
-            // Scroll hint at bottom
-            drawEditorText(renderer, "\xe2\x86\x91\xe2\x86\x93 scroll", px + 8, screenH_ - 20, 9, {60, 60, 70, 200});
         }
     }
 }
 
 void MapEditor::drawEditorText(SDL_Renderer* renderer, const char* text, int x, int y, int size, SDL_Color color) {
+    // Use cached text rendering if UI::Context is available
+    if (ui_) {
+        ui_->drawText(text, x, y, size, color);
+        return;
+    }
     TTF_Font* f = Assets::instance().font(size);
     if (!f || !text || text[0] == '\0') return;
     SDL_Surface* surf = TTF_RenderText_Blended(f, text, color);
@@ -1847,41 +2125,41 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
 }
 
 void MapEditor::renderConfig(SDL_Renderer* renderer) {
-    SDL_SetRenderDrawColor(renderer, 6, 8, 16, 255);
-    SDL_Rect full = {0, 0, screenW_, screenH_};
-    SDL_RenderFillRect(renderer, &full);
-
     auto& cfg = config_;
-    SDL_Color cyan   = {0, 255, 228, 255};
-    SDL_Color white  = {255, 255, 255, 255};
-    SDL_Color gray   = {120, 120, 130, 255};
-    SDL_Color dimGray= {80, 80, 90, 255};
-    SDL_Color yellow = {255, 220, 50, 255};
-    SDL_Color green  = {50, 255, 100, 255};
+    const int cx = screenW_ / 2;
+    char buf[256];
+
+    // Dark background
+    if (ui_) ui_->drawDarkOverlay(255, 6, 8, 16);
+    else {
+        SDL_SetRenderDrawColor(renderer, 6, 8, 16, 255);
+        SDL_Rect full = {0, 0, screenW_, screenH_};
+        SDL_RenderFillRect(renderer, &full);
+    }
 
     // Title
-    drawEditorText(renderer, "MAP EDITOR", screenW_ / 2 - 100, 28, 32, cyan);
-    SDL_SetRenderDrawColor(renderer, 0, 180, 160, 60);
-    SDL_Rect tl = {screenW_ / 2 - 80, 68, 160, 1};
-    SDL_RenderFillRect(renderer, &tl);
+    drawEditorText(renderer, "MAP EDITOR", cx - 100, 28, 32, UI::Color::Cyan);
+    if (ui_) ui_->drawSeparator(cx, 68, 80);
 
-    // Panel background
-    int panelX = screenW_ / 2 - 320;
-    int panelW = 640;
-    int panelY = 88;
+    // Panel
+    int panelX = cx - 320, panelW = 640, panelY = 88;
     int panelH = screenH_ - 140;
-    SDL_SetRenderDrawColor(renderer, 12, 14, 26, 200);
-    SDL_Rect panel = {panelX, panelY, panelW, panelH};
-    SDL_RenderFillRect(renderer, &panel);
-    SDL_SetRenderDrawColor(renderer, 0, 120, 110, 40);
-    SDL_RenderDrawRect(renderer, &panel);
+    if (ui_) ui_->drawPanel(panelX, panelY, panelW, panelH,
+                            {12, 14, 26, 200}, {0, 120, 110, 40});
+    else {
+        SDL_SetRenderDrawColor(renderer, 12, 14, 26, 200);
+        SDL_Rect panel = {panelX, panelY, panelW, panelH};
+        SDL_RenderFillRect(renderer, &panel);
+        SDL_SetRenderDrawColor(renderer, 0, 120, 110, 40);
+        SDL_RenderDrawRect(renderer, &panel);
+    }
 
     int y = panelY + 16;
     int step = 44;
     int labelX = panelX + 30;
     int valX   = panelX + 240;
-    char buf[256];
 
+    // Helper: draw a selectable config row with optional left/right arrows
     auto drawField = [&](int idx, const char* label, const char* value, bool hasArrows = false) {
         bool sel = (cfg.field == idx);
         if (sel) {
@@ -1892,21 +2170,44 @@ void MapEditor::renderConfig(SDL_Renderer* renderer) {
             SDL_Rect acc = {panelX + 4, y - 4, 3, 34};
             SDL_RenderFillRect(renderer, &acc);
         }
-        drawEditorText(renderer, label, labelX, y, 18, sel ? white : gray);
+        drawEditorText(renderer, label, labelX, y, 18, sel ? UI::Color::White : UI::Color::Gray);
         if (hasArrows && sel) {
-            drawEditorText(renderer, "\xe2\x97\x80", valX - 24, y, 16, yellow);
-            drawEditorText(renderer, value, valX, y, 18, cyan);
-            int tw = (int)strlen(value) * 10 + 8;
-            drawEditorText(renderer, "\xe2\x96\xb6", valX + tw, y, 16, yellow);
+            drawEditorText(renderer, "\xe2\x97\x80", valX - 24, y, 16, UI::Color::Yellow);
+            drawEditorText(renderer, value, valX, y, 18, UI::Color::Cyan);
+            int tw = ui_ ? ui_->textWidth(value, 18) + 8 : (int)strlen(value) * 10 + 8;
+            drawEditorText(renderer, "\xe2\x96\xb6", valX + tw, y, 16, UI::Color::Yellow);
         } else {
-            drawEditorText(renderer, value, valX, y, 18, sel ? cyan : dimGray);
+            drawEditorText(renderer, value, valX, y, 18, sel ? UI::Color::Cyan : UI::Color::HintGray);
+        }
+        // Click on this row = select it
+        if (ui_ && ui_->mouseClicked && ui_->pointInRect(ui_->mouseX, ui_->mouseY,
+                panelX + 4, y - 4, panelW - 8, 34)) {
+            cfg.field = idx;
+            // Click on arrows: adjust value
+            if (hasArrows) {
+                if (ui_->mouseX < valX) {
+                    // Left arrow area - simulate left key press
+                    SDL_Event fakeKey;
+                    memset(&fakeKey, 0, sizeof(fakeKey));
+                    fakeKey.type = SDL_KEYDOWN;
+                    fakeKey.key.keysym.sym = SDLK_LEFT;
+                    handleConfigInput(fakeKey);
+                } else {
+                    SDL_Event fakeKey;
+                    memset(&fakeKey, 0, sizeof(fakeKey));
+                    fakeKey.type = SDL_KEYDOWN;
+                    fakeKey.key.keysym.sym = SDLK_RIGHT;
+                    handleConfigInput(fakeKey);
+                }
+            }
         }
         y += step;
     };
 
+    // Helper: text field with inline editor
     auto drawTextFieldEditing = [&](int idx, const char* label) {
-        bool sel   = (cfg.field == idx);
-        bool edit  = (cfg.textEditing && cfg.field == idx);
+        bool sel  = (cfg.field == idx);
+        bool edit = (cfg.textEditing && cfg.field == idx);
         if (sel) {
             SDL_SetRenderDrawColor(renderer, 0, 180, 160, 30);
             SDL_Rect bar = {panelX + 4, y - 4, panelW - 8, 34};
@@ -1915,7 +2216,7 @@ void MapEditor::renderConfig(SDL_Renderer* renderer) {
             SDL_Rect acc = {panelX + 4, y - 4, 3, 34};
             SDL_RenderFillRect(renderer, &acc);
         }
-        drawEditorText(renderer, label, labelX, y, 18, sel ? white : gray);
+        drawEditorText(renderer, label, labelX, y, 18, sel ? UI::Color::White : UI::Color::Gray);
         const char* curVal = (idx == 3) ? cfg.mapName.c_str() : cfg.creator.c_str();
         if (edit) {
             // Text input box
@@ -1925,9 +2226,9 @@ void MapEditor::renderConfig(SDL_Renderer* renderer) {
             SDL_SetRenderDrawColor(renderer, 0, 200, 180, 180);
             SDL_RenderDrawRect(renderer, &box);
             std::string disp = cfg.textBuf + "_";
-            drawEditorText(renderer, disp.c_str(), valX, y, 18, yellow);
+            drawEditorText(renderer, disp.c_str(), valX, y, 18, UI::Color::Yellow);
 
-            // Gamepad char palette (below field)
+            // Gamepad char palette
             static const char charPalette[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 _-!@#.";
             int palLen = (int)strlen(charPalette);
             int cellW = 18, cellH = 22;
@@ -1943,22 +2244,34 @@ void MapEditor::renderConfig(SDL_Renderer* renderer) {
             for (int ci = 0; ci < palLen; ci++) {
                 int col = ci % cols;
                 int row = ci / cols;
-                int cx = palStartX + col * cellW;
-                int cy = palStartY + row * cellH;
+                int cxPos = palStartX + col * cellW;
+                int cyPos = palStartY + row * cellH;
                 bool isSel = (ci == cfg.gpCharIdx);
                 if (isSel) {
                     SDL_SetRenderDrawColor(renderer, 0, 180, 160, 255);
-                    SDL_Rect bg = {cx - 1, cy - 1, cellW - 2, cellH - 2};
-                    SDL_RenderFillRect(renderer, &bg);
+                    SDL_Rect bg2 = {cxPos - 1, cyPos - 1, cellW - 2, cellH - 2};
+                    SDL_RenderFillRect(renderer, &bg2);
                 }
                 char ch[2] = { charPalette[ci], 0 };
-                drawEditorText(renderer, ch, cx + 3, cy + 2, isSel ? 16 : 13, isSel ? white : dimGray);
+                drawEditorText(renderer, ch, cxPos + 3, cyPos + 2,
+                               isSel ? 16 : 13, isSel ? UI::Color::White : UI::Color::HintGray);
             }
-            drawEditorText(renderer, "A:type  Y:del  X/START:done  B:cancel", palStartX, palStartY + rows * cellH + 6, 11, dimGray);
-            y += 34 + rows * cellH + 28; // Extra space for palette
+            drawEditorText(renderer, "A:type  Y:del  X/START:done  B:cancel",
+                           palStartX, palStartY + rows * cellH + 6, 11, UI::Color::HintGray);
+            y += 34 + rows * cellH + 28;
         } else {
-            drawEditorText(renderer, curVal, valX, y, 18, sel ? cyan : dimGray);
-            if (sel) drawEditorText(renderer, "[A / ENTER]", valX + 200, y + 2, 12, dimGray);
+            drawEditorText(renderer, curVal, valX, y, 18, sel ? UI::Color::Cyan : UI::Color::HintGray);
+            if (sel) drawEditorText(renderer, "[ENTER]", valX + 200, y + 2, 12, UI::Color::HintGray);
+            // Click to start editing
+            if (ui_ && ui_->mouseClicked && ui_->pointInRect(ui_->mouseX, ui_->mouseY,
+                    panelX + 4, y - 4, panelW - 8, 34)) {
+                cfg.field = idx;
+                cfg.textEditing = true;
+                cfg.textBuf = (idx == 3) ? cfg.mapName : cfg.creator;
+#ifndef __SWITCH__
+                SDL_StartTextInput();
+#endif
+            }
             y += step;
         }
     };
@@ -1968,26 +2281,20 @@ void MapEditor::renderConfig(SDL_Renderer* renderer) {
     drawField(0, "ACTION", actionStr, true);
 
     // Separator
-    SDL_SetRenderDrawColor(renderer, 40, 42, 55, 120);
-    SDL_Rect sep = {panelX + 20, y - step / 2 + 4, panelW - 40, 1};
-    SDL_RenderFillRect(renderer, &sep);
+    if (ui_) ui_->drawSeparator(cx, y - step / 2 + 4, panelW / 2 - 20, {40, 42, 55, 120});
+    else {
+        SDL_SetRenderDrawColor(renderer, 40, 42, 55, 120);
+        SDL_Rect sep = {panelX + 20, y - step / 2 + 4, panelW - 40, 1};
+        SDL_RenderFillRect(renderer, &sep);
+    }
 
     if (cfg.action == EditorConfig::Action::NewMap) {
-        // ── Field 1: Width ──
         snprintf(buf, sizeof(buf), "%d", cfg.mapWidth);
         drawField(1, "WIDTH", buf, true);
-
-        // ── Field 2: Height ──
         snprintf(buf, sizeof(buf), "%d", cfg.mapHeight);
         drawField(2, "HEIGHT", buf, true);
-
-        // ── Field 3: Map Name ──
         drawTextFieldEditing(3, "MAP NAME");
-
-        // ── Field 4: Creator ──
         drawTextFieldEditing(4, "CREATOR");
-
-        // ── Field 5: Game Mode ──
         drawField(5, "GAME MODE", cfg.gameMode == 0 ? "ARENA" : "SANDBOX", true);
     } else {
         // ── Load mode: map list ──
@@ -1997,26 +2304,23 @@ void MapEditor::renderConfig(SDL_Renderer* renderer) {
             SDL_Rect bar = {panelX + 4, y - 4, panelW - 8, 34};
             SDL_RenderFillRect(renderer, &bar);
         }
-        drawEditorText(renderer, "SELECT MAP", labelX, y, 18, sel ? white : gray);
+        drawEditorText(renderer, "SELECT MAP", labelX, y, 18, sel ? UI::Color::White : UI::Color::Gray);
         y += 30;
 
         if (cfg.availableMaps.empty()) {
-            drawEditorText(renderer, "No .csm files found in maps/ or any mod", labelX + 20, y, 16, dimGray);
+            drawEditorText(renderer, "No .csm files found in maps/ or any mod", labelX + 20, y, 16, UI::Color::HintGray);
             y += step * 2;
         } else {
             int startShow = std::max(0, cfg.loadIdx - 4);
             int endShow = std::min((int)cfg.availableMaps.size(), startShow + 8);
             for (int i = startShow; i < endShow; i++) {
                 const std::string& fullPath = cfg.availableMaps[i];
-                // Extract basename
                 std::string fname = fullPath;
                 size_t slash = fname.find_last_of('/');
                 if (slash != std::string::npos) fname = fname.substr(slash + 1);
-                // Build prefix: detect mod maps by looking for a /maps/ segment
                 std::string prefix;
                 size_t mapsPos = fullPath.rfind("/maps/");
                 if (mapsPos != std::string::npos && mapsPos > 0) {
-                    // Extract the component before /maps/ (mod folder name)
                     std::string beforeMaps = fullPath.substr(0, mapsPos);
                     size_t ps = beforeMaps.find_last_of('/');
                     std::string modName = (ps != std::string::npos) ? beforeMaps.substr(ps + 1) : beforeMaps;
@@ -2031,35 +2335,78 @@ void MapEditor::renderConfig(SDL_Renderer* renderer) {
                     SDL_RenderFillRect(renderer, &row);
                 }
                 snprintf(buf, sizeof(buf), "%s %s%s", isCur ? "\xe2\x96\xb6" : " ", prefix.c_str(), fname.c_str());
-                drawEditorText(renderer, buf, labelX + 20, y, isCur ? 16 : 14, isCur ? cyan : dimGray);
+                drawEditorText(renderer, buf, labelX + 20, y, isCur ? 16 : 14, isCur ? UI::Color::Cyan : UI::Color::HintGray);
+                // Click to select a map item
+                if (ui_ && ui_->mouseClicked &&
+                    ui_->pointInRect(ui_->mouseX, ui_->mouseY, labelX + 12, y - 2, panelW - 80, 24)) {
+                    cfg.loadIdx = i;
+                    cfg.field = 1;
+                }
                 y += 24;
             }
             y += 8;
         }
     }
 
-    // ── Bottom buttons ──
+    // ── Bottom buttons (using menuItem for click support) ──
     int btnY = screenH_ - 100;
-
-    // Field 6: OK
-    bool okSel = (cfg.field == 6);
-    if (okSel) {
-        SDL_SetRenderDrawColor(renderer, 0, 180, 160, 40);
-        SDL_Rect bar = {screenW_ / 2 - 120, btnY - 4, 240, 32};
-        SDL_RenderFillRect(renderer, &bar);
+    if (ui_) {
+        if (ui_->menuItem(20, "START EDITOR", cx, btnY, 260, 32,
+                          UI::Color::Green, cfg.field == 6, 20, 24)) {
+            // OK clicked
+            if (cfg.action == EditorConfig::Action::LoadMap && !cfg.availableMaps.empty()) {
+                int idx = std::max(0, std::min(cfg.loadIdx, (int)cfg.availableMaps.size() - 1));
+                loadMap(cfg.availableMaps[idx]);
+                savePath_ = cfg.availableMaps[idx];
+            } else {
+                newMap(cfg.mapWidth, cfg.mapHeight);
+                map_.name    = cfg.mapName;
+                map_.creator = cfg.creator;
+                map_.gameMode = (uint8_t)cfg.gameMode;
+                std::string safe = cfg.mapName;
+                for (char& c : safe) { if (c == ' ' || c == '/' || c == '\\') c = '_'; }
+                if (safe.empty()) safe = "untitled";
+                savePath_ = "maps/" + safe + ".csm";
+            }
+            showConfig_ = false;
+            return;
+        }
+        btnY += step;
+        if (ui_->menuItem(21, "BACK", cx, btnY, 160, 28,
+                          UI::Color::White, cfg.field == 7, 18, 22)) {
+            wantsBack_ = true;
+            showConfig_ = false;
+            return;
+        }
+    } else {
+        // Fallback: old-style rendering
+        bool okSel = (cfg.field == 6);
+        if (okSel) {
+            SDL_SetRenderDrawColor(renderer, 0, 180, 160, 40);
+            SDL_Rect bar = {cx - 120, btnY - 4, 240, 32};
+            SDL_RenderFillRect(renderer, &bar);
+        }
+        drawEditorText(renderer, okSel ? "> START EDITOR <" : "START EDITOR",
+                       cx - 80, btnY, 22, okSel ? UI::Color::Green : UI::Color::Gray);
+        btnY += step;
+        bool cancelSel = (cfg.field == 7);
+        drawEditorText(renderer, cancelSel ? "> BACK <" : "BACK",
+                       cx - 32, btnY, 20, cancelSel ? UI::Color::White : UI::Color::HintGray);
     }
-    drawEditorText(renderer, okSel ? "> START EDITOR <" : "START EDITOR",
-                   screenW_ / 2 - 80, btnY, 22, okSel ? green : gray);
-    btnY += step;
-
-    // Field 7: Cancel
-    bool cancelSel = (cfg.field == 7);
-    drawEditorText(renderer, cancelSel ? "> BACK <" : "BACK",
-                   screenW_ / 2 - 32, btnY, 20, cancelSel ? white : dimGray);
 
     // Controls hint
-    drawEditorText(renderer, "\xe2\x86\x91\xe2\x86\x93 navigate   \xe2\x86\x90\xe2\x86\x92 adjust   ENTER confirm   ESC back",
-        screenW_ / 2 - 200, screenH_ - 30, 12, {60, 60, 70, 255});
+    if (ui_) {
+        UI::HintPair hints[] = {
+            {UI::Action::Navigate, "navigate"},
+            {UI::Action::Left, "adjust"},
+            {UI::Action::Confirm, "confirm"},
+            {UI::Action::Back, "back"},
+        };
+        ui_->drawHintBar(hints, 4, screenH_ - 36);
+    } else {
+        drawEditorText(renderer, "\xe2\x86\x91\xe2\x86\x93 navigate   \xe2\x86\x90\xe2\x86\x92 adjust   ENTER confirm   ESC back",
+            cx - 200, screenH_ - 30, 12, {60, 60, 70, 255});
+    }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

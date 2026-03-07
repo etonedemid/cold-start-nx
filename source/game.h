@@ -18,6 +18,7 @@
 #include "gamemode.h"
 #include "mod.h"
 #include "network.h"
+#include "ui.h"
 
 #include <SDL2/SDL.h>
 #include <vector>
@@ -27,6 +28,7 @@
 
 enum class GameState {
     MainMenu,
+    PlayModeMenu,    // Choose between generated map, custom map, or pack
     ConfigMenu,
     Playing,
     Paused,
@@ -150,6 +152,7 @@ private:
     // ── Core ──
     SDL_Window*   window_   = nullptr;
     SDL_Renderer* renderer_ = nullptr;
+    UI::Context   ui_;  // Immediate-mode UI system
     bool running_ = true;
     GameState state_ = GameState::MainMenu;
     float gameTime_ = 0;      // seconds since level start
@@ -235,6 +238,10 @@ private:
         std::string textBuf;        // temp text input buffer
         int   gpCharIdx = 0;        // gamepad char palette index
     } charCreator_;
+
+    // ── Play Mode Menu ──
+    int playModeSelection_ = 0;   // 0=Generated,1=Map,2=Pack,3-8=sliders,9=Back
+    GameState prevMenuState_ = GameState::MainMenu; // for back nav in MapSelect/PackSelect
 
     // ── Map file browser ──
     std::vector<std::string> mapFiles_;
@@ -340,7 +347,7 @@ private:
     void spawnBomb();
     Vec2 pickSpawnPos();  // team-corner or random spawn (multiplayer)
     void spawnEnemy(Vec2 pos, EnemyType type);
-    void killEnemy(Enemy& e);
+    void killEnemy(Enemy& e, bool trackKill = true);
     void playerParry();
     void destroyBox(int tx, int ty);
     void updateBoxFragments(float dt);
@@ -357,6 +364,7 @@ private:
     void renderShadingPass();
     void renderUI();
     void renderMainMenu();
+    void renderPlayModeMenu();
     void renderConfigMenu();
     void renderPauseMenu();
     void renderDeathScreen();
