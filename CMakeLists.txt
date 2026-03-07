@@ -6,7 +6,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 cmake_minimum_required(VERSION 3.14)
-project(cold_start LANGUAGES CXX)
+project(cold_start LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -74,10 +74,17 @@ else()
         if(unofficial-enet_FOUND)
             target_link_libraries(cold_start PRIVATE unofficial::enet::enet)
             target_compile_definitions(cold_start PRIVATE HAS_ENET=1)
-            message(STATUS "ENet found — multiplayer enabled")
+            message(STATUS "ENet found (vcpkg) — multiplayer enabled")
         else()
-            target_compile_definitions(cold_start PRIVATE HAS_ENET=0)
-            message(STATUS "ENet NOT found — multiplayer disabled (stub)")
+            # No system ENet — compile bundled enet sources (source/enet/)
+            file(GLOB ENET_C_SOURCES source/enet/*.c)
+            # Only include the correct platform file
+            list(FILTER ENET_C_SOURCES EXCLUDE REGEX "unix\\.c$")
+            target_sources(cold_start PRIVATE ${ENET_C_SOURCES})
+            target_include_directories(cold_start PRIVATE source/enet/include)
+            target_link_libraries(cold_start PRIVATE ws2_32 winmm)
+            target_compile_definitions(cold_start PRIVATE HAS_ENET=1)
+            message(STATUS "ENet not found — using bundled enet (multiplayer enabled)")
         endif()
 
         # Winsock2 — required for gethostname/getaddrinfo in getLocalIP()
