@@ -1,12 +1,17 @@
 # Build output directories
 build/
 build-pc/
+build-win/
 
 # Local distribution folder (created during release packaging)
 dist/
 
 # Release zip archives (created locally, uploaded to GitHub)
 cold_start-*.zip
+*.zip
+
+# Log files
+*.log
 
 # Nintendo Switch compiled outputs
 *.elf
@@ -17,3 +22,16 @@ cold_start-*.zip
 
 # PC compiled output
 cold_start
+cold_start.exe
+
+# Config and save files (user-specific, not for repo)
+config.txt
+presets.txt
+servers.txt
+modconfig.cfg
+
+# Editor / OS garbage
+.DS_Store
+Thumbs.db
+*.swp
+*~

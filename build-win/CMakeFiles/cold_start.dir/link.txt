@@ -1,3 +1,0 @@
-/usr/bin/cmake -E rm -f CMakeFiles/cold_start.dir/objects.a
-/usr/bin/x86_64-w64-mingw32-ar qc CMakeFiles/cold_start.dir/objects.a @CMakeFiles/cold_start.dir/objects1.rsp
-/usr/bin/x86_64-w64-mingw32-g++ -O3 -DNDEBUG -static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive,-Bdynamic -mwindows -Wl,--undefined=WinMain -Wl,--whole-archive CMakeFiles/cold_start.dir/objects.a -Wl,--no-whole-archive -o cold_start.exe -Wl,--out-implib,libcold_start.dll.a -Wl,--major-image-version,0,--minor-image-version,0 @CMakeFiles/cold_start.dir/linkLibs.rsp

@@ -119,6 +119,7 @@ bool Game::init() {
     }
 
     Assets::instance().init(renderer_);
+    ui_.init(renderer_);
     loadAssets();
     loadConfig();
 #ifndef __SWITCH__
@@ -129,7 +130,7 @@ bool Game::init() {
     loadServerPresets();
 
     // Initialize map editor
-    editor_.init(renderer_, SCREEN_W, SCREEN_H);
+    editor_.init(renderer_, SCREEN_W, SCREEN_H, &ui_);
 
     // Scan for custom characters and maps
     scanCharacters();
@@ -249,6 +250,20 @@ bool Game::handleSoftKBEvent(SDL_Event& e) {
         if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) { kb.close(true); return true; }
         if (sym == SDLK_ESCAPE) { kb.close(false); return true; }
         if (sym == SDLK_BACKSPACE && !kb.target->empty()) { kb.target->pop_back(); return true; }
+        // Ctrl+V paste
+        if (sym == SDLK_v && (e.key.keysym.mod & KMOD_CTRL)) {
+            if (SDL_HasClipboardText()) {
+                char* clip = SDL_GetClipboardText();
+                if (clip) {
+                    for (const char* p = clip; *p; p++) {
+                        if (*p >= ' ' && *p <= '~' && *p != '=' && *p != '\n')
+                            if ((int)kb.target->size() < kb.maxLen) *kb.target += *p;
+                    }
+                    SDL_free(clip);
+                }
+            }
+            return true;
+        }
         return true; // consume all keydowns while keyboard active
     }
     if (e.type == SDL_CONTROLLERBUTTONDOWN) {
@@ -337,14 +352,15 @@ void Game::renderSoftKB(int centerY) {
         drawText(ch, cx + ox, cy + oy, fontSize, sel ? white : gray);
     }
 
-    drawTextCentered("D-pad navigate   A insert   Y delete   B close   X confirm",
-                     palY + rows * cellH + 8, 12, {80, 80, 90, 255});
+    { UI::HintPair hints[] = { {UI::Action::Navigate, "Navigate"}, {UI::Action::Confirm, "Insert"}, {UI::Action::Tab, "Delete"}, {UI::Action::Back, "Close"}, {UI::Action::Bomb, "Confirm"} };
+      ui_.drawHintBar(hints, 5, palY + rows * cellH + 8); }
 }
 
 void Game::shutdown() {
     shutdownMultiplayer();
     editor_.shutdown();
     for (auto& cd : availableChars_) cd.unload();
+    ui_.shutdown();
     Assets::instance().shutdown();
     if (vignetteTex_) SDL_DestroyTexture(vignetteTex_);
     if (bgMusic_) Mix_HaltMusic();
@@ -494,6 +510,10 @@ void Game::run() {
         lastTime = now;
         if (dt_ > 0.05f) dt_ = 0.05f; // cap at 20fps min
 
+        // Update UI system at the start of each frame so both handleInput()
+        // and render() see consistent mouse/touch state.
+        ui_.beginFrame(dt_, usingGamepad_);
+
         handleInput();
 
         // Always update the network (for lobby, connecting, in-game, etc.)
@@ -614,9 +634,17 @@ void Game::run() {
 
                 customEnemiesTotal_ = 0;
                 for (auto& es : customMap_.enemySpawns) {
-                    EnemyType type = (es.enemyType == 1) ? EnemyType::Shooter : EnemyType::Melee;
-                    spawnEnemy({es.x, es.y}, type);
-                    customEnemiesTotal_++;
+                    if (es.enemyType == ENTITY_CRATE || es.enemyType == ENTITY_UPGRADE_CRATE) {
+                        // Spawn as a breakable crate
+                        PickupCrate crate;
+                        crate.pos = {es.x, es.y};
+                        crate.contents = rollRandomUpgrade();
+                        crates_.push_back(crate);
+                    } else {
+                        EnemyType type = (es.enemyType == ENTITY_SHOOTER) ? EnemyType::Shooter : EnemyType::Melee;
+                        spawnEnemy({es.x, es.y}, type);
+                        customEnemiesTotal_++;
+                    }
                 }
                 map_.findSpawnPoints();
                 testPlayFromEditor_ = true;
@@ -721,6 +749,34 @@ void Game::handleInput() {
                     break;
             }
         }
+
+        // Mouse movement switches to mouse/keyboard mode
+        if (e.type == SDL_MOUSEMOTION) {
+            usingGamepad_ = false;
+        }
+
+        // Mouse click — set confirmInput_ if clicking over a known UI item
+        if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+            usingGamepad_ = false;
+            if (ui_.prevHoveredItem >= 0) {
+                confirmInput_ = true;
+                if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+            }
+        }
+
+        // Touch events — convert to mouse-like behaviour for menu navigation
+        if (e.type == SDL_FINGERDOWN) {
+            usingGamepad_ = false;
+            ui_.touchActive = true;
+            // Touch tap over a UI item = confirm
+            if (ui_.prevHoveredItem >= 0) {
+                confirmInput_ = true;
+                if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+            }
+        }
+        if (e.type == SDL_FINGERUP) {
+            ui_.touchActive = false;
+        }
     }
 
     // Movement: left stick or WASD
@@ -804,7 +860,9 @@ void Game::handleInput() {
             aimInput_ = moveInput_;
         }
         fireInput_ = (mb & SDL_BUTTON_LMASK) || keys[SDL_SCANCODE_J] || keys[SDL_SCANCODE_Z];
-        if (mb & SDL_BUTTON_RMASK) bombLaunchInput_ = true;
+        bool rmbDown = (mb & SDL_BUTTON_RMASK) != 0;
+        if (rmbDown && !bombLaunchHeld_) bombLaunchInput_ = true;
+        bombLaunchHeld_ = rmbDown;
     }
 
     // Normalize move
@@ -815,7 +873,11 @@ void Game::handleInput() {
         if (menuSelection_ < 0) menuSelection_ = 0;
         if (menuSelection_ > 10) menuSelection_ = 10;
         if (confirmInput_) {
-            if (menuSelection_ == 0) startGame();
+            if (menuSelection_ == 0) {
+                state_ = GameState::PlayModeMenu;
+                playModeSelection_ = 0;
+                menuSelection_ = 0;
+            }
             else if (menuSelection_ == 1) {
                 // Multiplayer
                 state_ = GameState::MultiplayerMenu;
@@ -839,12 +901,14 @@ void Game::handleInput() {
             }
             else if (menuSelection_ == 4) {
                 scanMapFiles();
+                prevMenuState_ = GameState::MainMenu;
                 state_ = GameState::MapSelect;
                 mapSelectIdx_ = 0;
                 menuSelection_ = 0;
             }
             else if (menuSelection_ == 5) {
                 scanMapPacks();
+                prevMenuState_ = GameState::MainMenu;
                 state_ = GameState::PackSelect;
                 packSelectIdx_ = 0;
                 menuSelection_ = 0;
@@ -876,12 +940,60 @@ void Game::handleInput() {
             else running_ = false;
         }
     }
+    else if (state_ == GameState::PlayModeMenu) {
+        if (playModeSelection_ < 0) playModeSelection_ = 0;
+        if (playModeSelection_ > 9) playModeSelection_ = 9;
+        menuSelection_ = playModeSelection_;
+
+        auto adjustIntPM = [&](int& value, int minV, int maxV, int step) {
+            if (leftInput_)  value = std::max(minV, value - step);
+            if (rightInput_) value = std::min(maxV, value + step);
+        };
+        auto adjustFloatPM = [&](float& value, float minV, float maxV, float step) {
+            if (leftInput_)  value = std::max(minV, value - step);
+            if (rightInput_) value = std::min(maxV, value + step);
+        };
+
+        if      (playModeSelection_ == 3) adjustIntPM  (config_.mapWidth,        20,   120, 2);
+        else if (playModeSelection_ == 4) adjustIntPM  (config_.mapHeight,        14,    80, 2);
+        else if (playModeSelection_ == 5) adjustIntPM  (config_.playerMaxHp,       1,    20, 1);
+        else if (playModeSelection_ == 6) adjustFloatPM(config_.spawnRateScale,  0.3f,  3.0f, 0.1f);
+        else if (playModeSelection_ == 7) adjustFloatPM(config_.enemyHpScale,    0.3f,  3.0f, 0.1f);
+        else if (playModeSelection_ == 8) adjustFloatPM(config_.enemySpeedScale, 0.5f,  2.5f, 0.1f);
+
+        if (confirmInput_) {
+            if (playModeSelection_ == 0) {
+                startGame();
+            } else if (playModeSelection_ == 1) {
+                scanMapFiles();
+                prevMenuState_ = GameState::PlayModeMenu;
+                state_ = GameState::MapSelect;
+                mapSelectIdx_ = 0;
+                menuSelection_ = 0;
+            } else if (playModeSelection_ == 2) {
+                scanMapPacks();
+                prevMenuState_ = GameState::PlayModeMenu;
+                state_ = GameState::PackSelect;
+                packSelectIdx_ = 0;
+                menuSelection_ = 0;
+            } else if (playModeSelection_ == 9) {
+                saveConfig();
+                state_ = GameState::MainMenu;
+                menuSelection_ = 0;
+            }
+        }
+        if (backInput_ || pauseInput_) {
+            saveConfig();
+            state_ = GameState::MainMenu;
+            menuSelection_ = 0;
+        }
+    }
     else if (state_ == GameState::ConfigMenu) {
         if (configSelection_ < 0) configSelection_ = 0;
-        if (configSelection_ > 9) configSelection_ = 9;
+        if (configSelection_ > 7) configSelection_ = 7;
 
         if (menuSelection_ < 0) menuSelection_ = 0;
-        if (menuSelection_ > 9) menuSelection_ = 9;
+        if (menuSelection_ > 7) menuSelection_ = 7;
 
         // Username text input handling
         if (usernameTyping_) {
@@ -899,15 +1011,13 @@ void Game::handleInput() {
                 if (rightInput_) value = std::min(maxV, value + step);
             };
 
-            if (configSelection_ == 0) adjustInt(config_.mapWidth, 20, 120, 2);
-            else if (configSelection_ == 1) adjustInt(config_.mapHeight, 14, 80, 2);
-            else if (configSelection_ == 2) adjustInt(config_.playerMaxHp, 1, 20, 1);
-            else if (configSelection_ == 3) adjustFloat(config_.spawnRateScale, 0.3f, 3.0f, 0.1f);
-            else if (configSelection_ == 4) adjustFloat(config_.enemyHpScale, 0.3f, 3.0f, 0.1f);
-            else if (configSelection_ == 5) adjustFloat(config_.enemySpeedScale, 0.5f, 2.5f, 0.1f);
-            else if (configSelection_ == 6) { adjustInt(config_.musicVolume, 0, 128, 8); Mix_VolumeMusic(config_.musicVolume); }
-            else if (configSelection_ == 7) { adjustInt(config_.sfxVolume, 0, 128, 8); }
-            else if (configSelection_ == 8 && confirmInput_) {
+            if      (configSelection_ == 0) adjustInt  (config_.playerMaxHp,    1,    20, 1);
+            else if (configSelection_ == 1) adjustFloat(config_.spawnRateScale, 0.3f, 3.0f, 0.1f);
+            else if (configSelection_ == 2) adjustFloat(config_.enemyHpScale,   0.3f, 3.0f, 0.1f);
+            else if (configSelection_ == 3) adjustFloat(config_.enemySpeedScale,0.5f, 2.5f, 0.1f);
+            else if (configSelection_ == 4) { adjustInt(config_.musicVolume, 0, 128, 8); Mix_VolumeMusic(config_.musicVolume); }
+            else if (configSelection_ == 5) { adjustInt(config_.sfxVolume, 0, 128, 8); }
+            else if (configSelection_ == 6 && confirmInput_) {
                 // Edit username
                 usernameTyping_ = true;
                 softKB_.open("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-", 16,
@@ -917,7 +1027,7 @@ void Game::handleInput() {
                     NetworkManager::instance().setUsername(config_.username);
                 });
             }
-            else if (configSelection_ == 9 && (confirmInput_ || backInput_ || pauseInput_)) {
+            else if (configSelection_ == 7 && (confirmInput_ || backInput_ || pauseInput_)) {
                 saveConfig();
                 state_ = GameState::MainMenu;
                 menuSelection_ = 0;
@@ -1010,7 +1120,13 @@ void Game::handleInput() {
         if (menuSelection_ < 0) menuSelection_ = 0;
         if (menuSelection_ > maxIdx + 1) menuSelection_ = maxIdx + 1; // +1 for BACK
         mapSelectIdx_ = menuSelection_;
-        if (backInput_) { state_ = GameState::MainMenu; menuSelection_ = 0; }
+        if (backInput_) {
+            if (prevMenuState_ == GameState::PlayModeMenu) {
+                state_ = GameState::PlayModeMenu; playModeSelection_ = 1; menuSelection_ = 1;
+            } else {
+                state_ = GameState::MainMenu; menuSelection_ = 0;
+            }
+        }
         if (confirmInput_) {
             if (mapSelectIdx_ <= maxIdx && !mapFiles_.empty()) {
                 // Peek at the map header to pre-select its saved game mode
@@ -1027,7 +1143,11 @@ void Game::handleInput() {
                 state_ = GameState::MapConfig;
                 menuSelection_ = 0;
             } else {
-                state_ = GameState::MainMenu; menuSelection_ = 0;
+                if (prevMenuState_ == GameState::PlayModeMenu) {
+                    state_ = GameState::PlayModeMenu; playModeSelection_ = 1; menuSelection_ = 1;
+                } else {
+                    state_ = GameState::MainMenu; menuSelection_ = 0;
+                }
             }
         }
     }
@@ -1196,7 +1316,13 @@ void Game::handleInput() {
         if (menuSelection_ < 0) menuSelection_ = 0;
         if (menuSelection_ > maxIdx + 1) menuSelection_ = maxIdx + 1; // +1 for BACK
         packSelectIdx_ = menuSelection_;
-        if (backInput_) { state_ = GameState::MainMenu; menuSelection_ = 0; }
+        if (backInput_) {
+            if (prevMenuState_ == GameState::PlayModeMenu) {
+                state_ = GameState::PlayModeMenu; playModeSelection_ = 2; menuSelection_ = 2;
+            } else {
+                state_ = GameState::MainMenu; menuSelection_ = 0;
+            }
+        }
         if (confirmInput_) {
             if (packSelectIdx_ <= maxIdx && !availablePacks_.empty()) {
                 currentPack_ = availablePacks_[packSelectIdx_];
@@ -1211,7 +1337,11 @@ void Game::handleInput() {
                 }
                 startPackLevel();
             } else {
-                state_ = GameState::MainMenu; menuSelection_ = 0;
+                if (prevMenuState_ == GameState::PlayModeMenu) {
+                    state_ = GameState::PlayModeMenu; playModeSelection_ = 2; menuSelection_ = 2;
+                } else {
+                    state_ = GameState::MainMenu; menuSelection_ = 0;
+                }
             }
         }
     }
@@ -1619,14 +1749,17 @@ void Game::handleInput() {
                         if (lobbyMapIdx_ == 0)
                             lobbySettings_.mapHeight = std::max(10, std::min(200, lobbySettings_.mapHeight + dir * 10));
                         break;
-                    case 6: // Enemy HP
-                        lobbySettings_.enemyHpScale = std::max(0.1f, std::min(5.0f, lobbySettings_.enemyHpScale + dir * 0.1f));
+                    case 6: // Enemy HP (disabled in PVP)
+                        if (!lobbySettings_.isPvp)
+                            lobbySettings_.enemyHpScale = std::max(0.1f, std::min(5.0f, lobbySettings_.enemyHpScale + dir * 0.1f));
                         break;
-                    case 7: // Enemy speed
-                        lobbySettings_.enemySpeedScale = std::max(0.1f, std::min(5.0f, lobbySettings_.enemySpeedScale + dir * 0.1f));
+                    case 7: // Enemy speed (disabled in PVP)
+                        if (!lobbySettings_.isPvp)
+                            lobbySettings_.enemySpeedScale = std::max(0.1f, std::min(5.0f, lobbySettings_.enemySpeedScale + dir * 0.1f));
                         break;
-                    case 8: // Spawn rate
-                        lobbySettings_.spawnRateScale = std::max(0.1f, std::min(5.0f, lobbySettings_.spawnRateScale + dir * 0.1f));
+                    case 8: // Spawn rate (disabled in PVP)
+                        if (!lobbySettings_.isPvp)
+                            lobbySettings_.spawnRateScale = std::max(0.1f, std::min(5.0f, lobbySettings_.spawnRateScale + dir * 0.1f));
                         break;
                     case 9: // Player HP
                         lobbySettings_.playerMaxHp = std::max(1, std::min(100, lobbySettings_.playerMaxHp + dir));
@@ -1758,15 +1891,19 @@ void Game::handleInput() {
 
         // ── Main pause list ────────────────────────────────────────────
         //  0 = Resume
-        //  1 = Change Team   (if hasTeams)
-        //  1/2 = Admin Menu  (if isHostPlayer)
+        //  1 = Music Volume
+        //  2 = SFX Volume
+        //  3 = Change Team   (if hasTeams)
+        //  next = Admin Menu  (if isHostPlayer)
         //  next = End Game   (if isHostPlayer)
         //  last = Disconnect / Back to Lobby
         int resumeIdx = 0;
-        int teamIdx   = hasTeams ? 1 : -1;
-        int adminIdx  = isHostPlayer ? (hasTeams ? 2 : 1) : -1;
+        int musicIdx  = 1;
+        int sfxIdx    = 2;
+        int teamIdx   = hasTeams ? 3 : -1;
+        int adminIdx  = isHostPlayer ? (hasTeams ? 4 : 3) : -1;
         int endGameIdx = -1;
-        int nextIdx   = 1 + (hasTeams ? 1 : 0) + (isHostPlayer ? 1 : 0);
+        int nextIdx   = 3 + (hasTeams ? 1 : 0) + (isHostPlayer ? 1 : 0);
         if (isHostPlayer) { endGameIdx = nextIdx; nextIdx++; }
         // Host cannot disconnect mid-game (must use End Game instead)
         int dcIdx     = isHostPlayer ? -1 : nextIdx;
@@ -1774,6 +1911,17 @@ void Game::handleInput() {
 
         if (menuSelection_ < 0) menuSelection_ = 0;
         if (menuSelection_ > maxSel) menuSelection_ = maxSel;
+
+        // Volume adjustment with left/right
+        if (menuSelection_ == musicIdx) {
+            if (leftInput_) config_.musicVolume = std::max(0, config_.musicVolume - 8);
+            if (rightInput_) config_.musicVolume = std::min(128, config_.musicVolume + 8);
+            Mix_VolumeMusic(config_.musicVolume);
+        }
+        if (menuSelection_ == sfxIdx) {
+            if (leftInput_) config_.sfxVolume = std::max(0, config_.sfxVolume - 8);
+            if (rightInput_) config_.sfxVolume = std::min(128, config_.sfxVolume + 8);
+        }
 
         if (pauseInput_) {
             state_ = spectatorMode_ ? GameState::MultiplayerSpectator : GameState::MultiplayerGame;
@@ -2205,8 +2353,9 @@ void Game::updatePlayer(float dt) {
 
     // ── Bombs ──
     if (!spectatorMode_) {
+        uint8_t localBombOwner = NetworkManager::instance().isInGame() ? NetworkManager::instance().localPlayerId() : (uint8_t)255;
         bool hasOrbiting = false;
-        for (auto& b : bombs_) if (b.alive && !b.hasDashed) { hasOrbiting = true; break; }
+        for (auto& b : bombs_) if (b.alive && !b.hasDashed && b.ownerId == localBombOwner) { hasOrbiting = true; break; }
         if (!hasOrbiting && p.bombCount > 0) {
             spawnBomb();
             p.bombCount--;
@@ -2214,10 +2363,11 @@ void Game::updatePlayer(float dt) {
     }
     // ZL / RMB = Launch the nearest orbiting bomb
     if (!spectatorMode_ && bombLaunchInput_) {
-        // Find an orbiting (non-dashed) bomb
+        // Find an orbiting (non-dashed) bomb owned by local player
+        uint8_t localBombOwner2 = NetworkManager::instance().isInGame() ? NetworkManager::instance().localPlayerId() : (uint8_t)255;
         Bomb* toFire = nullptr;
         for (auto& b : bombs_) {
-            if (b.alive && !b.hasDashed) { toFire = &b; break; }
+            if (b.alive && !b.hasDashed && b.ownerId == localBombOwner2) { toFire = &b; break; }
         }
         if (toFire) {
             Vec2 aimDir = (aimInput_.lengthSq() > 0.04f) ? aimInput_.normalized()
@@ -2656,9 +2806,9 @@ void Game::updateBullets(float dt) {
                 if (hitX) b.vel.x = -b.vel.x;
                 if (hitY) b.vel.y = -b.vel.y;
                 if (!hitX && !hitY) { b.vel.x = -b.vel.x; b.vel.y = -b.vel.y; }
-                // Step back out of wall
-                b.pos.x = b.pos.x - b.vel.x * dt * 2.0f;
-                b.pos.y = b.pos.y - b.vel.y * dt * 2.0f;
+                // Step back out of wall (vel is already flipped, so += moves away)
+                b.pos.x += b.vel.x * dt;
+                b.pos.y += b.vel.y * dt;
                 b.bounces++;
                 // Ricochet spark
                 for (int i = 0; i < 3; i++) {
@@ -2953,12 +3103,17 @@ void Game::updateExplosions(float dt) {
 
         // Deal damage to all enemies in radius (once)
         if (!ex.dealtDmg) {
+            bool isAuthoritative = !NetworkManager::instance().isOnline() || NetworkManager::instance().isHost();
             for (auto& e : enemies_) {
                 if (!e.alive) continue;
                 if (Vec2::dist(ex.pos, e.pos) < ex.radius) {
-                    e.hp -= ex.damage;
-                    e.damageFlash = 1.0f;
-                    if (e.hp <= 0) killEnemy(e);
+                    if (isAuthoritative) {
+                        e.hp -= ex.damage;
+                        e.damageFlash = 1.0f;
+                        if (e.hp <= 0) killEnemy(e);
+                    } else {
+                        e.damageFlash = 1.0f; // visual-only on clients
+                    }
                 }
             }
             // In PvP, explosions deal 3 HP damage to the local player — host-validated
@@ -3314,10 +3469,11 @@ void Game::resolveCollisions() {
                     if (b.ownerId != 255) e.targetPlayerId = b.ownerId;
                     if (e.hp <= 0) {
                         uint32_t eIdx = (uint32_t)(&e - &enemies_[0]);
-                        killEnemy(e);
-                        // Broadcast kill so clients sync immediately
+                        // Only credit the host's own bomb counter for their own bullets
+                        killEnemy(e, b.ownerId == net.localPlayerId());
+                        // Broadcast kill — pass actual killer so clients credit the right player
                         if (net.isInGame()) {
-                            net.sendEnemyKilled(eIdx, net.localPlayerId());
+                            net.sendEnemyKilled(eIdx, b.ownerId);
                             enemyStatesNeedUpdate_ = true;
                         }
                     }
@@ -3343,9 +3499,9 @@ void Game::resolveCollisions() {
                 p.takeDamage(b.damage);
                 b.alive = false;
                 camera_.addShake(1.8f);
-                if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
                 if (p.dead) {
-                    if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 2); }
+                    if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
                     camera_.addShake(4.0f);
                     auto& net = NetworkManager::instance();
                     if (net.isInGame()) net.sendPlayerDied(net.localPlayerId(), 0);
@@ -3371,9 +3527,9 @@ void Game::resolveCollisions() {
             } else {
                 p.takeDamage(ENEMY_DASH_DMG);
                 camera_.addShake(1.8f);
-                if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
                 if (p.dead) {
-                    if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 2); }
+                    if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
                     camera_.addShake(4.0f);
                     auto& net = NetworkManager::instance();
                     if (net.isInGame()) net.sendPlayerDied(net.localPlayerId(), 0);
@@ -3430,12 +3586,12 @@ void Game::resolveCollisions() {
                         if (newHp <= 0) {
                             p.takeDamage(b.damage);  // sets dead flag
                             camera_.addShake(4.0f);
-                            if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 2); }
+                            if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
                             net.sendPlayerDied(net.localPlayerId(), b.ownerId);
                         } else {
                             p.takeDamage(b.damage);
                             camera_.addShake(2.0f);
-                            if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                            if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
                             net.sendPlayerHpSync(net.localPlayerId(), player_.hp, player_.maxHp, b.ownerId);
                         }
                     } else {
@@ -3443,7 +3599,7 @@ void Game::resolveCollisions() {
                         net.sendHitRequest(b.netId, b.damage, b.ownerId);
                         // Optimistic visual feedback only (no HP deducted yet)
                         camera_.addShake(1.5f);
-                        if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                        if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
                     }
                     break;
                 }
@@ -3484,7 +3640,7 @@ void Game::resolveCollisions() {
     }
 }
 
-void Game::killEnemy(Enemy& e) {
+void Game::killEnemy(Enemy& e, bool trackKill) {
     if (!e.alive) return;  // already dead — avoid double gib/score effects
     e.alive = false;
     // Central blood decal (large)
@@ -3531,11 +3687,13 @@ void Game::killEnemy(Enemy& e) {
     screenFlashTimer_ = 0.05f;
     screenFlashR_ = 180; screenFlashG_ = 30; screenFlashB_ = 30;
 
-    // Player kill registration
-    player_.killCounter++;
-    if (player_.killCounter >= KILLS_PER_BOMB) {
-        player_.killCounter = 0;
-        player_.bombCount++;
+    // Player kill registration (only for locally-originated kills)
+    if (trackKill) {
+        player_.killCounter++;
+        if (player_.killCounter >= KILLS_PER_BOMB) {
+            player_.killCounter = 0;
+            player_.bombCount++;
+        }
     }
 }
 
@@ -3635,6 +3793,9 @@ void Game::render() {
     switch (state_) {
     case GameState::MainMenu:
         renderMainMenu();
+        break;
+    case GameState::PlayModeMenu:
+        renderPlayModeMenu();
         break;
     case GameState::ConfigMenu:
         renderConfigMenu();
@@ -4203,6 +4364,7 @@ void Game::render() {
     if (modSaveDialog_.isOpen())
         renderModSaveDialog();
 
+    ui_.endFrame();
     SDL_RenderPresent(renderer_);
 }
 
@@ -4652,20 +4814,16 @@ void Game::renderUI() {
         drawText(ammoStr, 20, 52, 20, white);
     }
 
-    // Bomb count
-    if (player_.bombCount > 0) {
-        char bombStr[32];
-        snprintf(bombStr, sizeof(bombStr), "BOMBS: %d", player_.bombCount);
-        drawText(bombStr, 20, 80, 16, {255, 180, 50, 255});
-    }
-
-    // Active bombs indicator
-    int activeBombs = 0;
-    for (auto& b : bombs_) if (b.alive && !b.hasDashed) activeBombs++;
-    if (activeBombs > 0) {
-        //char str[32];
-        //snprintf(str, sizeof(str), "BOMB x%d", activeBombs);
-        //drawText(str, 20, 100, 16, {255, 200, 100, 255});
+    // Bomb count: orbiting (ready-to-launch) + reserve
+    {
+        int orbitingBombs = 0;
+        for (auto& b : bombs_) if (b.alive && !b.hasDashed) orbitingBombs++;
+        int totalBombs = orbitingBombs + player_.bombCount;
+        if (totalBombs > 0) {
+            char bombStr[32];
+            snprintf(bombStr, sizeof(bombStr), "BOMBS: %d", totalBombs);
+            drawText(bombStr, 20, 80, 16, {255, 180, 50, 255});
+        }
     }
 
     // Timer — in multiplayer move to center-top to avoid overlapping stats
@@ -4842,202 +5000,307 @@ void Game::renderMainMenu() {
         SDL_RenderCopy(renderer_, mainmenuBg_, nullptr, &dst);
     }
 
-    // Dark overlay with gradient effect
-    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 160);
-    SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
-    SDL_RenderFillRect(renderer_, &full);
-
-    SDL_Color white  = {255, 255, 255, 255};
-    SDL_Color cyan   = {0, 255, 228, 255};
-    SDL_Color gray   = {120, 120, 130, 255};
-    SDL_Color dimCyan = {0, 140, 130, 255};
+    // Dark overlay
+    ui_.drawDarkOverlay(160, 0, 0, 0);
 
     // Title
-    drawTextCentered("COLD START", SCREEN_H / 8, 52, cyan);
+    ui_.drawTextCentered("COLD START", SCREEN_H / 8, 52, UI::Color::Cyan);
 
-    // Version tag — shown under the title
+    // Version tag
     {
         char verBuf[32];
         snprintf(verBuf, sizeof(verBuf), "v%s", GAME_VERSION);
-        drawTextCentered(verBuf, SCREEN_H / 8 + 58, 14, {0, 180, 160, 220});
+        ui_.drawTextCentered(verBuf, SCREEN_H / 8 + 58, 14, {0, 180, 160, 220});
     }
 
-    // Subtitle line
-    SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 80);
-    SDL_Rect titleLine = {SCREEN_W / 2 - 120, SCREEN_H / 8 + 76, 240, 1};
-    SDL_RenderFillRect(renderer_, &titleLine);
+    // Subtitle separator
+    ui_.drawSeparator(SCREEN_W / 2, SCREEN_H / 8 + 76, 120, {0, 180, 160, 80});
 
-    // Menu items grouped visually
-    struct MenuItem { const char* label; SDL_Color accent; };
-    MenuItem items[] = {
-        {"PLAY",             {50, 255, 150, 255}},   // 0 - green
-        {"MULTIPLAYER",      {80, 200, 255, 255}},   // 1 - blue
-        {"EDITOR",           {255, 220, 60, 255}},   // 2 - yellow
-        {"SPRITE EDITOR",    {255, 160, 80, 255}},   // 3 - orange
-        {"MAPS",             white},                   // 4
-        {"PACKS",            white},                   // 5
-        {"CHARACTER",        white},                   // 6
-        {"CHARACTER EDITOR", white},                   // 7
-        {"MODS",             {200, 140, 255, 255}},   // 8 - purple
-        {"CONFIG",           white},                   // 9
-        {"QUIT",             {255, 100, 100, 255}},   // 10 - red
+    // Menu items
+    struct Item { const char* label; SDL_Color accent; };
+    Item items[] = {
+        {"PLAY",             UI::Color::Green},   // 0
+        {"MULTIPLAYER",      UI::Color::Blue},    // 1
+        {"EDITOR",           UI::Color::Yellow},  // 2
+        {"SPRITE EDITOR",    UI::Color::Orange},  // 3
+        {"MAPS",             UI::Color::White},   // 4
+        {"PACKS",            UI::Color::White},   // 5
+        {"CHARACTER",        UI::Color::White},   // 6
+        {"CHARACTER EDITOR", UI::Color::White},   // 7
+        {"MODS",             UI::Color::Purple},  // 8
+        {"CONFIG",           UI::Color::White},   // 9
+        {"QUIT",             UI::Color::Red},     // 10
     };
-    int count = 11;
+    constexpr int count = 11;
     int baseY = SCREEN_H / 4 + 10;
     int stepY = 32;
+    int itemW = 320;
+    int itemH = 30;
 
     for (int i = 0; i < count; i++) {
         bool sel = (menuSelection_ == i);
-        SDL_Color c = sel ? items[i].accent : gray;
 
-        // Selection indicator bar
-        if (sel) {
-            SDL_SetRenderDrawColor(renderer_, items[i].accent.r, items[i].accent.g, items[i].accent.b, 25);
-            SDL_Rect selBg = {SCREEN_W / 2 - 160, baseY + i * stepY - 4, 320, 30};
-            SDL_RenderFillRect(renderer_, &selBg);
-            SDL_SetRenderDrawColor(renderer_, items[i].accent.r, items[i].accent.g, items[i].accent.b, 180);
-            SDL_Rect selBar = {SCREEN_W / 2 - 160, baseY + i * stepY - 4, 3, 30};
-            SDL_RenderFillRect(renderer_, &selBar);
+        // Interactive menu item — handles hover, click, animation
+        if (ui_.menuItem(i, items[i].label, SCREEN_W / 2, baseY + i * stepY,
+                         itemW, itemH, items[i].accent, sel, 20, 24)) {
+            // Clicked — update selection and trigger confirm
+            menuSelection_ = i;
+            confirmInput_ = true;
+            if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
         }
 
-        char buf[64];
-        if (sel)
-            snprintf(buf, sizeof(buf), "  %s", items[i].label);
-        else
-            snprintf(buf, sizeof(buf), "%s", items[i].label);
-        drawTextCentered(buf, baseY + i * stepY, sel ? 24 : 20, c);
+        // Update selection when mouse hovers (so keyboard and mouse stay in sync)
+        if (ui_.hoveredItem == i && !usingGamepad_) {
+            menuSelection_ = i;
+        }
 
-        // Separator after logical groups
+        // Group separators
         if (i == 1 || i == 3 || i == 7 || i == 8) {
-            SDL_SetRenderDrawColor(renderer_, 60, 60, 80, 60);
-            SDL_Rect sep = {SCREEN_W / 2 - 80, baseY + i * stepY + 28, 160, 1};
-            SDL_RenderFillRect(renderer_, &sep);
+            ui_.drawSeparator(SCREEN_W / 2, baseY + i * stepY + 28, 80, {60, 60, 80, 60});
         }
     }
 
-    // Show selected character name
+    // Selected character name
     if (selectedChar_ >= 0 && selectedChar_ < (int)availableChars_.size()) {
         char charStr[128];
         snprintf(charStr, sizeof(charStr), "Character: %s", availableChars_[selectedChar_].name.c_str());
-        drawTextCentered(charStr, SCREEN_H - 72, 14, dimCyan);
+        ui_.drawTextCentered(charStr, SCREEN_H - 72, 14, UI::Color::DimCyan);
     }
 
-    // Bottom hint
-    drawTextCentered("A / ENTER - Select     D-Pad / Arrows - Navigate", SCREEN_H - 36, 13, {80, 80, 90, 255});
+    // Hint bar with automatic glyphs
+    UI::HintPair hints[] = {
+        {UI::Action::Confirm, "Select"},
+        {UI::Action::Navigate, "Navigate"},
+    };
+    ui_.drawHintBar(hints, 2);
+}
+
+void Game::renderPlayModeMenu() {
+    ui_.drawDarkOverlay(235, 8, 8, 12);
+
+    ui_.drawTextCentered("PLAY", 50, 36, UI::Color::Cyan);
+    ui_.drawSeparator(SCREEN_W / 2, 92, 80);
+
+    int y     = 120;
+    int stepY = 46;
+    int rowW  = 440;
+    int rowH  = 40;
+
+    // ── Mode buttons (0=Generated, 1=Map, 2=Pack) ──
+    struct ModeBtn { int idx; const char* label; SDL_Color color; };
+    ModeBtn modes[] = {
+        {0, "GENERATED MAP", UI::Color::Green},
+        {1, "MAP",           UI::Color::Cyan},
+        {2, "PACK",          UI::Color::Cyan},
+    };
+    for (auto& m : modes) {
+        bool sel = (playModeSelection_ == m.idx);
+        if (ui_.menuItem(m.idx, m.label, SCREEN_W / 2, y, rowW, rowH, m.color, sel, 20, 24)) {
+            playModeSelection_ = m.idx;
+            menuSelection_     = m.idx;
+            confirmInput_      = true;
+        }
+        if (ui_.hoveredItem == m.idx && !usingGamepad_) {
+            playModeSelection_ = m.idx;
+            menuSelection_     = m.idx;
+        }
+        y += stepY;
+    }
+
+    // ── Divider + section label ──
+    y += 8;
+    ui_.drawTextCentered("GENERATED MAP SETTINGS", y + 4, 13, UI::Color::HintGray);
+    y += 28;
+    ui_.drawSeparator(SCREEN_W / 2, y, 60);
+    y += 24;
+
+    // ── Slider rows (3-8): map size + difficulty ──
+    char valBuf[128];
+    struct PMRow { const char* label; int idx; };
+    PMRow rows[] = {
+        {"Map Width:",      3}, {"Map Height:",      4},
+        {"Player HP:",      5}, {"Enemy Spawnrate:", 6},
+        {"Enemy HP:",       7}, {"Enemy Speed:",     8},
+    };
+
+    auto fmtVal = [&](int idx) -> const char* {
+        switch (idx) {
+            case 3: snprintf(valBuf, sizeof(valBuf), "%d",    config_.mapWidth);        break;
+            case 4: snprintf(valBuf, sizeof(valBuf), "%d",    config_.mapHeight);       break;
+            case 5: snprintf(valBuf, sizeof(valBuf), "%d",    config_.playerMaxHp);     break;
+            case 6: snprintf(valBuf, sizeof(valBuf), "%.1fx", config_.spawnRateScale);  break;
+            case 7: snprintf(valBuf, sizeof(valBuf), "%.1fx", config_.enemyHpScale);    break;
+            case 8: snprintf(valBuf, sizeof(valBuf), "%.1fx", config_.enemySpeedScale); break;
+            default: valBuf[0] = 0; break;
+        }
+        return valBuf;
+    };
+
+    int sliderH = 36;
+    for (auto& row : rows) {
+        bool sel = (playModeSelection_ == row.idx);
+        int delta = ui_.sliderRow(row.idx, row.label, fmtVal(row.idx),
+                                  SCREEN_W / 2, y, rowW, sliderH,
+                                  UI::Color::Cyan, sel, leftInput_, rightInput_);
+        if (ui_.hoveredItem == row.idx && !usingGamepad_) {
+            playModeSelection_ = row.idx;
+            menuSelection_     = row.idx;
+        }
+        if (delta != 0 && ui_.hoveredItem == row.idx) {
+            switch (row.idx) {
+                case 3: config_.mapWidth        = std::max(20,   std::min(120,  config_.mapWidth        + delta * 2));    break;
+                case 4: config_.mapHeight       = std::max(14,   std::min(80,   config_.mapHeight       + delta * 2));    break;
+                case 5: config_.playerMaxHp     = std::max(1,    std::min(20,   config_.playerMaxHp     + delta));        break;
+                case 6: config_.spawnRateScale  = std::max(0.3f, std::min(3.0f, config_.spawnRateScale  + delta * 0.1f)); break;
+                case 7: config_.enemyHpScale    = std::max(0.3f, std::min(3.0f, config_.enemyHpScale    + delta * 0.1f)); break;
+                case 8: config_.enemySpeedScale = std::max(0.5f, std::min(2.5f, config_.enemySpeedScale + delta * 0.1f)); break;
+            }
+        }
+        y += stepY;
+    }
+
+    // ── Back button (9) ──
+    {
+        bool sel = (playModeSelection_ == 9);
+        if (ui_.menuItem(9, "BACK", SCREEN_W / 2, y + 10, rowW, sliderH,
+                         UI::Color::White, sel, 20, 22)) {
+            playModeSelection_ = 9;
+            menuSelection_     = 9;
+            confirmInput_      = true;
+        }
+        if (ui_.hoveredItem == 9 && !usingGamepad_) {
+            playModeSelection_ = 9;
+            menuSelection_     = 9;
+        }
+    }
+
+    // Hint bar
+    UI::HintPair hints[] = {
+        {UI::Action::Confirm,  "Select"},
+        {UI::Action::Navigate, "Navigate"},
+        {UI::Action::Left,     "Decrease"},
+        {UI::Action::Right,    "Increase"},
+        {UI::Action::Back,     "Back"},
+    };
+    ui_.drawHintBar(hints, 5);
 }
 
 void Game::renderConfigMenu() {
-    SDL_SetRenderDrawColor(renderer_, 8, 8, 12, 235);
-    SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
-    SDL_RenderFillRect(renderer_, &full);
+    // Background
+    ui_.drawDarkOverlay(235, 8, 8, 12);
 
-    SDL_Color title = {0, 255, 228, 255};
-    SDL_Color white = {255, 255, 255, 255};
-    SDL_Color gray = {120, 120, 130, 255};
-    SDL_Color cyan = {0, 200, 180, 255};
+    // Title
+    ui_.drawTextCentered("CONFIG", 50, 36, UI::Color::Cyan);
+    ui_.drawSeparator(SCREEN_W / 2, 92, 80);
 
-    drawTextCentered("CONFIG", 50, 36, title);
-
-    // Decorative line
-    SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 60);
-    SDL_Rect tl = {SCREEN_W / 2 - 80, 92, 160, 1};
-    SDL_RenderFillRect(renderer_, &tl);
-
-    char line[128];
+    char valBuf[128];
     int y = 120;
     int stepY = 46;
+    int rowW = 440;
+    int rowH = 36;
 
-    auto drawConfigRow = [&](int idx, const char* label, const char* value) {
-        bool sel = (configSelection_ == idx);
-        SDL_Color c = sel ? white : gray;
-        if (sel) {
-            SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 20);
-            SDL_Rect bg = {SCREEN_W / 2 - 220, y - 4, 440, 36};
-            SDL_RenderFillRect(renderer_, &bg);
-            SDL_SetRenderDrawColor(renderer_, 0, 255, 228, 160);
-            SDL_Rect bar = {SCREEN_W / 2 - 220, y - 4, 3, 36};
-            SDL_RenderFillRect(renderer_, &bar);
-        }
-        char buf[128];
-        snprintf(buf, sizeof(buf), "%s  %s", label, value);
-        drawTextCentered(buf, y + 4, sel ? 22 : 20, c);
-        if (sel && idx < 9) {
-            drawText("<", SCREEN_W / 2 - 240, y + 4, 20, cyan);
-            drawText(">", SCREEN_W / 2 + 226, y + 4, 20, cyan);
-        }
-        y += stepY;
+    // Slider rows (idx 0-5): label + adjustable value with mouse/keyboard
+    struct ConfigRow { const char* label; int idx; };
+    ConfigRow rows[] = {
+        {"Player HP:", 0}, {"Enemy Spawnrate:", 1}, {"Enemy HP:", 2},
+        {"Enemy Speed:", 3}, {"Music Volume:", 4}, {"SFX Volume:", 5},
     };
 
-    snprintf(line, sizeof(line), "%d", config_.mapWidth);
-    drawConfigRow(0, "Map Width:", line);
-
-    snprintf(line, sizeof(line), "%d", config_.mapHeight);
-    drawConfigRow(1, "Map Height:", line);
-
-    snprintf(line, sizeof(line), "%d", config_.playerMaxHp);
-    drawConfigRow(2, "Player HP:", line);
-
-    snprintf(line, sizeof(line), "%.1fx", config_.spawnRateScale);
-    drawConfigRow(3, "Enemy Spawnrate:", line);
-
-    snprintf(line, sizeof(line), "%.1fx", config_.enemyHpScale);
-    drawConfigRow(4, "Enemy HP:", line);
-
-    snprintf(line, sizeof(line), "%.1fx", config_.enemySpeedScale);
-    drawConfigRow(5, "Enemy Speed:", line);
-
-    snprintf(line, sizeof(line), "%d%%", config_.musicVolume * 100 / 128);
-    drawConfigRow(6, "Music Volume:", line);
-
-    snprintf(line, sizeof(line), "%d%%", config_.sfxVolume * 100 / 128);
-    drawConfigRow(7, "SFX Volume:", line);
-
-    // Username field
-    {
-        bool sel = (configSelection_ == 8);
-        SDL_Color c = sel ? white : gray;
-        if (sel) {
-            SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 20);
-            SDL_Rect bg = {SCREEN_W / 2 - 220, y - 4, 440, 36};
-            SDL_RenderFillRect(renderer_, &bg);
-            SDL_SetRenderDrawColor(renderer_, 0, 255, 228, 160);
-            SDL_Rect bar = {SCREEN_W / 2 - 220, y - 4, 3, 36};
-            SDL_RenderFillRect(renderer_, &bar);
+    // Values for display
+    auto formatVal = [&](int idx) -> const char* {
+        switch (idx) {
+            case 0: snprintf(valBuf, sizeof(valBuf), "%d",   config_.playerMaxHp); break;
+            case 1: snprintf(valBuf, sizeof(valBuf), "%.1fx",config_.spawnRateScale); break;
+            case 2: snprintf(valBuf, sizeof(valBuf), "%.1fx",config_.enemyHpScale); break;
+            case 3: snprintf(valBuf, sizeof(valBuf), "%.1fx",config_.enemySpeedScale); break;
+            case 4: snprintf(valBuf, sizeof(valBuf), "%d%%",  config_.musicVolume * 100 / 128); break;
+            case 5: snprintf(valBuf, sizeof(valBuf), "%d%%",  config_.sfxVolume   * 100 / 128); break;
+            default: valBuf[0] = 0; break;
         }
+        return valBuf;
+    };
+
+    for (auto& row : rows) {
+        bool sel = (configSelection_ == row.idx);
+        int delta = ui_.sliderRow(row.idx, row.label, formatVal(row.idx),
+                                  SCREEN_W / 2, y, rowW, rowH,
+                                  UI::Color::Cyan, sel, leftInput_, rightInput_);
+        // Mouse hover syncs config selection
+        if (ui_.hoveredItem == row.idx && !usingGamepad_) {
+            configSelection_ = row.idx;
+            menuSelection_ = row.idx;
+        }
+        // Handle mouse-click delta on slider (adjust value via click)
+        if (delta != 0 && ui_.hoveredItem == row.idx) {
+            switch (row.idx) {
+                case 0: config_.playerMaxHp    = std::max(1,    std::min(20,   config_.playerMaxHp    + delta));       break;
+                case 1: config_.spawnRateScale = std::max(0.3f, std::min(3.0f, config_.spawnRateScale + delta * 0.1f)); break;
+                case 2: config_.enemyHpScale   = std::max(0.3f, std::min(3.0f, config_.enemyHpScale   + delta * 0.1f)); break;
+                case 3: config_.enemySpeedScale= std::max(0.5f, std::min(2.5f, config_.enemySpeedScale+ delta * 0.1f)); break;
+                case 4: config_.musicVolume    = std::max(0,    std::min(128,  config_.musicVolume     + delta * 8));    Mix_VolumeMusic(config_.musicVolume); break;
+                case 5: config_.sfxVolume      = std::max(0,    std::min(128,  config_.sfxVolume       + delta * 8));    break;
+            }
+        }
+        y += stepY;
+    }
+
+    // Username field (idx 6)
+    {
+        bool sel = (configSelection_ == 6);
         std::string uDisplay = config_.username;
         if (usernameTyping_) {
-            static float blink = 0; blink += 0.016f;
-            uDisplay += ((int)(blink * 1.5f) % 2 == 0) ? '_' : ' ';
+            static float blinkT = 0; blinkT += dt_;
+            uDisplay += ((int)(blinkT * 3.0f) % 2 == 0) ? '_' : ' ';
         }
         char ubuf[128];
         snprintf(ubuf, sizeof(ubuf), "Username:  %s", uDisplay.c_str());
-        drawTextCentered(ubuf, y + 4, sel ? 22 : 20, usernameTyping_ ? cyan : c);
-        if (sel && !usernameTyping_) drawText("[ENTER to edit]", SCREEN_W / 2 + 160, y + 6, 12, {80, 80, 100, 255});
+
+        SDL_Color accent = usernameTyping_ ? UI::Color::Cyan : UI::Color::White;
+        if (ui_.menuItem(6, ubuf, SCREEN_W / 2, y, rowW, rowH, accent, sel, 20, 22)) {
+            configSelection_ = 6;
+            menuSelection_ = 6;
+            if (!usernameTyping_) confirmInput_ = true;
+        }
+        if (ui_.hoveredItem == 6 && !usingGamepad_) {
+            configSelection_ = 6;
+            menuSelection_ = 6;
+        }
+        if (sel && !usernameTyping_) {
+            char hint[64];
+            snprintf(hint, sizeof(hint), "[%s to edit]", UI::glyphLabel(UI::Action::Confirm, usingGamepad_));
+            ui_.drawText(hint, SCREEN_W / 2 + 160, y + 6, 12, UI::Color::HintGray);
+        }
         y += stepY;
     }
 
-    // Back button
+    // Back button (idx 7)
     {
-        bool sel = (configSelection_ == 9);
-        SDL_Color c = sel ? white : gray;
-        drawTextCentered(sel ? "> BACK <" : "BACK", y + 10, 22, c);
+        bool sel = (configSelection_ == 7);
+        if (ui_.menuItem(7, "BACK", SCREEN_W / 2, y + 10, rowW, rowH,
+                         UI::Color::White, sel, 20, 22)) {
+            configSelection_ = 7;
+            menuSelection_ = 7;
+            confirmInput_ = true;
+        }
+        if (ui_.hoveredItem == 7 && !usingGamepad_) {
+            configSelection_ = 7;
+            menuSelection_ = 7;
+        }
     }
 
-    drawTextCentered("UP/DOWN select  LEFT/RIGHT change  ENTER confirm", SCREEN_H - 40, 13, {80, 80, 90, 255});
+    // Hint bar
+    UI::HintPair hints[] = {
+        {UI::Action::Navigate, "Select"},
+        {UI::Action::Left, "Decrease"},
+        {UI::Action::Right, "Increase"},
+        {UI::Action::Confirm, "Confirm"},
+    };
+    ui_.drawHintBar(hints, 4, SCREEN_H - 40);
 }
 
 void Game::renderPauseMenu() {
     // Dark overlay
-    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(renderer_, 4, 6, 14, 200);
-    SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
-    SDL_RenderFillRect(renderer_, &full);
-
-    SDL_Color cyan   = {0, 255, 228, 255};
-    SDL_Color white  = {255, 255, 255, 255};
-    SDL_Color gray   = {120, 120, 130, 255};
-    SDL_Color red    = {255, 100, 100, 255};
+    ui_.drawDarkOverlay(200, 4, 6, 14);
 
     // Panel
     int panelW = 400;
@@ -5048,153 +5311,152 @@ void Game::renderPauseMenu() {
 #endif
     int px = (SCREEN_W - panelW) / 2;
     int py = (SCREEN_H - panelH) / 2;
-    SDL_SetRenderDrawColor(renderer_, 10, 12, 24, 240);
-    SDL_Rect panel = {px, py, panelW, panelH};
-    SDL_RenderFillRect(renderer_, &panel);
-    SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 80);
-    SDL_RenderDrawRect(renderer_, &panel);
+    ui_.drawPanel(px, py, panelW, panelH);
 
-    drawTextCentered("PAUSED", py + 24, 36, cyan);
-    SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 60);
-    SDL_Rect sep = {px + 40, py + 68, panelW - 80, 1};
-    SDL_RenderFillRect(renderer_, &sep);
+    // Title + separator
+    ui_.drawTextCentered("PAUSED", py + 24, 36, UI::Color::Cyan);
+    ui_.drawSeparator(SCREEN_W / 2, py + 68, (panelW - 80) / 2);
 
-    char musBuf[64]; snprintf(musBuf, sizeof(musBuf), "Music: %d%%", config_.musicVolume * 100 / 128);
-    char sfxBuf[64]; snprintf(sfxBuf, sizeof(sfxBuf), "SFX: %d%%", config_.sfxVolume * 100 / 128);
-
-    struct PauseItem { const char* label; SDL_Color accent; };
-#ifndef __SWITCH__
-    char fsBuf[32]; snprintf(fsBuf, sizeof(fsBuf), "Fullscreen: %s", config_.fullscreen ? "ON" : "OFF");
-    PauseItem items[5];
-    items[0] = {"RESUME", {50, 255, 150, 255}};
-    items[1] = {musBuf, cyan};
-    items[2] = {sfxBuf, cyan};
-    items[3] = {fsBuf, {180, 180, 255, 255}};
-    items[4] = {"MAIN MENU", red};
-    int itemCount = 5;
-#else
-    PauseItem items[4];
-    items[0] = {"RESUME", {50, 255, 150, 255}};
-    items[1] = {musBuf, cyan};
-    items[2] = {sfxBuf, cyan};
-    items[3] = {"MAIN MENU", red};
-    int itemCount = 4;
-#endif
+    // Build menu items
+    char musBuf[64]; snprintf(musBuf, sizeof(musBuf), "%d%%", config_.musicVolume * 100 / 128);
+    char sfxBuf[64]; snprintf(sfxBuf, sizeof(sfxBuf), "%d%%", config_.sfxVolume * 100 / 128);
 
     int itemY = py + 90;
     int stepY = 50;
-    for (int i = 0; i < itemCount; i++) {
-        bool sel = (menuSelection_ == i);
-        SDL_Color c = sel ? items[i].accent : gray;
-        if (sel) {
-            SDL_SetRenderDrawColor(renderer_, items[i].accent.r, items[i].accent.g, items[i].accent.b, 20);
-            SDL_Rect bg = {px + 20, itemY - 4, panelW - 40, 36};
-            SDL_RenderFillRect(renderer_, &bg);
-            SDL_SetRenderDrawColor(renderer_, items[i].accent.r, items[i].accent.g, items[i].accent.b, 180);
-            SDL_Rect bar = {px + 20, itemY - 4, 3, 36};
-            SDL_RenderFillRect(renderer_, &bar);
+    int rowW = panelW - 40;
+    int rowH = 36;
+
+    // 0: RESUME button
+    if (ui_.menuItem(0, "RESUME", SCREEN_W / 2, itemY, rowW, rowH,
+                     UI::Color::Green, menuSelection_ == 0, 20, 22)) {
+        menuSelection_ = 0; confirmInput_ = true;
+        if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+    }
+    if (ui_.hoveredItem == 0 && !usingGamepad_) menuSelection_ = 0;
+    itemY += stepY;
+
+    // 1: Music volume slider
+    {
+        int delta = ui_.sliderRow(1, "Music:", musBuf, SCREEN_W / 2, itemY, rowW, rowH,
+                                  UI::Color::Cyan, menuSelection_ == 1, leftInput_, rightInput_);
+        if (ui_.hoveredItem == 1 && !usingGamepad_) menuSelection_ = 1;
+        if (delta != 0 && (menuSelection_ == 1 || ui_.hoveredItem == 1)) {
+            config_.musicVolume = std::max(0, std::min(128, config_.musicVolume + delta * 8));
+            Mix_VolumeMusic(config_.musicVolume);
         }
-        if (sel && (i == 1 || i == 2)) {
-            char tmp[80]; snprintf(tmp, sizeof(tmp), "< %s >", items[i].label);
-            drawTextCentered(tmp, itemY + 4, 22, c);
+    }
+    itemY += stepY;
+
+    // 2: SFX volume slider
+    {
+        int delta = ui_.sliderRow(2, "SFX:", sfxBuf, SCREEN_W / 2, itemY, rowW, rowH,
+                                  UI::Color::Cyan, menuSelection_ == 2, leftInput_, rightInput_);
+        if (ui_.hoveredItem == 2 && !usingGamepad_) menuSelection_ = 2;
+        if (delta != 0 && (menuSelection_ == 2 || ui_.hoveredItem == 2)) {
+            config_.sfxVolume = std::max(0, std::min(128, config_.sfxVolume + delta * 8));
+        }
+    }
+    itemY += stepY;
+
 #ifndef __SWITCH__
-        } else if (sel && i == 3) {
-            char tmp[80]; snprintf(tmp, sizeof(tmp), "< %s >", items[i].label);
-            drawTextCentered(tmp, itemY + 4, 22, c);
-#endif
-        } else {
-            drawTextCentered(items[i].label, itemY + 4, sel ? 22 : 20, c);
+    // 3: Fullscreen toggle
+    {
+        char fsBuf[32]; snprintf(fsBuf, sizeof(fsBuf), "Fullscreen: %s", config_.fullscreen ? "ON" : "OFF");
+        if (ui_.menuItem(3, fsBuf, SCREEN_W / 2, itemY, rowW, rowH,
+                         UI::Color::Lavender, menuSelection_ == 3, 20, 22)) {
+            menuSelection_ = 3;
+            config_.fullscreen = !config_.fullscreen;
+            SDL_SetWindowFullscreen(window_, config_.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+            saveConfig();
         }
+        if (ui_.hoveredItem == 3 && !usingGamepad_) menuSelection_ = 3;
         itemY += stepY;
     }
 
-    drawTextCentered("", py + panelH - 30, 12, {80, 80, 90, 255});
+    // 4: Main Menu
+    if (ui_.menuItem(4, "MAIN MENU", SCREEN_W / 2, itemY, rowW, rowH,
+                     UI::Color::Red, menuSelection_ == 4, 20, 22)) {
+        menuSelection_ = 4; confirmInput_ = true;
+        if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+    }
+    if (ui_.hoveredItem == 4 && !usingGamepad_) menuSelection_ = 4;
+#else
+    // 3: Main Menu (Switch — no fullscreen option)
+    if (ui_.menuItem(3, "MAIN MENU", SCREEN_W / 2, itemY, rowW, rowH,
+                     UI::Color::Red, menuSelection_ == 3, 20, 22)) {
+        menuSelection_ = 3; confirmInput_ = true;
+    }
+    if (ui_.hoveredItem == 3 && !usingGamepad_) menuSelection_ = 3;
+#endif
+
+    // Hint bar
+    UI::HintPair hints[] = {
+        {UI::Action::Confirm, "Select"},
+        {UI::Action::Left, "Adjust"},
+        {UI::Action::Right, "Adjust"},
+        {UI::Action::Pause, "Resume"},
+    };
+    ui_.drawHintBar(hints, 4, py + panelH - 30);
 }
 
 void Game::renderDeathScreen() {
     // Dark + red tint overlay
-    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(renderer_, 30, 4, 4, 200);
-    SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
-    SDL_RenderFillRect(renderer_, &full);
-
-    SDL_Color white  = {255, 255, 255, 255};
-    SDL_Color gray   = {120, 120, 130, 255};
-    SDL_Color red    = {255, 60, 60, 255};
-    SDL_Color green  = {50, 255, 150, 255};
+    ui_.drawDarkOverlay(200, 30, 4, 4);
 
     // Panel
     int panelW = 380, panelH = 280;
     int px = (SCREEN_W - panelW) / 2;
     int py = (SCREEN_H - panelH) / 2;
-    SDL_SetRenderDrawColor(renderer_, 12, 8, 10, 240);
-    SDL_Rect panel = {px, py, panelW, panelH};
-    SDL_RenderFillRect(renderer_, &panel);
-    SDL_SetRenderDrawColor(renderer_, 255, 60, 60, 60);
-    SDL_RenderDrawRect(renderer_, &panel);
+    ui_.drawPanel(px, py, panelW, panelH, {12, 8, 10, 240}, {255, 60, 60, 60});
 
-    drawTextCentered("YOU DIED", py + 28, 36, red);
-    SDL_SetRenderDrawColor(renderer_, 255, 60, 60, 40);
-    SDL_Rect sep = {px + 40, py + 72, panelW - 80, 1};
-    SDL_RenderFillRect(renderer_, &sep);
+    // Title
+    ui_.drawTextCentered("YOU DIED", py + 28, 36, UI::Color::DeepRed);
+    ui_.drawSeparator(SCREEN_W / 2, py + 72, (panelW - 80) / 2, {255, 60, 60, 40});
 
-    // Time survived
+    // Stats
     char timeStr[64];
     int mins = (int)gameTime_ / 60;
     int secs = (int)gameTime_ % 60;
     snprintf(timeStr, sizeof(timeStr), "Time: %d:%02d", mins, secs);
-    drawTextCentered(timeStr, py + 90, 18, gray);
+    ui_.drawTextCentered(timeStr, py + 90, 18, UI::Color::Gray);
 
     char waveBuf[64];
     snprintf(waveBuf, sizeof(waveBuf), "Wave: %d", waveNumber_);
-    drawTextCentered(waveBuf, py + 116, 16, gray);
+    ui_.drawTextCentered(waveBuf, py + 116, 16, UI::Color::Gray);
 
     // Buttons
-    struct DeathItem { const char* label; SDL_Color accent; };
-    DeathItem items[] = { {"RETRY", green}, {"MAIN MENU", {255, 100, 100, 255}} };
     int itemY = py + 160;
-    for (int i = 0; i < 2; i++) {
-        bool sel = (menuSelection_ == i);
-        SDL_Color c = sel ? items[i].accent : gray;
-        if (sel) {
-            SDL_SetRenderDrawColor(renderer_, items[i].accent.r, items[i].accent.g, items[i].accent.b, 20);
-            SDL_Rect bg = {px + 20, itemY - 4, panelW - 40, 36};
-            SDL_RenderFillRect(renderer_, &bg);
-            SDL_SetRenderDrawColor(renderer_, items[i].accent.r, items[i].accent.g, items[i].accent.b, 180);
-            SDL_Rect bar = {px + 20, itemY - 4, 3, 36};
-            SDL_RenderFillRect(renderer_, &bar);
-        }
-        drawTextCentered(items[i].label, itemY + 4, sel ? 22 : 20, c);
-        itemY += 48;
-    }
+    int rowW = panelW - 40;
+    int rowH = 36;
 
-    drawTextCentered("A / ENTER - Select", py + panelH - 26, 12, {80, 80, 90, 255});
+    // 0: RETRY
+    if (ui_.menuItem(0, "RETRY", SCREEN_W / 2, itemY, rowW, rowH,
+                     UI::Color::Green, menuSelection_ == 0, 20, 22)) {
+        menuSelection_ = 0; confirmInput_ = true;
+        if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+    }
+    if (ui_.hoveredItem == 0 && !usingGamepad_) menuSelection_ = 0;
+    itemY += 48;
+
+    // 1: MAIN MENU
+    if (ui_.menuItem(1, "MAIN MENU", SCREEN_W / 2, itemY, rowW, rowH,
+                     UI::Color::Red, menuSelection_ == 1, 20, 22)) {
+        menuSelection_ = 1; confirmInput_ = true;
+        if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+    }
+    if (ui_.hoveredItem == 1 && !usingGamepad_) menuSelection_ = 1;
+
+    // Hint bar
+    UI::HintPair hints[] = { {UI::Action::Confirm, "Select"} };
+    ui_.drawHintBar(hints, 1, py + panelH - 26);
 }
 
 void Game::drawText(const char* text, int x, int y, int size, SDL_Color color) {
-    TTF_Font* f = Assets::instance().font(size);
-    if (!f || !text || text[0] == '\0') return;
-
-    SDL_Surface* surf = TTF_RenderText_Blended(f, text, color);
-    if (!surf) return;
-    SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer_, surf);
-    SDL_Rect dst = {x, y, surf->w, surf->h};
-    SDL_RenderCopy(renderer_, tex, nullptr, &dst);
-    SDL_DestroyTexture(tex);
-    SDL_FreeSurface(surf);
+    ui_.drawText(text, x, y, size, color);
 }
 
 void Game::drawTextCentered(const char* text, int y, int size, SDL_Color color) {
-    TTF_Font* f = Assets::instance().font(size);
-    if (!f || !text || text[0] == '\0') return;
-
-    SDL_Surface* surf = TTF_RenderText_Blended(f, text, color);
-    if (!surf) return;
-    SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer_, surf);
-    SDL_Rect dst = {SCREEN_W / 2 - surf->w / 2, y, surf->w, surf->h};
-    SDL_RenderCopy(renderer_, tex, nullptr, &dst);
-    SDL_DestroyTexture(tex);
-    SDL_FreeSurface(surf);
+    ui_.drawTextCentered(text, y, size, color);
 }
 
 bool Game::wallCollision(Vec2 pos, float halfSize) const {
@@ -5361,10 +5623,10 @@ void Game::startCustomMapMultiplayer(const std::string& path) {
     camera_.worldW = map_.worldWidth();
     camera_.worldH = map_.worldHeight();
 
-    // Spawn enemies from map data (host only)
+    // Spawn enemies from map data (host only, skip in PVP mode)
     auto& net = NetworkManager::instance();
     customEnemiesTotal_ = 0;
-    if (net.isHost()) {
+    if (net.isHost() && !lobbySettings_.isPvp) {
         for (auto& es : customMap_.enemySpawns) {
             EnemyType type = (es.enemyType == 1) ? EnemyType::Shooter : EnemyType::Melee;
             spawnEnemy({es.x, es.y}, type);
@@ -5495,19 +5757,16 @@ void Game::renderMapSelectMenu() {
         for (int i = scrollOff; i < (int)mapFiles_.size() && (i - scrollOff) < maxVisible; i++) {
             int y = baseY + (i - scrollOff) * stepY;
             bool sel = (menuSelection_ == i);
-            SDL_Color c = sel ? yellow : gray;
-            if (sel) {
-                SDL_SetRenderDrawColor(renderer_, 255, 220, 60, 20);
-                SDL_Rect bg = {SCREEN_W / 2 - 200, y - 4, 400, 32};
-                SDL_RenderFillRect(renderer_, &bg);
-                SDL_SetRenderDrawColor(renderer_, 255, 220, 60, 180);
-                SDL_Rect bar = {SCREEN_W / 2 - 200, y - 4, 3, 32};
-                SDL_RenderFillRect(renderer_, &bar);
-            }
             std::string fname = mapFiles_[i];
             size_t slash = fname.find_last_of('/');
             if (slash != std::string::npos) fname = fname.substr(slash + 1);
-            drawTextCentered(fname.c_str(), y + 2, sel ? 22 : 20, c);
+            int animIdx = i - scrollOff;
+            if (ui_.menuItem(animIdx, fname.c_str(), SCREEN_W / 2, y, 400, 32,
+                             yellow, sel, 20, 22)) {
+                menuSelection_ = i;
+                confirmInput_ = true;
+            }
+            if (ui_.hoveredItem == animIdx && !usingGamepad_) menuSelection_ = i;
         }
         // Scroll indicator
         if ((int)mapFiles_.size() > maxVisible) {
@@ -5523,15 +5782,15 @@ void Game::renderMapSelectMenu() {
 
     int backIdx = (int)mapFiles_.size();
     bool backSel = (menuSelection_ == backIdx);
-    SDL_Color cb = backSel ? white : gray;
-    if (backSel) {
-        SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 20);
-        SDL_Rect bg = {SCREEN_W / 2 - 80, SCREEN_H - 104, 160, 32};
-        SDL_RenderFillRect(renderer_, &bg);
+    if (ui_.menuItem(62, "BACK", SCREEN_W / 2, SCREEN_H - 100, 200, 32,
+                     UI::Color::White, backSel, 20, 22)) {
+        menuSelection_ = backIdx;
+        confirmInput_ = true;
     }
-    drawTextCentered("BACK", SCREEN_H - 100, backSel ? 22 : 20, cb);
+    if (ui_.hoveredItem == 62 && !usingGamepad_) menuSelection_ = backIdx;
 
-    drawTextCentered("A / ENTER - Select     B / ESC - Back", SCREEN_H - 36, 13, {80, 80, 90, 255});
+    { UI::HintPair hints[] = { {UI::Action::Confirm, "Select"}, {UI::Action::Back, "Back"} };
+      ui_.drawHintBar(hints, 2); }
 }
 
 void Game::renderMapConfigMenu() {
@@ -5572,16 +5831,12 @@ void Game::renderMapConfigMenu() {
     int stepY = 56;
     for (int i = 0; i < 3; i++) {
         bool sel = (menuSelection_ == i);
-        SDL_Color c = sel ? items[i].accent : gray;
-        if (sel) {
-            SDL_SetRenderDrawColor(renderer_, items[i].accent.r, items[i].accent.g, items[i].accent.b, 20);
-            SDL_Rect bg = {px + 16, itemY - 4, panelW - 32, 42};
-            SDL_RenderFillRect(renderer_, &bg);
-            SDL_SetRenderDrawColor(renderer_, items[i].accent.r, items[i].accent.g, items[i].accent.b, 180);
-            SDL_Rect bar = {px + 16, itemY - 4, 3, 42};
-            SDL_RenderFillRect(renderer_, &bar);
+        if (ui_.menuItem(i, items[i].label, SCREEN_W / 2, itemY, panelW - 32, 42,
+                         items[i].accent, sel, 20, 22)) {
+            menuSelection_ = i;
+            confirmInput_ = true;
         }
-        drawTextCentered(items[i].label, itemY + 4, sel ? 22 : 20, c);
+        if (ui_.hoveredItem == i && !usingGamepad_) menuSelection_ = i;
         if (sel && items[i].desc[0]) {
             drawTextCentered(items[i].desc, itemY + 28, 12, {80, 80, 90, 255});
         }
@@ -5611,31 +5866,24 @@ void Game::renderCharSelectMenu() {
     // Default option
     {
         bool sel = (menuSelection_ == 0);
-        SDL_Color c = sel ? yellow : gray;
-        if (sel) {
-            SDL_SetRenderDrawColor(renderer_, 255, 220, 60, 20);
-            SDL_Rect bg = {SCREEN_W / 2 - 180, baseY - 4, 360, 34};
-            SDL_RenderFillRect(renderer_, &bg);
-            SDL_SetRenderDrawColor(renderer_, 255, 220, 60, 180);
-            SDL_Rect bar = {SCREEN_W / 2 - 180, baseY - 4, 3, 34};
-            SDL_RenderFillRect(renderer_, &bar);
+        if (ui_.menuItem(0, "Default", SCREEN_W / 2, baseY, 360, 34,
+                         yellow, sel, 20, 22)) {
+            menuSelection_ = 0;
+            confirmInput_ = true;
         }
-        drawTextCentered("Default", baseY + 4, sel ? 22 : 20, c);
+        if (ui_.hoveredItem == 0 && !usingGamepad_) menuSelection_ = 0;
     }
 
     for (int i = 0; i < (int)availableChars_.size(); i++) {
         int y = baseY + (i + 1) * stepY;
         bool sel = (menuSelection_ == i + 1);
-        SDL_Color c = sel ? yellow : gray;
-        if (sel) {
-            SDL_SetRenderDrawColor(renderer_, 255, 220, 60, 20);
-            SDL_Rect bg = {SCREEN_W / 2 - 180, y - 4, 360, 34};
-            SDL_RenderFillRect(renderer_, &bg);
-            SDL_SetRenderDrawColor(renderer_, 255, 220, 60, 180);
-            SDL_Rect bar = {SCREEN_W / 2 - 180, y - 4, 3, 34};
-            SDL_RenderFillRect(renderer_, &bar);
+        int animIdx = i + 1;
+        if (ui_.menuItem(animIdx, availableChars_[i].name.c_str(), SCREEN_W / 2, y, 360, 34,
+                         yellow, sel, 20, 22)) {
+            menuSelection_ = i + 1;
+            confirmInput_ = true;
         }
-        drawTextCentered(availableChars_[i].name.c_str(), y + 4, sel ? 22 : 20, c);
+        if (ui_.hoveredItem == animIdx && !usingGamepad_) menuSelection_ = i + 1;
 
         // Show character detail sprite if selected
         if (sel && availableChars_[i].detailSprite) {
@@ -5654,18 +5902,18 @@ void Game::renderCharSelectMenu() {
     int backIdx = (int)availableChars_.size() + 1;
     bool backSel = (menuSelection_ == backIdx);
     int backY = baseY + backIdx * stepY;
-    SDL_Color cb = backSel ? white : gray;
-    if (backSel) {
-        SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 20);
-        SDL_Rect bg = {SCREEN_W / 2 - 80, backY - 4, 160, 32};
-        SDL_RenderFillRect(renderer_, &bg);
+    if (ui_.menuItem(63, "BACK", SCREEN_W / 2, backY, 200, 32,
+                     UI::Color::White, backSel, 20, 22)) {
+        menuSelection_ = backIdx;
+        confirmInput_ = true;
     }
-    drawTextCentered("BACK", backY + 4, backSel ? 22 : 20, cb);
+    if (ui_.hoveredItem == 63 && !usingGamepad_) menuSelection_ = backIdx;
 
     if (availableChars_.empty()) {
         drawTextCentered("No .cschar found in characters/ folder", SCREEN_H / 2 + 40, 14, {80, 80, 90, 255});
     }
-    drawTextCentered("A / ENTER - Select     B / ESC - Back", SCREEN_H - 36, 13, {80, 80, 90, 255});
+    { UI::HintPair hints[] = { {UI::Action::Confirm, "Select"}, {UI::Action::Back, "Back"} };
+      ui_.drawHintBar(hints, 2); }
 }
 
 void Game::renderCustomWinScreen() {
@@ -5701,16 +5949,13 @@ void Game::renderCustomWinScreen() {
     drawTextCentered(timeStr, py + 88, 18, gray);
 
     // Continue button
-    bool sel = true; // only one option
-    SDL_SetRenderDrawColor(renderer_, 50, 255, 100, 20);
-    SDL_Rect bg = {px + 20, py + 140, panelW - 40, 36};
-    SDL_RenderFillRect(renderer_, &bg);
-    SDL_SetRenderDrawColor(renderer_, 50, 255, 100, 180);
-    SDL_Rect bar = {px + 20, py + 140, 3, 36};
-    SDL_RenderFillRect(renderer_, &bar);
-    drawTextCentered("CONTINUE", py + 144, 22, white);
+    if (ui_.menuItem(0, "CONTINUE", SCREEN_W / 2, py + 140, panelW - 40, 36,
+                     UI::Color::Green, true, 22, 24)) {
+        confirmInput_ = true;
+    }
 
-    drawTextCentered("A / ENTER - Continue", py + panelH - 22, 12, {80, 80, 90, 255});
+    { UI::HintPair hints[] = { {UI::Action::Confirm, "Continue"} };
+      ui_.drawHintBar(hints, 1, py + panelH - 22); }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -5749,6 +5994,14 @@ void Game::renderCharCreator() {
             drawText(">", 760, y, 20, yellow);
         } else {
             drawText(value, 560, y, 20, vc);
+        }
+        // Click support for field rows
+        bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, 120, y - 2, 660, step - 4);
+        if (hovered && !usingGamepad_) cc.field = idx;
+        if (hovered) ui_.hoveredItem = idx;
+        if (hovered && ui_.mouseClicked) {
+            cc.field = idx;
+            confirmInput_ = true;
         }
         y += step;
     };
@@ -5795,12 +6048,20 @@ void Game::renderCharCreator() {
 
     // Buttons
     y += 10;
-    SDL_Color saveC = (cc.field == 9) ? white : gray;
-    drawTextCentered(cc.field == 9 ? "> SAVE <" : "SAVE", y, 24, saveC);
+    if (ui_.menuItem(9, "SAVE", SCREEN_W / 2, y, 200, 32,
+                     UI::Color::Green, cc.field == 9, 22, 24)) {
+        cc.field = 9;
+        confirmInput_ = true;
+    }
+    if (ui_.hoveredItem == 9 && !usingGamepad_) cc.field = 9;
     y += step;
 
-    SDL_Color backC = (cc.field == 10) ? white : gray;
-    drawTextCentered(cc.field == 10 ? "> BACK <" : "BACK", y, 24, backC);
+    if (ui_.menuItem(10, "BACK", SCREEN_W / 2, y, 200, 32,
+                     UI::Color::White, cc.field == 10, 22, 24)) {
+        cc.field = 10;
+        confirmInput_ = true;
+    }
+    if (ui_.hoveredItem == 10 && !usingGamepad_) cc.field = 10;
 
     // Info panel on the right
     int panelX = 880;
@@ -5820,7 +6081,8 @@ void Game::renderCharCreator() {
     drawText("All sprites should be 32x32 px", panelX, 265, 12, {180, 180, 180, 255});
 
     // Hint
-    drawTextCentered("UP/DOWN navigate  LEFT/RIGHT adjust  ENTER confirm  BACKSPACE back", SCREEN_H - 30, 14, gray);
+    { UI::HintPair hints[] = { {UI::Action::Navigate, "Navigate/Adjust"}, {UI::Action::Confirm, "Confirm"}, {UI::Action::Back, "Back"} };
+      ui_.drawHintBar(hints, 3, SCREEN_H - 30); }
 }
 
 void Game::saveCharCreator() {
@@ -6081,6 +6343,22 @@ void Game::handleModSaveDialogEvent(const SDL_Event& e) {
                 }
                 case SDLK_ESCAPE:
                     d.phase = ModSaveDialogState::ChooseMod; break;
+                case SDLK_v:
+                    if (e.key.keysym.mod & KMOD_CTRL) {
+                        if (SDL_HasClipboardText()) {
+                            char* clip = SDL_GetClipboardText();
+                            if (clip) {
+                                for (const char* p = clip; *p; p++) {
+                                    char c = *p;
+                                    if (c >= 'A' && c <= 'Z') c += 32;
+                                    bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+                                    if (ok && d.newModId.size() < 24) d.newModId += c;
+                                }
+                                SDL_free(clip);
+                            }
+                        }
+                    }
+                    break;
             }
         }
         if (e.type == SDL_CONTROLLERBUTTONDOWN) {
@@ -6188,6 +6466,25 @@ void Game::renderModSaveDialog() {
         int total = 1 + (int)d.modIds.size();
         for (int i = 0; i < total; i++) {
             bool sel = (i == d.selIdx);
+
+            // Click detection
+            bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, panX + 20, y - 2, panW - 40, 26);
+            if (hovered) ui_.hoveredItem = i;
+            if (hovered && !usingGamepad_) d.selIdx = i;
+            if (hovered && ui_.mouseClicked) {
+                d.selIdx = i;
+                // Simulate confirm for this item
+                if (i == 0) {
+                    d.phase = ModSaveDialogState::NameNewMod;
+                } else {
+                    d.confirmedModFolder = "mods/" + d.modIds[i - 1];
+                    if (d.asset == ModSaveDialogState::AssetSprite)
+                        d.phase = ModSaveDialogState::ChooseCategory;
+                    else
+                        d.confirmed = true;
+                }
+            }
+
             if (sel) {
                 SDL_SetRenderDrawColor(renderer_, selBg.r, selBg.g, selBg.b, selBg.a);
                 SDL_Rect bg = {panX + 20, y - 2, panW - 40, 26};
@@ -6204,7 +6501,8 @@ void Game::renderModSaveDialog() {
         }
 
         y = panY + panH - 40;
-        drawTextCentered("\xe2\x86\x91\xe2\x86\x93 navigate   A/Enter confirm   B/Esc cancel", y, 12, gray);
+        { UI::HintPair hints[] = { {UI::Action::Navigate, "Navigate"}, {UI::Action::Confirm, "Confirm"}, {UI::Action::Back, "Cancel"} };
+          ui_.drawHintBar(hints, 3, y); }
     }
     // ── Phase: name new mod ────────────────────────────────────────────
     else if (d.phase == ModSaveDialogState::NameNewMod) {
@@ -6247,6 +6545,17 @@ void Game::renderModSaveDialog() {
 
         for (int i = 0; i < ModSaveDialogState::CAT_COUNT; i++) {
             bool sel = (i == d.catIdx);
+
+            // Click detection
+            bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, panX + 20, y - 2, panW - 40, 26);
+            if (hovered) ui_.hoveredItem = 20 + i;
+            if (hovered && !usingGamepad_) d.catIdx = i;
+            if (hovered && ui_.mouseClicked) {
+                d.catIdx = i;
+                d.confirmedCat = i;
+                d.confirmed = true;
+            }
+
             if (sel) {
                 SDL_SetRenderDrawColor(renderer_, selBg.r, selBg.g, selBg.b, selBg.a);
                 SDL_Rect bg = {panX + 20, y - 2, panW - 40, 26};
@@ -6257,7 +6566,8 @@ void Game::renderModSaveDialog() {
         }
 
         y = panY + panH - 40;
-        drawTextCentered("\xe2\x86\x91\xe2\x86\x93 navigate   A/Enter confirm   B back", y, 12, gray);
+        { UI::HintPair hints[] = { {UI::Action::Navigate, "Navigate"}, {UI::Action::Confirm, "Confirm"}, {UI::Action::Back, "Back"} };
+          ui_.drawHintBar(hints, 3, y); }
     }
     (void)cx;
 }
@@ -6502,20 +6812,15 @@ void Game::renderPackSelectMenu() {
     for (int i = 0; i < (int)availablePacks_.size(); i++) {
         int y = baseY + i * stepY;
         bool sel = (packSelectIdx_ == i);
-        SDL_Color c = sel ? blue : gray;
-        if (sel) {
-            SDL_SetRenderDrawColor(renderer_, 80, 200, 255, 20);
-            SDL_Rect bg = {SCREEN_W / 2 - 260, y - 6, 520, 42};
-            SDL_RenderFillRect(renderer_, &bg);
-            SDL_SetRenderDrawColor(renderer_, 80, 200, 255, 180);
-            SDL_Rect bar = {SCREEN_W / 2 - 260, y - 6, 3, 42};
-            SDL_RenderFillRect(renderer_, &bar);
-        }
         std::string label = availablePacks_[i].name;
         if (!availablePacks_[i].creator.empty()) label += " by " + availablePacks_[i].creator;
         label += " (" + std::to_string(availablePacks_[i].maps.size()) + " levels)";
-        drawTextCentered(label.c_str(), y + 4, sel ? 20 : 18, c);
-
+        if (ui_.menuItem(i, label.c_str(), SCREEN_W / 2, y, 520, 42,
+                         blue, sel, 18, 20)) {
+            packSelectIdx_ = i;
+            confirmInput_ = true;
+        }
+        if (ui_.hoveredItem == i && !usingGamepad_) packSelectIdx_ = i;
         if (sel && !availablePacks_[i].description.empty()) {
             drawTextCentered(availablePacks_[i].description.c_str(), y + 28, 12, {80, 80, 90, 255});
         }
@@ -6525,15 +6830,15 @@ void Game::renderPackSelectMenu() {
     int backIdx = (int)availablePacks_.size();
     bool backSel = (packSelectIdx_ == backIdx);
     int backY = baseY + backIdx * stepY + 10;
-    SDL_Color backC = backSel ? white : gray;
-    if (backSel) {
-        SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 20);
-        SDL_Rect bg = {SCREEN_W / 2 - 80, backY - 4, 160, 32};
-        SDL_RenderFillRect(renderer_, &bg);
+    if (ui_.menuItem(63, "BACK", SCREEN_W / 2, backY, 200, 32,
+                     UI::Color::White, backSel, 20, 22)) {
+        packSelectIdx_ = backIdx;
+        confirmInput_ = true;
     }
-    drawTextCentered("BACK", backY + 2, backSel ? 22 : 20, backC);
+    if (ui_.hoveredItem == 63 && !usingGamepad_) packSelectIdx_ = backIdx;
 
-    drawTextCentered("A / ENTER - Select     B / ESC - Back", SCREEN_H - 36, 13, {80, 80, 90, 255});
+    { UI::HintPair hints[] = { {UI::Action::Confirm, "Select"}, {UI::Action::Back, "Back"} };
+      ui_.drawHintBar(hints, 2); }
 }
 
 void Game::startPackLevel() {
@@ -6648,20 +6953,17 @@ void Game::renderPackLevelWin() {
     int itemY = py + 126;
     for (int i = 0; i < 2; i++) {
         bool sel = (menuSelection_ == i);
-        SDL_Color c = sel ? items[i].accent : gray;
-        if (sel) {
-            SDL_SetRenderDrawColor(renderer_, items[i].accent.r, items[i].accent.g, items[i].accent.b, 20);
-            SDL_Rect bg = {px + 20, itemY - 4, panelW - 40, 36};
-            SDL_RenderFillRect(renderer_, &bg);
-            SDL_SetRenderDrawColor(renderer_, items[i].accent.r, items[i].accent.g, items[i].accent.b, 180);
-            SDL_Rect bar = {px + 20, itemY - 4, 3, 36};
-            SDL_RenderFillRect(renderer_, &bar);
+        if (ui_.menuItem(i, items[i].label, SCREEN_W / 2, itemY, panelW - 40, 36,
+                         items[i].accent, sel, 20, 22)) {
+            menuSelection_ = i;
+            confirmInput_ = true;
         }
-        drawTextCentered(items[i].label, itemY + 4, sel ? 22 : 20, c);
+        if (ui_.hoveredItem == i && !usingGamepad_) menuSelection_ = i;
         itemY += 48;
     }
 
-    drawTextCentered("A / ENTER - Select", py + panelH - 26, 12, {80, 80, 90, 255});
+    { UI::HintPair hints[] = { {UI::Action::Confirm, "Select"} };
+      ui_.drawHintBar(hints, 1, py + panelH - 26); }
 }
 
 void Game::renderPackComplete() {
@@ -6700,15 +7002,13 @@ void Game::renderPackComplete() {
     drawTextCentered(levels.c_str(), py + 152, 18, gray);
 
     // Continue button
-    SDL_SetRenderDrawColor(renderer_, 255, 200, 50, 20);
-    SDL_Rect bg = {px + 30, py + 200, panelW - 60, 36};
-    SDL_RenderFillRect(renderer_, &bg);
-    SDL_SetRenderDrawColor(renderer_, 255, 200, 50, 180);
-    SDL_Rect bar = {px + 30, py + 200, 3, 36};
-    SDL_RenderFillRect(renderer_, &bar);
-    drawTextCentered("CONTINUE", py + 204, 22, white);
+    if (ui_.menuItem(0, "CONTINUE", SCREEN_W / 2, py + 200, panelW - 60, 36,
+                     UI::Color::Yellow, true, 22, 24)) {
+        confirmInput_ = true;
+    }
 
-    drawTextCentered("A / ENTER - Continue", py + panelH - 22, 12, {80, 80, 90, 255});
+    { UI::HintPair hints[] = { {UI::Action::Confirm, "Continue"} };
+      ui_.drawHintBar(hints, 1, py + panelH - 22); }
 
 }
 
@@ -6842,10 +7142,12 @@ void Game::setupNetworkCallbacks() {
     };
 
     // Enemy killed notification from host — kill locally on clients (with effects)
-    net.onEnemyKilled = [this](uint32_t enemyIdx, uint8_t /*killerId*/) {
-        // Kill the enemy locally (idempotent — safe if already dead)
+    net.onEnemyKilled = [this](uint32_t enemyIdx, uint8_t killerId) {
+        // Credit the bomb counter if WE made this kill; otherwise just sync the death
         if (enemyIdx < enemies_.size() && enemies_[enemyIdx].alive) {
-            killEnemy(enemies_[enemyIdx]);
+            auto& net2 = NetworkManager::instance();
+            bool ours = (killerId == net2.localPlayerId());
+            killEnemy(enemies_[enemyIdx], ours);
         }
     };
 
@@ -7028,7 +7330,7 @@ void Game::setupNetworkCallbacks() {
         if (playerId == net.localPlayerId() && !player_.dead) {
             player_.dead = true;
             player_.hp = 0;
-            if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 2); }
+            if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
             camera_.addShake(4.0f);
             // Transition to death / spectator based on lives
             if (currentRules_.lives > 0 && localLives_ > 0) {
@@ -7137,12 +7439,12 @@ void Game::setupNetworkCallbacks() {
             if (hp <= 0 && !player_.dead) {
                 // Host confirmed we're dead
                 player_.dead = true;
-                if (sfxHurt_)  { int ch = Mix_PlayChannel(-1, sfxHurt_,  0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
-                if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 2); }
+                if (sfxHurt_)  { int ch = Mix_PlayChannel(-1, sfxHurt_,  0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
                 camera_.addShake(4.0f);
             } else if (hp < player_.maxHp) {
                 camera_.addShake(1.8f);
-                if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
             }
         }
         (void)killerId;
@@ -8082,44 +8384,16 @@ void Game::renderMultiplayerMenu() {
 
     for (int i = 0; i < count; i++) {
         bool sel = (multiMenuSelection_ == i);
-        SDL_Color c = sel ? items[i].accent : gray;
         int itemY = actionY + i * stepY;
-
-        if (sel) {
-            SDL_SetRenderDrawColor(renderer_, items[i].accent.r, items[i].accent.g, items[i].accent.b, 20);
-            SDL_Rect bg = {leftX - 140, itemY - 6, 280, 38};
-            SDL_RenderFillRect(renderer_, &bg);
-            SDL_SetRenderDrawColor(renderer_, items[i].accent.r, items[i].accent.g, items[i].accent.b, 160);
-            SDL_Rect bar = {leftX - 140, itemY - 6, 3, 38};
-            SDL_RenderFillRect(renderer_, &bar);
+        if (ui_.menuItem(i, items[i].label, leftX, itemY, 280, 38,
+                         items[i].accent, sel, 20, 24)) {
+            multiMenuSelection_ = i;
+            confirmInput_ = true;
         }
-
-        // Center text in left column
-        {
-            TTF_Font* font = Assets::instance().font(sel ? 24 : 20);
-            if (font) {
-                SDL_Surface* surf = TTF_RenderText_Blended(font, items[i].label, c);
-                if (surf) {
-                    SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer_, surf);
-                    SDL_Rect dst = {leftX - surf->w / 2, itemY, surf->w, surf->h};
-                    SDL_RenderCopy(renderer_, tex, nullptr, &dst);
-                    SDL_DestroyTexture(tex);
-                    SDL_FreeSurface(surf);
-                }
-            }
-        }
+        if (ui_.hoveredItem == i && !usingGamepad_) multiMenuSelection_ = i;
         if (sel && items[i].desc[0]) {
-            TTF_Font* df = Assets::instance().font(11);
-            if (df) {
-                SDL_Surface* ds = TTF_RenderText_Blended(df, items[i].desc, {90, 90, 100, 255});
-                if (ds) {
-                    SDL_Texture* dt = SDL_CreateTextureFromSurface(renderer_, ds);
-                    SDL_Rect dd = {leftX - ds->w / 2, itemY + 26, ds->w, ds->h};
-                    SDL_RenderCopy(renderer_, dt, nullptr, &dd);
-                    SDL_DestroyTexture(dt);
-                    SDL_FreeSurface(ds);
-                }
-            }
+            int dw = ui_.textWidth(items[i].desc, 11);
+            ui_.drawText(items[i].desc, leftX - dw / 2, itemY + 28, 11, {90, 90, 100, 255});
         }
     }
 
@@ -8153,12 +8427,22 @@ void Game::renderMultiplayerMenu() {
             bool sel = (multiMenuSelection_ == 3 + i);
             auto& s = savedServers_[i];
 
+            // Click detection for server rows
+            int rowX = rightX - 8, rowTop = sy - 4, rowW = 330, rowH = 32;
+            bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, rowX, rowTop, rowW, rowH);
+            if (hovered && !usingGamepad_) { multiMenuSelection_ = 3 + i; sel = true; }
+            if (hovered) ui_.hoveredItem = 10 + (i - startIdx);
+            if (hovered && ui_.mouseClicked) {
+                multiMenuSelection_ = 3 + i;
+                confirmInput_ = true;
+            }
+
             if (sel) {
                 SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 30);
-                SDL_Rect row = {rightX - 8, sy - 4, 330, 32};
+                SDL_Rect row = {rowX, rowTop, rowW, rowH};
                 SDL_RenderFillRect(renderer_, &row);
                 SDL_SetRenderDrawColor(renderer_, 0, 255, 228, 120);
-                SDL_Rect acc = {rightX - 8, sy - 4, 2, 32};
+                SDL_Rect acc = {rowX, rowTop, 2, rowH};
                 SDL_RenderFillRect(renderer_, &acc);
             }
 
@@ -8190,9 +8474,11 @@ void Game::renderMultiplayerMenu() {
 
     // Controls
     if (multiMenuSelection_ >= 3 && !savedServers_.empty()) {
-        drawTextCentered("A - Connect    X - Delete    B - Back", SCREEN_H - 36, 13, {80, 80, 90, 255});
+        UI::HintPair hints[] = { {UI::Action::Confirm, "Connect"}, {UI::Action::Bomb, "Delete"}, {UI::Action::Back, "Back"} };
+        ui_.drawHintBar(hints, 3);
     } else {
-        drawTextCentered("A / ENTER - Select     B / ESC - Back", SCREEN_H - 36, 13, {80, 80, 90, 255});
+        UI::HintPair hints[] = { {UI::Action::Confirm, "Select"}, {UI::Action::Back, "Back"} };
+        ui_.drawHintBar(hints, 2);
     }
 }
 
@@ -8218,12 +8504,13 @@ void Game::renderHostSetup() {
     auto drawRow = [&](int idx, const char* label, const char* value, bool arrows = true) {
         bool sel = (hostSetupSelection_ == idx);
         SDL_Color c = sel ? white : gray;
+        int rowTop = y - 4;
         if (sel) {
             SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 20);
-            SDL_Rect bg = {SCREEN_W / 2 - 240, y - 4, 480, 38};
+            SDL_Rect bg = {SCREEN_W / 2 - 240, rowTop, 480, 38};
             SDL_RenderFillRect(renderer_, &bg);
             SDL_SetRenderDrawColor(renderer_, 0, 255, 228, 140);
-            SDL_Rect bar = {SCREEN_W / 2 - 240, y - 4, 3, 38};
+            SDL_Rect bar = {SCREEN_W / 2 - 240, rowTop, 3, 38};
             SDL_RenderFillRect(renderer_, &bar);
         }
         char buf[256];
@@ -8232,6 +8519,14 @@ void Game::renderHostSetup() {
         else
             snprintf(buf, sizeof(buf), "%s  %s", label, value);
         drawTextCentered(buf, y + 4, sel ? 22 : 20, c);
+        // Mouse click support
+        bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, SCREEN_W / 2 - 240, rowTop, 480, 38);
+        if (hovered && !usingGamepad_) hostSetupSelection_ = idx;
+        if (hovered) ui_.hoveredItem = idx;
+        if (hovered && ui_.mouseClicked) {
+            hostSetupSelection_ = idx;
+            confirmInput_ = true;
+        }
         y += step;
     };
 
@@ -8299,179 +8594,156 @@ void Game::renderHostSetup() {
     // Start button
     {
         bool sel = (hostSetupSelection_ == 4);
-        SDL_Color c = sel ? green : gray;
-        if (sel) {
-            SDL_SetRenderDrawColor(renderer_, 50, 255, 100, 20);
-            SDL_Rect bg = {SCREEN_W / 2 - 140, y - 4, 280, 38};
-            SDL_RenderFillRect(renderer_, &bg);
+        if (ui_.menuItem(4, "START HOSTING", SCREEN_W / 2, y, 280, 38,
+                         UI::Color::Green, sel, 22, 26)) {
+            hostSetupSelection_ = 4;
+            confirmInput_ = true;
         }
-        drawTextCentered(sel ? "> START HOSTING <" : "START HOSTING", y + 4, sel ? 26 : 22, c);
+        if (ui_.hoveredItem == 4 && !usingGamepad_) hostSetupSelection_ = 4;
         y += step;
     }
 
     // Back button
     {
         bool sel = (hostSetupSelection_ == 5);
-        SDL_Color c = sel ? white : gray;
-        drawTextCentered(sel ? "> BACK <" : "BACK", y + 4, 20, c);
+        if (ui_.menuItem(5, "BACK", SCREEN_W / 2, y, 200, 32,
+                         UI::Color::White, sel, 20, 22)) {
+            hostSetupSelection_ = 5;
+            confirmInput_ = true;
+        }
+        if (ui_.hoveredItem == 5 && !usingGamepad_) hostSetupSelection_ = 5;
     }
 
-    drawTextCentered("UP/DOWN navigate  LEFT/RIGHT change  A/ENTER confirm", SCREEN_H - 36, 13, {80, 80, 90, 255});
+    { UI::HintPair hints[] = { {UI::Action::Navigate, "Navigate/Adjust"}, {UI::Action::Confirm, "Confirm"} };
+      ui_.drawHintBar(hints, 2); }
 }
 
 void Game::renderJoinMenu() {
+    // ── Background ──
     SDL_SetRenderDrawColor(renderer_, 6, 8, 16, 255);
     SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
     SDL_RenderFillRect(renderer_, &full);
 
-    SDL_Color cyan  = {0, 255, 228, 255};
-    SDL_Color white = {255, 255, 255, 255};
-    SDL_Color gray  = {120, 120, 130, 255};
-    SDL_Color blue  = {80, 200, 255, 255};
-    SDL_Color green = {50, 255, 100, 255};
+    // ── Centered card panel ──
+    int panelW = 480, panelH = 520;
+    int px = (SCREEN_W - panelW) / 2;
+    int py = (SCREEN_H - panelH) / 2 - 10;
+    ui_.drawPanel(px, py, panelW, panelH);
 
-    drawTextCentered("JOIN GAME", SCREEN_H / 6, 34, cyan);
-    SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 60);
-    SDL_Rect tl = {SCREEN_W / 2 - 80, SCREEN_H / 6 + 42, 160, 1};
-    SDL_RenderFillRect(renderer_, &tl);
+    // Title
+    ui_.drawTextCentered("JOIN GAME", py + 22, 30, UI::Color::Cyan);
+    ui_.drawSeparator(SCREEN_W / 2, py + 58, 80);
 
     // Connection status
     auto& net = NetworkManager::instance();
     if (net.state() == NetState::Connecting) {
-        drawTextCentered("Connecting...", SCREEN_H / 3 - 40, 18, {255, 220, 60, 255});
+        ui_.drawTextCentered("Connecting...", py + 70, 16, UI::Color::Yellow);
     } else if (!connectStatus_.empty()) {
-        drawTextCentered(connectStatus_.c_str(), SCREEN_H / 3 - 40, 16, {255, 100, 100, 255});
+        ui_.drawTextCentered(connectStatus_.c_str(), py + 70, 14, UI::Color::Red);
     }
 
-    // IP address display
-    std::string addrDisplay = joinAddress_;
-    if (ipTyping_) {
-        static float blinkTimer = 0;
-        blinkTimer += 0.016f;
-        addrDisplay += ((int)(blinkTimer * 1.5f) % 2 == 0) ? '_' : ' ';
-    }
+    int fieldY = py + 92;
+    int fieldStep = 54;
+    int fieldW = panelW - 60;
+    int fieldX = px + 30;
 
-    // Address box
-    int boxY = SCREEN_H / 2 - 100;
-    SDL_SetRenderDrawColor(renderer_, 20, 22, 35, 255);
-    SDL_Rect addrBox = {SCREEN_W / 2 - 200, boxY - 8, 400, 42};
-    SDL_RenderFillRect(renderer_, &addrBox);
-    SDL_SetRenderDrawColor(renderer_, ipTyping_ ? 0 : 60, ipTyping_ ? 200 : 60, ipTyping_ ? 180 : 80, 180);
-    SDL_RenderDrawRect(renderer_, &addrBox);
-    drawText("Address:", SCREEN_W / 2 - 190, boxY, 20, gray);
-    drawText(addrDisplay.c_str(), SCREEN_W / 2 - 50, boxY, 20, ipTyping_ ? cyan : white);
+    // ── Clickable text input field helper ──
+    auto drawField = [&](int idx, const char* label, const std::string& value, bool editing) {
+        bool sel = (joinMenuSelection_ == idx);
+        int fy = fieldY;
 
-    // Port box
-    {
-        int pBoxY = boxY + 48;
-        std::string pDisp = joinPortTyping_ ? joinPortStr_ : std::to_string(joinPort_);
-        if (joinPortTyping_) {
-            static float pBlink = 0; pBlink += 0.016f;
-            pDisp += ((int)(pBlink * 1.5f) % 2 == 0) ? '_' : ' ';
+        // Field box background
+        SDL_SetRenderDrawColor(renderer_, 16, 18, 30, 255);
+        SDL_Rect box = {fieldX, fy, fieldW, 44};
+        SDL_RenderFillRect(renderer_, &box);
+
+        // Border color — bright when editing, teal when selected, dim otherwise
+        SDL_Color border = editing ? SDL_Color{0, 255, 228, 200} :
+                          sel     ? SDL_Color{0, 140, 130, 180} :
+                                    SDL_Color{40, 44, 60, 160};
+        SDL_SetRenderDrawColor(renderer_, border.r, border.g, border.b, border.a);
+        SDL_RenderDrawRect(renderer_, &box);
+
+        // Left accent when editing
+        if (editing) {
+            SDL_SetRenderDrawColor(renderer_, 0, 255, 228, 200);
+            SDL_Rect acc = {fieldX, fy, 3, 44};
+            SDL_RenderFillRect(renderer_, &acc);
         }
-        SDL_SetRenderDrawColor(renderer_, 20, 22, 35, 255);
-        SDL_Rect pBox = {SCREEN_W / 2 - 200, pBoxY - 8, 400, 42};
-        SDL_RenderFillRect(renderer_, &pBox);
-        SDL_SetRenderDrawColor(renderer_, joinPortTyping_ ? 0 : 60, joinPortTyping_ ? 200 : 60, joinPortTyping_ ? 180 : 80, 180);
-        SDL_RenderDrawRect(renderer_, &pBox);
-        drawText("Port:", SCREEN_W / 2 - 190, pBoxY, 20, gray);
-        drawText(pDisp.c_str(), SCREEN_W / 2 - 50, pBoxY, 20, joinPortTyping_ ? cyan : white);
-    }
 
-    // Username box
-    {
-        int uBoxY = boxY + 96;
-        std::string uDisp = config_.username;
-        if (mpUsernameTyping_) {
-            static float uBlink = 0; uBlink += 0.016f;
-            uDisp += ((int)(uBlink * 1.5f) % 2 == 0) ? '_' : ' ';
+        // Label (small, above the value)
+        ui_.drawText(label, fieldX + 10, fy + 4, 10, UI::Color::Gray);
+
+        // Value with optional cursor blink
+        std::string display = value;
+        if (editing) {
+            display += ((int)(gameTime_ * 3.0f) % 2 == 0) ? '_' : ' ';
         }
-        SDL_SetRenderDrawColor(renderer_, 20, 22, 35, 255);
-        SDL_Rect uBox = {SCREEN_W / 2 - 200, uBoxY - 8, 400, 42};
-        SDL_RenderFillRect(renderer_, &uBox);
-        SDL_SetRenderDrawColor(renderer_, mpUsernameTyping_ ? 0 : 60, mpUsernameTyping_ ? 200 : 60, mpUsernameTyping_ ? 180 : 80, 180);
-        SDL_RenderDrawRect(renderer_, &uBox);
-        drawText("Username:", SCREEN_W / 2 - 190, uBoxY, 20, gray);
-        drawText(uDisp.c_str(), SCREEN_W / 2 - 50, uBoxY, 20, mpUsernameTyping_ ? cyan : white);
+        SDL_Color valC = editing ? UI::Color::Cyan :
+                        (sel ? UI::Color::White : SDL_Color{160, 160, 170, 255});
+        ui_.drawText(display.empty() ? " " : display.c_str(), fieldX + 10, fy + 20, 18, valC);
+
+        // Click detection
+        bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, fieldX, fy, fieldW, 44);
+        if (hovered && !usingGamepad_) { menuSelection_ = idx; joinMenuSelection_ = idx; }
+        if (hovered) ui_.hoveredItem = idx;
+        if (hovered && ui_.mouseClicked) {
+            menuSelection_ = idx; joinMenuSelection_ = idx;
+            confirmInput_ = true;
+        }
+
+        fieldY += fieldStep;
+    };
+
+    // ── Four input fields ──
+    drawField(0, "ADDRESS", joinAddress_, ipTyping_);
+
+    {
+        std::string pStr = joinPortTyping_ ? joinPortStr_ : std::to_string(joinPort_);
+        drawField(1, "PORT", pStr, joinPortTyping_);
     }
 
-    // Password box
+    drawField(2, "USERNAME", config_.username, mpUsernameTyping_);
+
     {
-        int pwBoxY = boxY + 144;
         std::string pwDisp;
-        if (joinPasswordTyping_) {
-            pwDisp = joinPassword_;
-            static float pwBlink = 0; pwBlink += 0.016f;
-            pwDisp += ((int)(pwBlink * 1.5f) % 2 == 0) ? '_' : ' ';
-        } else {
-            pwDisp = joinPassword_.empty() ? "" : std::string(joinPassword_.size(), '*');
-        }
-        SDL_SetRenderDrawColor(renderer_, 20, 22, 35, 255);
-        SDL_Rect pwBox = {SCREEN_W / 2 - 200, pwBoxY - 8, 400, 42};
-        SDL_RenderFillRect(renderer_, &pwBox);
-        SDL_SetRenderDrawColor(renderer_, joinPasswordTyping_ ? 0 : 60, joinPasswordTyping_ ? 200 : 60, joinPasswordTyping_ ? 180 : 80, 180);
-        SDL_RenderDrawRect(renderer_, &pwBox);
-        drawText("Password:", SCREEN_W / 2 - 190, pwBoxY, 20, gray);
-        drawText(pwDisp.empty() ? "(leave blank if no password)" : pwDisp.c_str(), SCREEN_W / 2 - 50, pwBoxY, 20, joinPasswordTyping_ ? cyan : (pwDisp.empty() ? gray : white));
+        if (joinPasswordTyping_) pwDisp = joinPassword_;
+        else if (!joinPassword_.empty()) pwDisp = std::string(joinPassword_.size(), '*');
+        drawField(3, "PASSWORD", pwDisp, joinPasswordTyping_);
     }
 
+    // ── Soft keyboard (gamepad/touch) or action buttons ──
     if (softKB_.active) {
-        renderSoftKB(SCREEN_H / 2 + 10);
+        renderSoftKB(fieldY + 6);
     } else {
-        int btnY = SCREEN_H / 2 + 30;
-        int btnStep = 36;
+        // Action buttons
+        int btnY = fieldY + 8;
 
-        // Edit address
-        {
-            bool sel = (joinMenuSelection_ == 0);
-            drawTextCentered(sel ? "> EDIT ADDRESS <" : "EDIT ADDRESS", btnY, sel ? 22 : 20, sel ? blue : gray);
-            btnY += btnStep;
+        if (ui_.menuItem(4, "CONNECT", SCREEN_W / 2, btnY, fieldW, 42,
+                         UI::Color::Green, joinMenuSelection_ == 4, 22, 26)) {
+            menuSelection_ = 4; joinMenuSelection_ = 4;
+            confirmInput_ = true;
         }
-        // Edit port
-        {
-            bool sel = (joinMenuSelection_ == 1);
-            char pBuf[64];
-            snprintf(pBuf, sizeof(pBuf), sel ? "> PORT: %d <" : "PORT: %d", joinPort_);
-            drawTextCentered(pBuf, btnY, sel ? 22 : 20, sel ? cyan : gray);
-            btnY += btnStep;
+        if (ui_.hoveredItem == 4 && !usingGamepad_) { menuSelection_ = 4; joinMenuSelection_ = 4; }
+        btnY += 48;
+
+        if (ui_.menuItem(5, "SAVE SERVER", SCREEN_W / 2, btnY, fieldW, 34,
+                         {0, 200, 180, 255}, joinMenuSelection_ == 5, 18, 20)) {
+            menuSelection_ = 5; joinMenuSelection_ = 5;
+            confirmInput_ = true;
         }
-        // Edit username
-        {
-            bool sel = (joinMenuSelection_ == 2);
-            char uBuf[128];
-            snprintf(uBuf, sizeof(uBuf), sel ? "> USERNAME: %s <" : "USERNAME: %s", config_.username.c_str());
-            drawTextCentered(uBuf, btnY, sel ? 22 : 20, sel ? cyan : gray);
-            btnY += btnStep;
+        if (ui_.hoveredItem == 5 && !usingGamepad_) { menuSelection_ = 5; joinMenuSelection_ = 5; }
+        btnY += 40;
+
+        if (ui_.menuItem(6, "BACK", SCREEN_W / 2, btnY, 200, 32,
+                         UI::Color::Red, joinMenuSelection_ == 6, 18, 20)) {
+            menuSelection_ = 6; joinMenuSelection_ = 6;
+            confirmInput_ = true;
         }
-        // Edit password
-        {
-            bool sel = (joinMenuSelection_ == 3);
-            std::string pwDisplay = joinPassword_.empty() ? "" : std::string(joinPassword_.size(), '*');
-            char pwBuf[128];
-            snprintf(pwBuf, sizeof(pwBuf), sel ? "> PASSWORD: %s <" : "PASSWORD: %s",
-                     pwDisplay.empty() ? "(none)" : pwDisplay.c_str());
-            drawTextCentered(pwBuf, btnY, sel ? 22 : 20, sel ? cyan : gray);
-            btnY += btnStep;
-        }
-        // Connect
-        {
-            bool sel = (joinMenuSelection_ == 4);
-            drawTextCentered(sel ? "> CONNECT <" : "CONNECT", btnY, sel ? 24 : 20, sel ? green : gray);
-            btnY += btnStep;
-        }
-        // Save server
-        {
-            bool sel = (joinMenuSelection_ == 5);
-            SDL_Color saveColor = {0, 200, 180, 255};
-            drawTextCentered(sel ? "> SAVE SERVER <" : "SAVE SERVER", btnY, sel ? 22 : 18, sel ? saveColor : gray);
-            btnY += btnStep;
-        }
-        // Back
-        {
-            bool sel = (joinMenuSelection_ == 6);
-            drawTextCentered(sel ? "> BACK <" : "BACK", btnY, 20, sel ? white : gray);
-        }
-        drawTextCentered("A / ENTER - Select    B / ESC - Back", SCREEN_H - 40, 13, {80, 80, 90, 255});
+        if (ui_.hoveredItem == 6 && !usingGamepad_) { menuSelection_ = 6; joinMenuSelection_ = 6; }
+
+        UI::HintPair hints[] = { {UI::Action::Confirm, "Select"}, {UI::Action::Navigate, "Navigate"}, {UI::Action::Back, "Back"} };
+        ui_.drawHintBar(hints, 3);
     }
 }
 
@@ -8519,7 +8791,8 @@ void Game::renderLobby() {
         SDL_Rect fgBar = {bx, by, (int)(barW * prog), barH};
         SDL_RenderFillRect(renderer_, &fgBar);
 
-        drawTextCentered("B / ESC - Cancel", SCREEN_H - 40, 13, {80, 80, 90, 255});
+        { UI::HintPair hints[] = { {UI::Action::Back, "Cancel"} };
+          ui_.drawHintBar(hints, 1, SCREEN_H - 40); }
         return;
     }
 
@@ -8558,6 +8831,18 @@ void Game::renderLobby() {
         auto drawSettingRow = [&](int idx, const char* label, const char* value, SDL_Color valColor = {255,255,255,255}) {
             bool sel = isHostPlayer && (lobbySettingsSel_ == idx);
             SDL_Color lc = sel ? white : gray;
+
+            // Click detection (host only)
+            if (isHostPlayer) {
+                bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, panelX - 4, rowY - 2, panelW + 8, rowStep - 2);
+                if (hovered) ui_.hoveredItem = 100 + idx;
+                if (hovered && !usingGamepad_) { lobbySettingsSel_ = idx; menuSelection_ = idx; }
+                if (hovered && ui_.mouseClicked) {
+                    lobbySettingsSel_ = idx; menuSelection_ = idx;
+                    confirmInput_ = true;
+                }
+            }
+
             if (sel) {
                 // Highlight row
                 SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 25);
@@ -8647,22 +8932,40 @@ void Game::renderLobby() {
             }
         }
 
-        // 6: Enemy HP
+        // 6: Enemy HP (greyed out in PVP)
         {
             char v[16]; snprintf(v, sizeof(v), "%.1fx", lobbySettings_.enemyHpScale);
-            drawSettingRow(6, "Enemy HP:", v);
+            if (lobbySettings_.isPvp) {
+                char buf[128]; snprintf(buf, sizeof(buf), "Enemy HP:  %s", v);
+                drawText(buf, panelX + 4, rowY, 14, SDL_Color{55,55,65,255});
+                rowY += rowStep;
+            } else {
+                drawSettingRow(6, "Enemy HP:", v);
+            }
         }
 
-        // 7: Enemy speed
+        // 7: Enemy speed (greyed out in PVP)
         {
             char v[16]; snprintf(v, sizeof(v), "%.1fx", lobbySettings_.enemySpeedScale);
-            drawSettingRow(7, "Enemy Speed:", v);
+            if (lobbySettings_.isPvp) {
+                char buf[128]; snprintf(buf, sizeof(buf), "Enemy Speed:  %s", v);
+                drawText(buf, panelX + 4, rowY, 14, SDL_Color{55,55,65,255});
+                rowY += rowStep;
+            } else {
+                drawSettingRow(7, "Enemy Speed:", v);
+            }
         }
 
-        // 8: Spawn rate
+        // 8: Spawn rate (greyed out in PVP)
         {
             char v[16]; snprintf(v, sizeof(v), "%.1fx", lobbySettings_.spawnRateScale);
-            drawSettingRow(8, "Spawn Rate:", v);
+            if (lobbySettings_.isPvp) {
+                char buf[128]; snprintf(buf, sizeof(buf), "Spawn Rate:  %s", v);
+                drawText(buf, panelX + 4, rowY, 14, SDL_Color{55,55,65,255});
+                rowY += rowStep;
+            } else {
+                drawSettingRow(8, "Spawn Rate:", v);
+            }
         }
 
         // 9: Player HP
@@ -8826,16 +9129,23 @@ void Game::renderLobby() {
         bool allReady = true;
         for (auto& p : players) { if (!p.ready && p.id != 0) allReady = false; }
         SDL_Color startC = allReady ? green : dimGrn;
-        drawTextCentered("> START GAME <", btnY, 24, startC);
+        if (ui_.menuItem(50, "START GAME", SCREEN_W / 2, btnY, 300, 36,
+                         startC, true, 22, 26)) {
+            confirmInput_ = true;
+        }
         if (!allReady && players.size() > 1) {
             drawTextCentered("Waiting for players to ready up...", btnY + 30, 13, gray);
         }
     } else {
-        const char* rdyLabel = lobbyReady_ ? "> READY! <" : "> READY UP <";
-        drawTextCentered(rdyLabel, btnY, 24, lobbyReady_ ? green : white);
+        const char* rdyLabel = lobbyReady_ ? "READY!" : "READY UP";
+        SDL_Color rdyC = lobbyReady_ ? green : white;
+        if (ui_.menuItem(50, rdyLabel, SCREEN_W / 2, btnY, 300, 36,
+                         rdyC, true, 22, 26)) {
+            confirmInput_ = true;
+        }
     }
-    drawTextCentered("B / ESC - Leave    UP/DOWN navigate    LEFT/RIGHT adjust",
-                     SCREEN_H - 40, 13, {80, 80, 90, 255});
+    { UI::HintPair hints[] = { {UI::Action::Back, "Leave"}, {UI::Action::Navigate, "Navigate/Adjust"} };
+      ui_.drawHintBar(hints, 2, SCREEN_H - 40); }
     if (net.isHost()) {
         const char* kickHintStr = isHostInKickMode
             ? "[Y/TAB] Exit kick mode    [A] Kick    [X] Ban    [B] Cancel"
@@ -8864,7 +9174,14 @@ void Game::renderMultiplayerHUD() {
         Vec2 sp = camera_.worldToScreen(rp.pos);
         if (sp.x < -50 || sp.x > SCREEN_W + 50 || sp.y < -50 || sp.y > SCREEN_H + 50) continue;
 
-        // Name tag — draw at world position; team-colored if team assigned
+        // Health bar — drawn first so name tag renders on top
+        float barW = 40.0f;
+        float barH = 4.0f;
+        float hpRatio = (rp.maxHp > 0) ? (float)rp.hp / rp.maxHp : 0;
+        SDL_FRect bgBar = {sp.x - barW / 2, sp.y - 28, barW, barH};
+        SDL_FRect fgBar = {sp.x - barW / 2, sp.y - 28, barW * hpRatio, barH};
+
+        // Name tag — above the HP bar
         {
             // Team colors for name tags
             static const SDL_Color teamNameColors[4] = {
@@ -8878,7 +9195,8 @@ void Game::renderMultiplayerHUD() {
                 SDL_Surface* ns = TTF_RenderText_Blended(nf, rp.username.c_str(), nameColor);
                 if (ns) {
                     SDL_Texture* nt = SDL_CreateTextureFromSurface(renderer_, ns);
-                    SDL_Rect nd = {(int)sp.x - ns->w / 2, (int)sp.y - 40, ns->w, ns->h};
+                    // Name sits 6px above the HP bar
+                    SDL_Rect nd = {(int)sp.x - ns->w / 2, (int)sp.y - 46, ns->w, ns->h};
                     SDL_RenderCopy(renderer_, nt, nullptr, &nd);
                     SDL_DestroyTexture(nt);
                     SDL_FreeSurface(ns);
@@ -8886,12 +9204,6 @@ void Game::renderMultiplayerHUD() {
             }
         }
 
-        // Health bar
-        float barW = 40.0f;
-        float barH = 4.0f;
-        float hpRatio = (rp.maxHp > 0) ? (float)rp.hp / rp.maxHp : 0;
-        SDL_FRect bgBar = {sp.x - barW / 2, sp.y - 32, barW, barH};
-        SDL_FRect fgBar = {sp.x - barW / 2, sp.y - 32, barW * hpRatio, barH};
         SDL_SetRenderDrawColor(renderer_, 40, 40, 40, 180);
         SDL_RenderFillRectF(renderer_, &bgBar);
         Uint8 hr = (Uint8)(255 * (1.0f - hpRatio));
@@ -8973,22 +9285,28 @@ void Game::renderMultiplayerPause() {
     SDL_Color gold  = {255, 200, 60, 255};
 
     // Build the item list dynamically
-    struct MenuItem { const char* label; SDL_Color col; int idx; };
-    MenuItem items[6];
+    struct MenuItem { const char* label; SDL_Color col; int idx; bool isVolume; };
+    char musBuf[64]; snprintf(musBuf, sizeof(musBuf), "Music: %d%%", config_.musicVolume * 100 / 128);
+    char sfxBuf2[64]; snprintf(sfxBuf2, sizeof(sfxBuf2), "SFX: %d%%", config_.sfxVolume * 100 / 128);
+
+    MenuItem items[10];
     int itemCount = 0;
 
-    items[itemCount++] = { "RESUME",      white, 0 };
-    if (hasTeams)     items[itemCount++] = { "CHANGE TEAM",  gold,  1 };
-    if (isHostPlayer) items[itemCount++] = { "ADMIN",        cyan,  hasTeams ? 2 : 1 };
+    items[itemCount++] = { "RESUME",      white, 0, false };
+    items[itemCount++] = { musBuf,        cyan,  1, true };
+    items[itemCount++] = { sfxBuf2,       cyan,  2, true };
+    if (hasTeams)     items[itemCount++] = { "CHANGE TEAM",  gold,  3, false };
+    if (isHostPlayer) items[itemCount++] = { "ADMIN",        cyan,  hasTeams ? 4 : 3, false };
     if (isHostPlayer) {
-        int egIdx = itemCount;
-        items[itemCount++] = { "END GAME",    (SDL_Color){255, 160, 60, 255}, egIdx };
+        int egIdx = 3 + (hasTeams ? 1 : 0) + 1;
+        items[itemCount++] = { "END GAME",    (SDL_Color){255, 160, 60, 255}, egIdx, false };
     }
     int dcIdx = -1;
     if (!isHostPlayer) {
-        dcIdx = itemCount;
+        dcIdx = 3 + (hasTeams ? 1 : 0) + (isHostPlayer ? 1 : 0);
+        if (isHostPlayer) dcIdx++; // after End Game
         const char* dcLabel = spectatorMode_ ? "BACK TO LOBBY" : "DISCONNECT";
-        items[itemCount++] = { dcLabel, red, dcIdx };
+        items[itemCount++] = { dcLabel, red, dcIdx, false };
     }
 
     int panelW = 380;
@@ -9045,25 +9363,20 @@ void Game::renderMultiplayerPause() {
     int itemY = py + 80;
     for (int i = 0; i < itemCount; i++) {
         bool sel = (menuSelection_ == items[i].idx);
-        if (sel) {
-            SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 40);
-            SDL_Rect bar = {px + 20, itemY - 4, panelW - 40, 32};
-            SDL_RenderFillRect(renderer_, &bar);
-            SDL_SetRenderDrawColor(renderer_, items[i].col.r, items[i].col.g, items[i].col.b, 200);
-            SDL_Rect acc = {px + 20, itemY - 4, 3, 32};
-            SDL_RenderFillRect(renderer_, &acc);
+        const char* displayLabel = items[i].label;
+        char tmp[80];
+        if (sel && items[i].isVolume) {
+            snprintf(tmp, sizeof(tmp), "< %s >", items[i].label);
+            displayLabel = tmp;
         }
-        drawTextCentered(items[i].label, itemY, 22, sel ? items[i].col : gray);
+        if (ui_.menuItem(items[i].idx, displayLabel, SCREEN_W / 2, itemY, panelW - 40, 32,
+                         items[i].col, sel, 20, 22)) {
+            menuSelection_ = items[i].idx;
+            confirmInput_ = true;
+        }
+        if (ui_.hoveredItem == items[i].idx && !usingGamepad_) menuSelection_ = items[i].idx;
         itemY += 50;
     }
-
-    // Volume hint
-    int volY = py + panelH - 28;
-    char sfxBuf[64], musBuf[64];
-    snprintf(sfxBuf, sizeof(sfxBuf), "SFX: %d%%", config_.sfxVolume * 100 / 128);
-    snprintf(musBuf, sizeof(musBuf), "Music: %d%%", config_.musicVolume * 100 / 128);
-    drawText(sfxBuf, px + 40, volY, 13, {70, 70, 80, 255});
-    drawText(musBuf, px + 210, volY, 13, {70, 70, 80, 255});
 
     // Admin overlay on top
     if (adminMenuOpen_) {
@@ -9110,7 +9423,11 @@ void Game::renderAdminMenu() {
         const NetPlayer& np = players[i];
         bool rowSel = (adminMenuSel_ == i);
 
-        if (rowSel) {
+        // Row click → select player
+        bool rowHovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, px + 10, rowY - 2, panelW - 20, 38);
+        if (rowHovered && !usingGamepad_) adminMenuSel_ = i;
+
+        if (rowSel || rowHovered) {
             SDL_SetRenderDrawColor(renderer_, 200, 100, 0, 30);
             SDL_Rect bar = {px + 10, rowY - 2, panelW - 20, 38};
             SDL_RenderFillRect(renderer_, &bar);
@@ -9124,11 +9441,19 @@ void Game::renderAdminMenu() {
         int actX = px + panelW - 220;
         for (int a = 0; a < 4; a++) {
             bool actSel = rowSel && (adminMenuAction_ == a);
+            // Click support for action buttons
+            SDL_Rect btn = {actX + a * 50, rowY + 4, 44, 26};
+            bool btnHovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, btn.x, btn.y, btn.w, btn.h);
+            if (btnHovered && !usingGamepad_) { adminMenuSel_ = i; adminMenuAction_ = a; actSel = true; }
+            if (btnHovered) ui_.hoveredItem = 40 + i * 4 + a;
+            if (btnHovered && ui_.mouseClicked) {
+                adminMenuSel_ = i; adminMenuAction_ = a;
+                confirmInput_ = true;
+            }
             SDL_SetRenderDrawColor(renderer_,
                 actSel ? actionColors[a].r : 30,
                 actSel ? actionColors[a].g : 30,
                 actSel ? actionColors[a].b : 35, 200);
-            SDL_Rect btn = {actX + a * 50, rowY + 4, 44, 26};
             SDL_RenderFillRect(renderer_, &btn);
             SDL_SetRenderDrawColor(renderer_, actionColors[a].r, actionColors[a].g, actionColors[a].b, actSel ? 255 : 80);
             SDL_RenderDrawRect(renderer_, &btn);
@@ -9137,7 +9462,8 @@ void Game::renderAdminMenu() {
         rowY += 44;
     }
 
-    drawTextCentered("[↑↓] Player  [←→] Action  [A] Confirm  [B] Close", py + panelH - 28, 13, gray);
+    { UI::HintPair hints[] = { {UI::Action::Navigate, "Player/Action"}, {UI::Action::Confirm, "Confirm"}, {UI::Action::Back, "Close"} };
+      ui_.drawHintBar(hints, 3, py + panelH - 28); }
 }
 
 void Game::renderMultiplayerDeath() {
@@ -9190,7 +9516,10 @@ void Game::renderMultiplayerDeath() {
         SDL_Rect fgBar = {bx, by, (int)(barW * progress), barH};
         SDL_RenderFillRect(renderer_, &fgBar);
     } else {
-        drawTextCentered("Press A / ENTER to respawn", SCREEN_H / 2 + 10, 20, cyan);
+        if (ui_.menuItem(0, "Respawn", SCREEN_W / 2, SCREEN_H / 2 + 10, 200, 32,
+                         cyan, true, 18, 22)) {
+            confirmInput_ = true;
+        }
     }
 
     // Stats
@@ -9322,8 +9651,11 @@ void Game::renderWinLoss() {
         (void)netR;
     }
 
-    // Hint
-    drawTextCentered("ENTER / A  \xe2\x80\x94  View full scoreboard", SCREEN_H - 44, 14, gray);
+    // Hint — clickable button
+    if (ui_.menuItem(0, "View Full Scoreboard", SCREEN_W / 2, SCREEN_H - 44, 300, 32,
+                     gray, true, 14, 16)) {
+        confirmInput_ = true;
+    }
     SDL_Color hintLine = isWin ? SDL_Color{50, 200, 80, 100} : SDL_Color{200, 60, 60, 100};
     SDL_SetRenderDrawColor(renderer_, hintLine.r, hintLine.g, hintLine.b, hintLine.a);
     SDL_Rect hintBar = {0, SCREEN_H - 52, SCREEN_W, 2};
@@ -9407,7 +9739,10 @@ void Game::renderScoreboard() {
         y += 32;
     }
 
-    drawTextCentered("ENTER / A - Continue", SCREEN_H - 50, 14, {80, 80, 90, 255});
+    if (ui_.menuItem(0, "Continue", SCREEN_W / 2, SCREEN_H - 50, 200, 32,
+                     {80, 80, 90, 255}, true, 14, 16)) {
+        confirmInput_ = true;
+    }
 }
 
 void Game::renderRemotePlayers() {
@@ -9521,6 +9856,17 @@ void Game::renderTeamSelect() {
         SDL_Rect box = {bx, boxY, boxW, boxH};
         SDL_RenderFillRect(renderer_, &box);
 
+        // Click detection on team box
+        if (!teamLocked_) {
+            bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, bx, boxY, boxW, boxH);
+            if (hovered) ui_.hoveredItem = t;
+            if (hovered && !usingGamepad_) teamSelectCursor_ = t;
+            if (hovered && ui_.mouseClicked) {
+                teamSelectCursor_ = t;
+                confirmInput_ = true;
+            }
+        }
+
         // Border
         if (selected || locked) {
             SDL_SetRenderDrawColor(renderer_, tc2.r, tc2.g, tc2.b, 255);
@@ -9571,7 +9917,8 @@ void Game::renderTeamSelect() {
     if (teamLocked_) {
         drawTextCentered("Waiting for all players to choose...", SCREEN_H - 80, 18, gray);
     } else {
-        drawTextCentered("LEFT/RIGHT - Choose    A/ENTER - Lock In    B/ESC - Back", SCREEN_H - 80, 14, gray);
+        { UI::HintPair hints[] = { {UI::Action::Left, "Choose"}, {UI::Action::Confirm, "Lock In"}, {UI::Action::Back, "Back"} };
+          ui_.drawHintBar(hints, 3, SCREEN_H - 80); }
     }
 
     // Show how many have chosen
@@ -9632,6 +9979,14 @@ void Game::renderModMenu() {
             SDL_RenderFillRect(renderer_, &tabLine);
         }
 
+        // Tab click support
+        if (ui_.pointInRect(ui_.mouseX, ui_.mouseY, tx, tabY - 6, tabW, 32)) {
+            if (ui_.mouseClicked && !usingGamepad_) {
+                modMenuTab_ = t;
+                modMenuSelection_ = 0;
+            }
+        }
+
         // Tab label (centered in tab)
         int labelW = (int)strlen(tabNames[t]) * 8;
         drawText(tabNames[t], tx + (tabW - labelW) / 2, tabY, active ? 16 : 14,
@@ -9658,6 +10013,15 @@ void Game::renderModMenu() {
                 auto& mod = mods[i];
                 int y = baseY + (i - scrollOff) * stepY;
                 bool sel = (i == modMenuSelection_);
+
+                // Click detection
+                bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, 60, y - 6, SCREEN_W - 120, stepY - 4);
+                if (hovered && !usingGamepad_) { modMenuSelection_ = i; sel = true; }
+                if (hovered) ui_.hoveredItem = i % 60;
+                if (hovered && ui_.mouseClicked) {
+                    modMenuSelection_ = i;
+                    confirmInput_ = true;
+                }
 
                 // Card background
                 if (sel) {
@@ -9719,13 +10083,14 @@ void Game::renderModMenu() {
         // Bottom
         int backY = SCREEN_H - 70;
         bool backSel = (modMenuSelection_ >= (int)mods.size());
-        if (backSel) {
-            SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 30);
-            SDL_Rect bar = {SCREEN_W / 2 - 60, backY - 4, 120, 28};
-            SDL_RenderFillRect(renderer_, &bar);
+        if (ui_.menuItem(62, "BACK", SCREEN_W / 2, backY, 160, 28,
+                         UI::Color::White, backSel, 18, 20)) {
+            modMenuSelection_ = (int)mods.size();
+            confirmInput_ = true;
         }
-        drawTextCentered("BACK", backY, 20, backSel ? white : dimGray);
-        drawTextCentered("A / ENTER toggle   B / ESC back", SCREEN_H - 36, 12, {60, 60, 70, 255});
+        if (ui_.hoveredItem == 62 && !usingGamepad_) modMenuSelection_ = (int)mods.size();
+        { UI::HintPair hints[] = { {UI::Action::Confirm, "Toggle"}, {UI::Action::Back, "Back"} };
+          ui_.drawHintBar(hints, 2); }
     }
     else {
         // ════ Content tabs (Characters / Maps / Playlists) ════
@@ -9751,6 +10116,15 @@ void Game::renderModMenu() {
             for (int i = scrollOff; i < (int)paths.size() && (i - scrollOff) < maxVisible; i++) {
                 int y = baseY + (i - scrollOff) * stepY;
                 bool sel = (i == modMenuSelection_);
+
+                // Click detection
+                bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, 80, y - 4, SCREEN_W - 160, stepY - 8);
+                if (hovered && !usingGamepad_) { modMenuSelection_ = i; sel = true; }
+                if (hovered) ui_.hoveredItem = i % 60;
+                if (hovered && ui_.mouseClicked) {
+                    modMenuSelection_ = i;
+                    confirmInput_ = true;
+                }
 
                 if (sel) {
                     SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 25);
@@ -9789,12 +10163,13 @@ void Game::renderModMenu() {
 
         int backY = SCREEN_H - 70;
         bool backSel = (modMenuSelection_ >= (int)paths.size());
-        if (backSel) {
-            SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 30);
-            SDL_Rect bar = {SCREEN_W / 2 - 60, backY - 4, 120, 28};
-            SDL_RenderFillRect(renderer_, &bar);
+        if (ui_.menuItem(62, "BACK", SCREEN_W / 2, backY, 160, 28,
+                         UI::Color::White, backSel, 18, 20)) {
+            modMenuSelection_ = (int)paths.size();
+            confirmInput_ = true;
         }
-        drawTextCentered("BACK", backY, 20, backSel ? white : dimGray);
-        drawTextCentered("B / ESC back", SCREEN_H - 36, 12, {60, 60, 70, 255});
+        if (ui_.hoveredItem == 62 && !usingGamepad_) modMenuSelection_ = (int)paths.size();
+        { UI::HintPair hints[] = { {UI::Action::Back, "Back"} };
+          ui_.drawHintBar(hints, 1, SCREEN_H - 36); }
     }
 }
