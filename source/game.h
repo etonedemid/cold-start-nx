@@ -66,6 +66,11 @@ enum class GameState {
     SpriteEditor,    // Pixel art / sprite editor
     // ── Mod management ──
     ModMenu,         // Enable/disable mods
+    // ── Local Co-op (splitscreen, up to 4 players) ──
+    LocalCoopLobby,  // players join by pressing a button
+    LocalCoopGame,   // active splitscreen game
+    LocalCoopPaused, // paused from splitscreen
+    LocalCoopDead,   // all local players dead
 };
 
 struct GameConfig {
@@ -101,6 +106,26 @@ struct BoxFragment {
     float age = 0;
     bool  alive = true;
     SDL_Color color;
+};
+
+// ── Per-player slot for local co-op splitscreen ────────────────────────────
+struct CoopSlot {
+    bool   joined       = false;
+    // Input device: -1 = keyboard+mouse, >=0 = SDL joystick instance ID
+    SDL_JoystickID joyInstanceId = -1;
+    std::string username;
+    Player player;
+    Camera camera;
+    PlayerUpgrades upgrades;
+    int    kills  = 0;
+    int    deaths = 0;
+    // Per-frame input
+    Vec2  moveInput  = {};
+    Vec2  aimInput   = {};
+    bool  fireInput  = false;
+    bool  bombInput  = false;
+    bool  parryInput = false;
+    bool  pauseInput = false;
 };
 
 // ── Mod-save dialog state ────────────────────────────────────────────────────
@@ -239,8 +264,14 @@ private:
         int   gpCharIdx = 0;        // gamepad char palette index
     } charCreator_;
 
+    // ── Local Co-op ──
+    CoopSlot coopSlots_[4];
+    int      coopPlayerCount_ = 0;
+    bool     coopIsPvp_       = false; // true = local PvP, false = co-op vs enemies
+    int      coopMapMode_     = 0;     // 0=generated, 1=map file, 2=pack
+
     // ── Play Mode Menu ──
-    int playModeSelection_ = 0;   // 0=Generated,1=Map,2=Pack,3-8=sliders,9=Back
+    int playModeSelection_ = 0;   // 0=Generated,1=Map,2=Pack,3=LocalCoop,4-9=sliders,10=Back
     GameState prevMenuState_ = GameState::MainMenu; // for back nav in MapSelect/PackSelect
 
     // ── Map file browser ──
@@ -279,11 +310,16 @@ private:
     std::vector<SDL_Texture*> bombSprites_;
     SDL_Texture* enemySprite_   = nullptr;
     SDL_Texture* shooterSprite_ = nullptr;
+    SDL_Texture* bruteSprite_   = nullptr;
+    SDL_Texture* scoutSprite_   = nullptr;
+    SDL_Texture* sniperSprite_  = nullptr;
+    SDL_Texture* gunnerSprite_  = nullptr;
     SDL_Texture* bulletSprite_  = nullptr;
     SDL_Texture* enemyBulletSprite_ = nullptr;
     SDL_Texture* shieldSprite_  = nullptr;
     SDL_Texture* mainmenuBg_   = nullptr;
     SDL_Texture* bloodTex_     = nullptr;
+    SDL_Texture* scorchTex_    = nullptr;
     SDL_Texture* floorTex_     = nullptr;
     SDL_Texture* grassTex_     = nullptr;
     SDL_Texture* gravelTex_    = nullptr;
@@ -302,8 +338,9 @@ private:
     SDL_Texture* customTileTextures_[8] = {nullptr};
 
     // ── SFX ──
-    Mix_Chunk* sfxShoot_    = nullptr;
-    Mix_Chunk* sfxEnemyShoot_ = nullptr;
+    Mix_Chunk* sfxShoot_        = nullptr;
+    Mix_Chunk* sfxEnemyShoot_   = nullptr;
+    Mix_Chunk* sfxEnemyExplode_ = nullptr;
     Mix_Chunk* sfxReload_   = nullptr;
     Mix_Chunk* sfxHurt_     = nullptr;
     Mix_Chunk* sfxDeath_    = nullptr;
@@ -312,8 +349,9 @@ private:
     Mix_Chunk* sfxSwoosh_   = nullptr;
     Mix_Chunk* sfxBeep_     = nullptr;
     Mix_Chunk* sfxPress_    = nullptr;
-    Mix_Music* bgMusic_     = nullptr;
-    Mix_Music* menuMusic_   = nullptr;
+    Mix_Music* bgMusic_        = nullptr;
+    Mix_Music* menuMusic_      = nullptr;
+    Mix_Music* customMapMusic_ = nullptr;  // per-map music loaded at runtime
 
     // ── Methods ──
     void loadAssets();
@@ -342,7 +380,7 @@ private:
 
     // Combat
     void spawnBullet(Vec2 pos, float angle);
-    void spawnEnemyBullet(Vec2 pos, Vec2 target);
+    void spawnEnemyBullet(Vec2 pos, Vec2 target, float angleOffset = 0.0f);
     void spawnExplosion(Vec2 pos, uint8_t ownerId = 255);
     void spawnBomb();
     Vec2 pickSpawnPos();  // team-corner or random spawn (multiplayer)
@@ -352,17 +390,29 @@ private:
     void destroyBox(int tx, int ty);
     void updateBoxFragments(float dt);
     void playMenuMusic();
+    // Start map-specific music (resolves trackPath relative to folder, falls back to bgMusic_)
+    void playMapMusic(const std::string& folder, const std::string& trackPath);
+
+    // ── Local Co-op ──
+    void renderLocalCoopLobby();
+    void startLocalCoopGame();
+    void updateLocalCoopPlayers(float dt);
+    void handleLocalCoopInput();
+    void renderLocalCoopGame();
+    SDL_Rect coopViewport(int slotIdx, int playerCount) const;
 
     // Rendering helpers
     void renderSprite(SDL_Texture* tex, Vec2 worldPos, float angle, float scale = 1.0f);
     void renderSpriteEx(SDL_Texture* tex, Vec2 worldPos, float angle, float scale, SDL_Color tint);
     void renderExplosionPixelated(const Explosion& ex);
+    SDL_Texture* enemySpriteTex(EnemyType t) const;
     void renderMap();
     void renderWallOverlay();
     void renderDecals();
     void renderRoofOverlay();
     void renderShadingPass();
     void renderUI();
+    void renderMinimap();
     void renderMainMenu();
     void renderPlayModeMenu();
     void renderConfigMenu();

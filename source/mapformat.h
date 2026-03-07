@@ -50,7 +50,7 @@ struct MapTrigger {
 
 struct EnemySpawn {
     float x, y;          // tile position (converted to world on load)
-    uint8_t enemyType;   // 0=Melee, 1=Shooter
+    uint8_t enemyType;   // 0=Melee, 1=Shooter, 2=Crate, 3=Upgrade, 4=Brute, 5=Scout, 6=Sniper, 7=Gunner
     uint8_t waveGroup;   // which wave this enemy belongs to (0 = immediate)
     uint8_t reserved[2];
 };
@@ -79,6 +79,7 @@ struct CustomMap {
     std::string name;
     std::string creator;
     uint8_t gameMode = 0;  // 0=Arena, 1=Sandbox
+    std::string musicPath;   // optional music filename relative to map folder (empty = default)
     // Texture paths for TILE_CUSTOM_0..7 (empty = not used)
     std::string customTilePaths[8];
 

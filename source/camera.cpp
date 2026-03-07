@@ -8,24 +8,24 @@ static float randf() { return (float)rand() / RAND_MAX * 2.0f - 1.0f; }
 void Camera::update(Vec2 target, Vec2 aimDir, float dt) {
     // Target is player pos offset toward aim direction
     Vec2 desired = target + aimDir * CAM_OFFSET;
-    desired.x -= SCREEN_W / 2.0f;
-    desired.y -= SCREEN_H / 2.0f;
+    desired.x -= viewW / 2.0f;
+    desired.y -= viewH / 2.0f;
 
     // Smooth damp
     pos = Vec2::lerp(pos, desired, dt / CAM_SMOOTH);
 
     // Clamp to world bounds (use dynamic world size)
-    if (worldW > SCREEN_W) {
+    if (worldW > viewW) {
         if (pos.x < 0) pos.x = 0;
-        if (pos.x > worldW - SCREEN_W) pos.x = worldW - SCREEN_W;
+        if (pos.x > worldW - viewW) pos.x = worldW - viewW;
     } else {
-        pos.x = -(SCREEN_W - worldW) / 2.0f;
+        pos.x = -(viewW - worldW) / 2.0f;
     }
-    if (worldH > SCREEN_H) {
+    if (worldH > viewH) {
         if (pos.y < 0) pos.y = 0;
-        if (pos.y > worldH - SCREEN_H) pos.y = worldH - SCREEN_H;
+        if (pos.y > worldH - viewH) pos.y = worldH - viewH;
     } else {
-        pos.y = -(SCREEN_H - worldH) / 2.0f;
+        pos.y = -(viewH - worldH) / 2.0f;
     }
 
     // Shake
