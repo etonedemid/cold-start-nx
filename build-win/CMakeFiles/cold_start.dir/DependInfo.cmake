@@ -8,6 +8,14 @@ set(CMAKE_DEPENDS_LANGUAGES
 
 # The set of dependency files which are needed:
 set(CMAKE_DEPENDS_DEPENDENCY_FILES
+  "/home/etonedemid/topdown-nx/cold_start/source/enet/callbacks.c" "CMakeFiles/cold_start.dir/source/enet/callbacks.c.obj" "gcc" "CMakeFiles/cold_start.dir/source/enet/callbacks.c.obj.d"
+  "/home/etonedemid/topdown-nx/cold_start/source/enet/compress.c" "CMakeFiles/cold_start.dir/source/enet/compress.c.obj" "gcc" "CMakeFiles/cold_start.dir/source/enet/compress.c.obj.d"
+  "/home/etonedemid/topdown-nx/cold_start/source/enet/host.c" "CMakeFiles/cold_start.dir/source/enet/host.c.obj" "gcc" "CMakeFiles/cold_start.dir/source/enet/host.c.obj.d"
+  "/home/etonedemid/topdown-nx/cold_start/source/enet/list.c" "CMakeFiles/cold_start.dir/source/enet/list.c.obj" "gcc" "CMakeFiles/cold_start.dir/source/enet/list.c.obj.d"
+  "/home/etonedemid/topdown-nx/cold_start/source/enet/packet.c" "CMakeFiles/cold_start.dir/source/enet/packet.c.obj" "gcc" "CMakeFiles/cold_start.dir/source/enet/packet.c.obj.d"
+  "/home/etonedemid/topdown-nx/cold_start/source/enet/peer.c" "CMakeFiles/cold_start.dir/source/enet/peer.c.obj" "gcc" "CMakeFiles/cold_start.dir/source/enet/peer.c.obj.d"
+  "/home/etonedemid/topdown-nx/cold_start/source/enet/protocol.c" "CMakeFiles/cold_start.dir/source/enet/protocol.c.obj" "gcc" "CMakeFiles/cold_start.dir/source/enet/protocol.c.obj.d"
+  "/home/etonedemid/topdown-nx/cold_start/source/enet/win32.c" "CMakeFiles/cold_start.dir/source/enet/win32.c.obj" "gcc" "CMakeFiles/cold_start.dir/source/enet/win32.c.obj.d"
   "/home/etonedemid/topdown-nx/cold_start/source/assets.cpp" "CMakeFiles/cold_start.dir/source/assets.cpp.obj" "gcc" "CMakeFiles/cold_start.dir/source/assets.cpp.obj.d"
   "/home/etonedemid/topdown-nx/cold_start/source/camera.cpp" "CMakeFiles/cold_start.dir/source/camera.cpp.obj" "gcc" "CMakeFiles/cold_start.dir/source/camera.cpp.obj.d"
   "/home/etonedemid/topdown-nx/cold_start/source/charformat.cpp" "CMakeFiles/cold_start.dir/source/charformat.cpp.obj" "gcc" "CMakeFiles/cold_start.dir/source/charformat.cpp.obj.d"
