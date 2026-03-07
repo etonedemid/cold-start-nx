@@ -6,6 +6,12 @@ on:
     tags: ["v*.*.*"]
   pull_request:
     branches: ["**"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. v0.7.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -126,9 +132,23 @@ jobs:
     name: GitHub Release
     needs: [build-pc, build-windows, build-switch]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') && needs.build-pc.result == 'success' && needs.build-switch.result == 'success'
+    if: (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && needs.build-pc.result == 'success' && needs.build-switch.result == 'success'
     steps:
       - uses: actions/checkout@v4
+
+      - name: Determine release version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version="${{ github.event.inputs.version }}"
+            if ! echo "$version" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+'; then
+              echo "Error: version '$version' does not match expected format v<major>.<minor>.<patch>"
+              exit 1
+            fi
+            echo "name=$version" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Download PC artifact
         uses: actions/download-artifact@v4
@@ -153,13 +173,13 @@ jobs:
         run: |
           cd release-assets/pc
           chmod +x cold_start
-          zip ../../cold_start-linux-${{ github.ref_name }}.zip cold_start
+          zip ../../cold_start-linux-${{ steps.version.outputs.name }}.zip cold_start
 
       - name: Package Windows build
         if: needs.build-windows.result == 'success'
         run: |
           cd release-assets/windows
-          zip -r ../../cold_start-windows-${{ github.ref_name }}.zip .
+          zip -r ../../cold_start-windows-${{ steps.version.outputs.name }}.zip .
 
       - name: Rename Switch build
         run: cp release-assets/switch/cold-start-nx.nro cold-start-nx.nro
@@ -167,12 +187,13 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.name }}
           make_latest: true
-          name: COLD START ${{ github.ref_name }}
+          name: COLD START ${{ steps.version.outputs.name }}
           body: |
             See [README.md](README.md#changelog) for the full changelog.
           fail_on_unmatched_files: false
           files: |
-            cold_start-linux-${{ github.ref_name }}.zip
-            cold_start-windows-${{ github.ref_name }}.zip
+            cold_start-linux-${{ steps.version.outputs.name }}.zip
+            cold_start-windows-${{ steps.version.outputs.name }}.zip
             cold-start-nx.nro
