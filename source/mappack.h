@@ -27,6 +27,7 @@
 struct MapPackEntry {
     std::string path;       // path to .csm file
     std::string name;       // display name (loaded from .csm header or filename)
+    std::string musicPath;  // override music file (resolved absolute path, empty = use map/default)
     bool        completed = false;
 };
 

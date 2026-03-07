@@ -11,6 +11,8 @@ struct Camera {
     Vec2  shakeOffset= {0, 0};
     float worldW     = WORLD_W;
     float worldH     = WORLD_H;
+    int   viewW      = SCREEN_W;  // viewport width  (change for splitscreen)
+    int   viewH      = SCREEN_H;  // viewport height (change for splitscreen)
 
     void update(Vec2 target, Vec2 aimDir, float dt);
     void addShake(float amount);

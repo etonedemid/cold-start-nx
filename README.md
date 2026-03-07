@@ -1,7 +1,7 @@
 
 <img width="848" height="204" alt="banner" src="https://github.com/user-attachments/assets/2a0af91e-a15e-462f-aa99-d2869a311675" />
 
-# COLD START  `v0.7.1`
+# COLD START  `v0.9`
 
 COLD START is a top-down action shooter built in C++ with SDL2 for PC and Nintendo Switch homebrew. It combines fast combat, local content editing, multiplayer support, and a lightweight modding pipeline aimed at rapid iteration.
 
@@ -126,10 +126,10 @@ nxlink -a <SWITCH_IP> -s cold_start.nro
 
 ## Release artifacts
 
-Current manual release artifacts for `v0.7.1`:
+Current manual release artifacts for `v0.9`:
 
-- `cold_start-0.7.1-linux.zip`
-- `cold_start-0.7.1-windows.zip`
+- `cold_start-0.9-linux.zip`
+- `cold_start-0.9-windows.zip`
 - `cold_start.nro`
 
 ## Controls
@@ -269,6 +269,13 @@ When the host enables mods, lightweight mod data can be serialized and sent to j
 - First launch may create missing runtime content directories automatically
 
 ## Changelog
+
+### v0.9 (2026-03-07)
+- **Local multiplayer overhaul** — redesigned co-op as local multiplayer: P1 uses keyboard+mouse, P2-P4 join with gamepads; each player gets a username (P1 = config name, P2+ = "pc-N"), multiplayer-style HUD with name tags, HP bars, and kill/death counters
+- **Fix: mouse input in multiplayer** — mouse aiming and fire now always work even when a gamepad is connected; gamepad right stick overrides only when active
+- **Fix: dead players taking damage** — enemies and bullets no longer hit dead players, preventing skyrocketing death counts
+- **Fix: PvP damage** — PvP mode now correctly enables player-vs-player damage; `isPvp` gamemode flag was not propagating to `pvpEnabled` which gates all PvP collision code
+- **Fix: local co-op bugs** — slot 0 damage persistence, enemy AI targeting all co-op players, bullet/leg rendering for all slots, pickups collectable by all players
 
 ### v0.7.1 (2026-03-07)
 - **Fix: singleplayer bomb refill** — kills were not counting toward the bomb recharge threshold because bullet `ownerId` defaults to `255` (unowned) when offline and the multiplayer kill-credit check compared it against `localPlayerId()` (which is `0`), always yielding false; now singleplayer kills always track, multiplayer still credits the correct killer
