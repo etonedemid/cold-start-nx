@@ -730,8 +730,8 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
         if (payloadLen >= 2) {
             uint8_t pid = payload[0];
             uint8_t killerId = payload[1];
+            // Apply kills/deaths
             if (auto* p = findPlayer(pid)) { p->alive = false; p->deaths++; }
-            // Credit kill to the attacker
             if (killerId != pid) {
                 if (auto* killer = findPlayer(killerId)) {
                     killer->kills++;
@@ -739,11 +739,11 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
                 }
             }
             if (onPlayerDied) onPlayerDied(pid, killerId);
-            // Host relays to all other clients
+            // Host relays to ALL clients (including sender) for consistent stats
             if (isHost_) {
                 auto pkt = buildPacket(NetPacketType::PlayerDied, payload, payloadLen);
                 for (auto& p : players_) {
-                    if (p.peer && p.peer != from) sendReliable(pkt, p.peer);
+                    if (p.peer) sendReliable(pkt, p.peer);
                 }
             }
         }
@@ -1442,7 +1442,25 @@ void NetworkManager::sendPlayerDied(uint8_t playerId, uint8_t killerId) {
 #if HAS_ENET
     uint8_t payload[2] = { playerId, killerId };
     auto pkt = buildPacket(NetPacketType::PlayerDied, payload, 2);
-    sendReliable(pkt);
+
+    if (isHost_) {
+        // Host: apply kills/deaths locally (authoritative)
+        if (auto* p = findPlayer(playerId)) { p->alive = false; p->deaths++; }
+        if (killerId != playerId) {
+            if (auto* killer = findPlayer(killerId)) {
+                killer->kills++;
+                killer->score += 10;
+            }
+        }
+        if (onPlayerDied) onPlayerDied(playerId, killerId);
+        // Broadcast to all clients
+        for (auto& p : players_) {
+            if (p.peer) sendReliable(pkt, p.peer);
+        }
+    } else {
+        // Client: send to host for authoritative processing
+        sendReliable(pkt);
+    }
 #endif
 }
 
