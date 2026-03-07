@@ -238,6 +238,198 @@ source/editor.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/editor.cpp.s
 .PHONY : source/editor.cpp.s
 
+source/enet/callbacks.obj: source/enet/callbacks.c.obj
+.PHONY : source/enet/callbacks.obj
+
+# target to build an object file
+source/enet/callbacks.c.obj:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/callbacks.c.obj
+.PHONY : source/enet/callbacks.c.obj
+
+source/enet/callbacks.i: source/enet/callbacks.c.i
+.PHONY : source/enet/callbacks.i
+
+# target to preprocess a source file
+source/enet/callbacks.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/callbacks.c.i
+.PHONY : source/enet/callbacks.c.i
+
+source/enet/callbacks.s: source/enet/callbacks.c.s
+.PHONY : source/enet/callbacks.s
+
+# target to generate assembly for a file
+source/enet/callbacks.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/callbacks.c.s
+.PHONY : source/enet/callbacks.c.s
+
+source/enet/compress.obj: source/enet/compress.c.obj
+.PHONY : source/enet/compress.obj
+
+# target to build an object file
+source/enet/compress.c.obj:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/compress.c.obj
+.PHONY : source/enet/compress.c.obj
+
+source/enet/compress.i: source/enet/compress.c.i
+.PHONY : source/enet/compress.i
+
+# target to preprocess a source file
+source/enet/compress.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/compress.c.i
+.PHONY : source/enet/compress.c.i
+
+source/enet/compress.s: source/enet/compress.c.s
+.PHONY : source/enet/compress.s
+
+# target to generate assembly for a file
+source/enet/compress.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/compress.c.s
+.PHONY : source/enet/compress.c.s
+
+source/enet/host.obj: source/enet/host.c.obj
+.PHONY : source/enet/host.obj
+
+# target to build an object file
+source/enet/host.c.obj:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/host.c.obj
+.PHONY : source/enet/host.c.obj
+
+source/enet/host.i: source/enet/host.c.i
+.PHONY : source/enet/host.i
+
+# target to preprocess a source file
+source/enet/host.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/host.c.i
+.PHONY : source/enet/host.c.i
+
+source/enet/host.s: source/enet/host.c.s
+.PHONY : source/enet/host.s
+
+# target to generate assembly for a file
+source/enet/host.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/host.c.s
+.PHONY : source/enet/host.c.s
+
+source/enet/list.obj: source/enet/list.c.obj
+.PHONY : source/enet/list.obj
+
+# target to build an object file
+source/enet/list.c.obj:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/list.c.obj
+.PHONY : source/enet/list.c.obj
+
+source/enet/list.i: source/enet/list.c.i
+.PHONY : source/enet/list.i
+
+# target to preprocess a source file
+source/enet/list.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/list.c.i
+.PHONY : source/enet/list.c.i
+
+source/enet/list.s: source/enet/list.c.s
+.PHONY : source/enet/list.s
+
+# target to generate assembly for a file
+source/enet/list.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/list.c.s
+.PHONY : source/enet/list.c.s
+
+source/enet/packet.obj: source/enet/packet.c.obj
+.PHONY : source/enet/packet.obj
+
+# target to build an object file
+source/enet/packet.c.obj:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/packet.c.obj
+.PHONY : source/enet/packet.c.obj
+
+source/enet/packet.i: source/enet/packet.c.i
+.PHONY : source/enet/packet.i
+
+# target to preprocess a source file
+source/enet/packet.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/packet.c.i
+.PHONY : source/enet/packet.c.i
+
+source/enet/packet.s: source/enet/packet.c.s
+.PHONY : source/enet/packet.s
+
+# target to generate assembly for a file
+source/enet/packet.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/packet.c.s
+.PHONY : source/enet/packet.c.s
+
+source/enet/peer.obj: source/enet/peer.c.obj
+.PHONY : source/enet/peer.obj
+
+# target to build an object file
+source/enet/peer.c.obj:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/peer.c.obj
+.PHONY : source/enet/peer.c.obj
+
+source/enet/peer.i: source/enet/peer.c.i
+.PHONY : source/enet/peer.i
+
+# target to preprocess a source file
+source/enet/peer.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/peer.c.i
+.PHONY : source/enet/peer.c.i
+
+source/enet/peer.s: source/enet/peer.c.s
+.PHONY : source/enet/peer.s
+
+# target to generate assembly for a file
+source/enet/peer.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/peer.c.s
+.PHONY : source/enet/peer.c.s
+
+source/enet/protocol.obj: source/enet/protocol.c.obj
+.PHONY : source/enet/protocol.obj
+
+# target to build an object file
+source/enet/protocol.c.obj:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/protocol.c.obj
+.PHONY : source/enet/protocol.c.obj
+
+source/enet/protocol.i: source/enet/protocol.c.i
+.PHONY : source/enet/protocol.i
+
+# target to preprocess a source file
+source/enet/protocol.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/protocol.c.i
+.PHONY : source/enet/protocol.c.i
+
+source/enet/protocol.s: source/enet/protocol.c.s
+.PHONY : source/enet/protocol.s
+
+# target to generate assembly for a file
+source/enet/protocol.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/protocol.c.s
+.PHONY : source/enet/protocol.c.s
+
+source/enet/win32.obj: source/enet/win32.c.obj
+.PHONY : source/enet/win32.obj
+
+# target to build an object file
+source/enet/win32.c.obj:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/win32.c.obj
+.PHONY : source/enet/win32.c.obj
+
+source/enet/win32.i: source/enet/win32.c.i
+.PHONY : source/enet/win32.i
+
+# target to preprocess a source file
+source/enet/win32.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/win32.c.i
+.PHONY : source/enet/win32.c.i
+
+source/enet/win32.s: source/enet/win32.c.s
+.PHONY : source/enet/win32.s
+
+# target to generate assembly for a file
+source/enet/win32.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/source/enet/win32.c.s
+.PHONY : source/enet/win32.c.s
+
 source/game.obj: source/game.cpp.obj
 .PHONY : source/game.obj
 
@@ -500,6 +692,30 @@ help:
 	@echo "... source/editor.obj"
 	@echo "... source/editor.i"
 	@echo "... source/editor.s"
+	@echo "... source/enet/callbacks.obj"
+	@echo "... source/enet/callbacks.i"
+	@echo "... source/enet/callbacks.s"
+	@echo "... source/enet/compress.obj"
+	@echo "... source/enet/compress.i"
+	@echo "... source/enet/compress.s"
+	@echo "... source/enet/host.obj"
+	@echo "... source/enet/host.i"
+	@echo "... source/enet/host.s"
+	@echo "... source/enet/list.obj"
+	@echo "... source/enet/list.i"
+	@echo "... source/enet/list.s"
+	@echo "... source/enet/packet.obj"
+	@echo "... source/enet/packet.i"
+	@echo "... source/enet/packet.s"
+	@echo "... source/enet/peer.obj"
+	@echo "... source/enet/peer.i"
+	@echo "... source/enet/peer.s"
+	@echo "... source/enet/protocol.obj"
+	@echo "... source/enet/protocol.i"
+	@echo "... source/enet/protocol.s"
+	@echo "... source/enet/win32.obj"
+	@echo "... source/enet/win32.i"
+	@echo "... source/enet/win32.s"
 	@echo "... source/game.obj"
 	@echo "... source/game.i"
 	@echo "... source/game.s"

@@ -86,12 +86,12 @@ clean: CMakeFiles/dist.dir/clean
 CMakeFiles/cold_start.dir/all:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles --progress-num=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 "Built target cold_start"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles --progress-num=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23 "Built target cold_start"
 .PHONY : CMakeFiles/cold_start.dir/all
 
 # Build rule for subdir invocation for target.
 CMakeFiles/cold_start.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles 15
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles 23
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/cold_start.dir/all
 	$(CMAKE_COMMAND) -E cmake_progress_start /home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles 0
 .PHONY : CMakeFiles/cold_start.dir/rule
@@ -103,7 +103,7 @@ cold_start: CMakeFiles/cold_start.dir/rule
 # codegen rule for target.
 CMakeFiles/cold_start.dir/codegen:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/cold_start.dir/build.make CMakeFiles/cold_start.dir/codegen
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles --progress-num=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 "Finished codegen for target cold_start"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles --progress-num=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23 "Finished codegen for target cold_start"
 .PHONY : CMakeFiles/cold_start.dir/codegen
 
 # clean rule for target.
@@ -118,12 +118,12 @@ CMakeFiles/cold_start.dir/clean:
 CMakeFiles/dist.dir/all: CMakeFiles/cold_start.dir/all
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/dist.dir/build.make CMakeFiles/dist.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/dist.dir/build.make CMakeFiles/dist.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles --progress-num=16 "Built target dist"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles --progress-num=24 "Built target dist"
 .PHONY : CMakeFiles/dist.dir/all
 
 # Build rule for subdir invocation for target.
 CMakeFiles/dist.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles 16
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles 24
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/dist.dir/all
 	$(CMAKE_COMMAND) -E cmake_progress_start /home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles 0
 .PHONY : CMakeFiles/dist.dir/rule
@@ -135,7 +135,7 @@ dist: CMakeFiles/dist.dir/rule
 # codegen rule for target.
 CMakeFiles/dist.dir/codegen: CMakeFiles/cold_start.dir/all
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/dist.dir/build.make CMakeFiles/dist.dir/codegen
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles --progress-num=16 "Finished codegen for target dist"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/etonedemid/topdown-nx/cold_start/build-win/CMakeFiles --progress-num=24 "Finished codegen for target dist"
 .PHONY : CMakeFiles/dist.dir/codegen
 
 # clean rule for target.
