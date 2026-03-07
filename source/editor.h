@@ -4,6 +4,7 @@
 #include "mapformat.h"
 #include "camera.h"
 #include "assets.h"
+#include "ui.h"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 #include <string>
@@ -82,7 +83,7 @@ struct EditorConfig {
 
 class MapEditor {
 public:
-    bool init(SDL_Renderer* renderer, int screenW, int screenH);
+    bool init(SDL_Renderer* renderer, int screenW, int screenH, UI::Context* ui = nullptr);
     void shutdown();
     void handleInput(SDL_Event& e);
     void update(float dt);
@@ -131,6 +132,7 @@ public:
 private:
     bool active_ = false;
     SDL_Renderer* renderer_ = nullptr;
+    UI::Context*  ui_ = nullptr;
     int screenW_ = 1280, screenH_ = 720;
 
     // Map being edited
@@ -246,6 +248,7 @@ private:
     void renderToolbar(SDL_Renderer* renderer);
     void renderTriggers(SDL_Renderer* renderer);
     void renderEntitySpawns(SDL_Renderer* renderer);
+    void renderPropertiesPanel(SDL_Renderer* renderer);
     void rebuildFilteredPalette();
     void renderGrid(SDL_Renderer* renderer);
     void drawEditorText(SDL_Renderer* renderer, const char* text, int x, int y, int size, SDL_Color color);
