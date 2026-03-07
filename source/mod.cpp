@@ -8,6 +8,10 @@
 #include <algorithm>
 #include <dirent.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#  include <direct.h>
+#  define mkdir(p, m) _mkdir(p)
+#endif
 
 // ── INI parser helper (reusable) ──
 static std::unordered_map<std::string, std::unordered_map<std::string, std::string>>

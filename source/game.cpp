@@ -9,9 +9,16 @@
 #include <set>
 #include <dirent.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#  include <direct.h>
+#  define mkdir(p, m) _mkdir(p)
+#endif
 
 #ifdef __SWITCH__
 #include <switch.h>
+#elif defined(_WIN32)
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #else
 #include <ifaddrs.h>
 #include <netinet/in.h>
@@ -7671,6 +7678,25 @@ std::string Game::getLocalIP() {
     char buf[32];
     snprintf(buf, sizeof(buf), "%d.%d.%d.%d", ip & 0xFF, (ip >> 8) & 0xFF, (ip >> 16) & 0xFF, (ip >> 24) & 0xFF);
     return buf;
+#elif defined(_WIN32)
+    // Use Winsock to find the first non-loopback IPv4 address
+    char hostname[256] = {};
+    if (gethostname(hostname, sizeof(hostname)) != 0) return "N/A";
+    struct addrinfo hints = {}, *res = nullptr;
+    hints.ai_family   = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    if (getaddrinfo(hostname, nullptr, &hints, &res) != 0) return "N/A";
+    std::string result = "N/A";
+    for (auto* rp = res; rp; rp = rp->ai_next) {
+        char ip[INET_ADDRSTRLEN] = {};
+        auto* sa = reinterpret_cast<struct sockaddr_in*>(rp->ai_addr);
+        if (inet_ntop(AF_INET, &sa->sin_addr, ip, sizeof(ip)) && strcmp(ip, "127.0.0.1") != 0) {
+            result = ip;
+            break;
+        }
+    }
+    freeaddrinfo(res);
+    return result;
 #else
     struct ifaddrs* addrs = nullptr;
     if (getifaddrs(&addrs) != 0) return "N/A";

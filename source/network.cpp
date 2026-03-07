@@ -58,9 +58,16 @@ static void upnpMapPort(uint16_t port) {
     char wanaddr[64] = {};
     int r = UPNP_GetValidIGD(devlist, &s_upnp.urls, &s_upnp.data, lanaddr, sizeof(lanaddr), wanaddr, sizeof(wanaddr));
     freeUPNPDevlist(devlist);
-    if (r != 1) {
-        printf("UPnP: no valid IGD (r=%d)\n", r);
+    // r==1: valid connected IGD
+    // r==2: IGD found but reports not connected — many routers still accept mappings
+    // r==3: multiple IGDs found, first is used
+    // r==0: no IGD at all
+    if (r == 0) {
+        printf("UPnP: no IGD found\n");
         return;
+    }
+    if (r == 2) {
+        printf("UPnP: IGD found but reports not connected — attempting mapping anyway\n");
     }
     int res = UPNP_AddPortMapping(
         s_upnp.urls.controlURL, s_upnp.data.first.servicetype,
