@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/etonedemid/topdown-nx/cold_start/build-win/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

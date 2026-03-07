@@ -29,19 +29,45 @@ if(ANDROID)
 else()
     # PC (Linux / macOS / Windows)
     if(WIN32)
-        # Windows — use vcpkg CMake config packages
+        # Windows — use vcpkg CMake config packages (MSVC) or MinGW system libs
         find_package(SDL2       CONFIG REQUIRED)
         find_package(SDL2_image CONFIG REQUIRED)
         find_package(SDL2_ttf   CONFIG REQUIRED)
         find_package(SDL2_mixer CONFIG REQUIRED)
 
-        target_link_libraries(cold_start PRIVATE
-            SDL2::SDL2main
-            SDL2::SDL2
-            SDL2_image::SDL2_image
-            SDL2_ttf::SDL2_ttf
-            SDL2_mixer::SDL2_mixer
-        )
+        if(MINGW)
+            # MinGW: link everything statically → single .exe
+            # When cross-compiling from Linux the static webp lives in a separate
+            # prefix; add it first so the linker picks .a before .dll.a.
+            if(CMAKE_CROSSCOMPILING AND EXISTS /usr/x86_64-w64-mingw32/static/lib)
+                target_link_directories(cold_start BEFORE PRIVATE
+                    /usr/x86_64-w64-mingw32/static/lib
+                )
+            endif()
+            target_link_libraries(cold_start PRIVATE
+                SDL2::SDL2main
+                SDL2::SDL2-static
+                SDL2_image::SDL2_image-static
+                SDL2_ttf::SDL2_ttf-static
+                SDL2_mixer::SDL2_mixer-static
+            )
+            # Embed the GCC/C++ runtimes and winpthreads so no DLLs are needed
+            target_link_options(cold_start PRIVATE
+                -static-libgcc
+                -static-libstdc++
+                -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive,-Bdynamic
+                -mwindows
+            )
+        else()
+            # vcpkg / MSVC: shared DLLs
+            target_link_libraries(cold_start PRIVATE
+                SDL2::SDL2main
+                SDL2::SDL2
+                SDL2_image::SDL2_image
+                SDL2_ttf::SDL2_ttf
+                SDL2_mixer::SDL2_mixer
+            )
+        endif()
 
         # ENet (optional — multiplayer support)
         find_package(unofficial-enet CONFIG)
@@ -53,6 +79,9 @@ else()
             target_compile_definitions(cold_start PRIVATE HAS_ENET=0)
             message(STATUS "ENet NOT found — multiplayer disabled (stub)")
         endif()
+
+        # Winsock2 — required for gethostname/getaddrinfo in getLocalIP()
+        target_link_libraries(cold_start PRIVATE ws2_32)
     else()
         # Linux / macOS — use pkg-config
         find_package(PkgConfig REQUIRED)
@@ -89,7 +118,9 @@ else()
     endif()
 
     # miniupnpc (optional — automatic UPnP port forwarding when hosting)
-    pkg_check_modules(MINIUPNPC miniupnpc)
+    if(NOT WIN32)
+        pkg_check_modules(MINIUPNPC miniupnpc)
+    endif()
     if(MINIUPNPC_FOUND)
         target_include_directories(cold_start PRIVATE ${MINIUPNPC_INCLUDE_DIRS})
         target_link_libraries(cold_start ${MINIUPNPC_LIBRARIES})

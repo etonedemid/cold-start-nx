@@ -1,7 +1,7 @@
 
 <img width="848" height="204" alt="banner" src="https://github.com/user-attachments/assets/2a0af91e-a15e-462f-aa99-d2869a311675" />
 
-# COLD START  `v0.6.0`
+# COLD START  `v0.6.1`
 
 COLD START is a top-down action shooter built in C++ with SDL2 for PC and Nintendo Switch homebrew. It combines fast combat, local content editing, multiplayer support, and a lightweight modding pipeline aimed at rapid iteration.
 
@@ -230,6 +230,11 @@ When the host enables mods, lightweight mod data can be serialized and sent to j
 - First launch may create missing runtime content directories automatically
 
 ## Changelog
+
+### v0.6.1 (2026-03-06)
+- **Windows build** — cross-compile to a single static `.exe` via MinGW-w64 (`build-win/cold_start.exe`); no runtime DLLs beyond standard Windows system DLLs required
+- **GitHub CI Windows job** — replaced vcpkg/MSVC approach with MSYS2 MinGW64; installs SDL2 stack from MSYS2 packages and builds with Ninja; artifacts include the `.exe`, any bundled DLLs, and `romfs/`
+- **UPnP `r=2` IGD fix** — port mapping is now attempted even when `UPNP_GetValidIGD` returns 2 ("IGD found but reports not connected"), which is the common case on many consumer routers that respond correctly to `AddPortMapping` despite the misleading status
 
 ### v0.6.0 (2026-03-06)
 - **Map selector in lobby settings** — host can now cycle through Generated / custom maps (`.csm` files + mod-provided maps) with LEFT/RIGHT on the new "Map:" settings row; selected map is sent to all clients and loaded correctly for both generated and custom-map sessions

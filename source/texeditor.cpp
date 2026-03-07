@@ -6,6 +6,10 @@
 #include <algorithm>
 #include <dirent.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#  include <direct.h>
+#  define mkdir(p, m) _mkdir(p)
+#endif
 #include <cctype>
 #include <queue>
 
