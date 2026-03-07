@@ -53,9 +53,6 @@ jobs:
       - name: Build
         run: make -j$(nproc)
 
-      - name: Rename .nro
-        run: cp cold_start.nro cold-start-nx.nro
-
       - name: Upload Switch artifact
         uses: actions/upload-artifact@v4
         with:
