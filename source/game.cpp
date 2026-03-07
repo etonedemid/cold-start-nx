@@ -4014,6 +4014,8 @@ void Game::resolveCollisions() {
         auto& players = net.players();
         for (auto& b : bullets_) {
             if (!b.alive) continue;
+            // Only check OUR bullets against remote players (not remote bullets)
+            if (b.ownerId != net.localPlayerId()) continue;
             for (auto& rp : players) {
                 if (rp.id == net.localPlayerId()) continue;  // don't hit self
                 if (!rp.alive) continue;
