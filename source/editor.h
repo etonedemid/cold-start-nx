@@ -43,7 +43,11 @@ static constexpr uint8_t ENTITY_MELEE        = 0;
 static constexpr uint8_t ENTITY_SHOOTER      = 1;
 static constexpr uint8_t ENTITY_CRATE        = 2;
 static constexpr uint8_t ENTITY_UPGRADE_CRATE= 3;
-static constexpr uint8_t ENTITY_TYPE_COUNT   = 4;
+static constexpr uint8_t ENTITY_BRUTE        = 4;
+static constexpr uint8_t ENTITY_SCOUT        = 5;
+static constexpr uint8_t ENTITY_SNIPER       = 6;
+static constexpr uint8_t ENTITY_GUNNER       = 7;
+static constexpr uint8_t ENTITY_TYPE_COUNT   = 8;
 
 // ── Trigger placement ghost ──
 struct TriggerGhost {

@@ -32,6 +32,7 @@ bool MapPack::loadFromFile(const std::string& path) {
     maps.clear();
     characterPaths.clear();
     int mapCount = 0;
+    std::vector<std::pair<int,std::string>> musicEntries; // (0-indexed, resolved path)
 
     while (fgets(buf, sizeof(buf), f)) {
         std::string line(buf);
@@ -81,9 +82,21 @@ bool MapPack::loadFromFile(const std::string& path) {
                     entry.name = entry.name.substr(0, entry.name.size() - 4);
                 maps.push_back(entry);
             }
+            else if (key.size() > 5 && key.substr(0, 5) == "music") {
+                int n = atoi(key.substr(5).c_str());
+                if (n > 0) {
+                    std::string resolved = (!folder.empty() && !value.empty() && value[0] != '/')
+                        ? folder + value : value;
+                    musicEntries.push_back({n - 1, resolved});
+                }
+            }
         }
     }
     fclose(f);
+
+    // Apply per-map music overrides
+    for (auto& me : musicEntries)
+        if (me.first < (int)maps.size()) maps[me.first].musicPath = me.second;
 
     currentMapIndex = 0;
     printf("MapPack loaded: %s (%d maps, %d characters)\n",
@@ -111,6 +124,10 @@ bool MapPack::saveToFile(const std::string& path) const {
     fprintf(f, "count=%d\n", (int)maps.size());
     for (int i = 0; i < (int)maps.size(); i++) {
         fprintf(f, "map%d=%s\n", i + 1, maps[i].path.c_str());
+    }
+    for (int i = 0; i < (int)maps.size(); i++) {
+        if (!maps[i].musicPath.empty())
+            fprintf(f, "music%d=%s\n", i + 1, maps[i].musicPath.c_str());
     }
 
     fclose(f);

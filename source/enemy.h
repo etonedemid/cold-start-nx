@@ -4,7 +4,14 @@
 #include "constants.h"
 #include <SDL2/SDL.h>
 
-enum class EnemyType { Melee, Shooter };
+enum class EnemyType {
+    Melee,
+    Shooter,
+    Brute,
+    Scout,
+    Sniper,
+    Gunner,
+};
 enum class EnemyState { Wander, Chase };
 
 struct Enemy {
@@ -41,9 +48,24 @@ struct Enemy {
     float dashDelayTimer = 0;
     bool  dashCharging = false;
     float flashTimer   = 0;  // visual red flash
+    float dashDistance = ENEMY_DASH_DIST;
+    float dashForce    = ENEMY_DASH_FORCE;
+    float dashDelay    = ENEMY_DASH_DELAY;
+    float dashDuration = ENEMY_DASH_DUR;
+    float dashCooldown = ENEMY_DASH_CD;
+    int   contactDamage = ENEMY_DASH_DMG;
 
     // Shooter
     float shootCooldown = 0;
+    float shootCooldownBase = SHOOTER_SHOOT_CD;
+    float preferredMinRange = 260.0f;
+    float preferredMaxRange = 420.0f;
+    int   shotsPerBurst     = 1;
+    int   burstShotsLeft    = 0;
+    float burstGap          = 0.0f;
+    float burstGapTimer     = 0.0f;
+    float shootSpread       = 0.0f;
+    float renderScale       = 3.0f;
 
     // Stun
     float stunTimer    = 0;

@@ -44,6 +44,13 @@ bool CustomMap::saveToFile(const std::string& path) const {
         if (len > 0) fwrite(customTilePaths[i].c_str(), 1, len, f);
     }
 
+    // Music path (optional trailing string)
+    {
+        uint16_t mlen = (uint16_t)std::min(musicPath.size(), (size_t)511);
+        fwrite(&mlen, sizeof(uint16_t), 1, f);
+        if (mlen > 0) fwrite(musicPath.c_str(), 1, mlen, f);
+    }
+
     fclose(f);
     printf("Saved map: %s (%dx%d, %d triggers, %d spawns)\n",
         path.c_str(), width, height, (int)triggers.size(), (int)enemySpawns.size());
@@ -97,6 +104,17 @@ bool CustomMap::loadFromFile(const std::string& path) {
                 if (fread(buf, 1, len, f) != (size_t)len) break;
                 customTilePaths[i] = buf;
             }
+        }
+    }
+
+    // Music path (optional trailing string — absent in older maps)
+    musicPath.clear();
+    {
+        uint16_t mlen = 0;
+        if (fread(&mlen, sizeof(uint16_t), 1, f) == 1 && mlen > 0 && mlen < 512) {
+            char mbuf[513] = {};
+            if (fread(mbuf, 1, mlen, f) == (size_t)mlen)
+                musicPath = mbuf;
         }
     }
 
