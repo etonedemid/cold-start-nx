@@ -365,6 +365,7 @@ bool TileMap::isInBounds(int tx, int ty) const {
 }
 
 uint8_t TileMap::get(int tx, int ty) const {
+    if (!isInBounds(tx, ty)) return TILE_WALL;
     return tiles[ty * width + tx];
 }
 
