@@ -1225,6 +1225,10 @@ void MapEditor::renderEntitySpawns(SDL_Renderer* renderer) {
         switch (es.enemyType) {
             case ENTITY_MELEE:         SDL_SetRenderDrawColor(renderer, 255, 60, 60, 200); break;
             case ENTITY_SHOOTER:       SDL_SetRenderDrawColor(renderer, 255, 160, 40, 200); break;
+            case ENTITY_BRUTE:         SDL_SetRenderDrawColor(renderer, 170, 70, 70, 220); break;
+            case ENTITY_SCOUT:         SDL_SetRenderDrawColor(renderer, 255, 100, 170, 220); break;
+            case ENTITY_SNIPER:        SDL_SetRenderDrawColor(renderer, 160, 120, 255, 220); break;
+            case ENTITY_GUNNER:        SDL_SetRenderDrawColor(renderer, 255, 215, 100, 220); break;
             case ENTITY_CRATE:         SDL_SetRenderDrawColor(renderer, 160, 120, 60, 200); break;
             case ENTITY_UPGRADE_CRATE: SDL_SetRenderDrawColor(renderer, 220, 180, 40, 200); break;
             default:                   SDL_SetRenderDrawColor(renderer, 180, 180, 180, 200); break;
@@ -1233,7 +1237,7 @@ void MapEditor::renderEntitySpawns(SDL_Renderer* renderer) {
         SDL_SetRenderDrawColor(renderer, selected ? 0 : 255, 255, selected ? 0 : 255, 255);
         SDL_RenderDrawRect(renderer, &r);
 
-        const char* labels[] = {"M", "S", "C", "U"};
+        const char* labels[] = {"M", "S", "C", "U", "B", "F", "N", "G"};
         const char* label = (es.enemyType >= 0 && es.enemyType < ENTITY_TYPE_COUNT) ? labels[es.enemyType] : "?";
         drawEditorText(renderer, label, r.x + sz/4, r.y + 2, 14, {255, 255, 255, 255});
     }
@@ -1275,7 +1279,7 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
         y += 8;
 
         // Type
-        static const char* eNames[] = {"Melee", "Shooter", "Crate", "Upgrade"};
+        static const char* eNames[] = {"Melee", "Shooter", "Crate", "Upgrade", "Brute", "Scout", "Sniper", "Gunner"};
         const char* typeName = (es.enemyType < ENTITY_TYPE_COUNT) ? eNames[es.enemyType] : "Unknown";
         drawEditorText(renderer, "Type", lx, y, 12, UI::Color::Gray);
         // Left arrow
@@ -1505,7 +1509,7 @@ void MapEditor::renderToolbar(SDL_Renderer* renderer) {
                 sub = ttNames[idx];
             }
             else if (i == 2) {
-                static const char* eNames[] = {"Melee","Shooter","Crate","Upgrade"};
+                static const char* eNames[] = {"Melee","Shooter","Crate","Upgrade","Brute","Scout","Sniper","Gunner"};
                 sub = (entitySpawnType_ < ENTITY_TYPE_COUNT) ? eNames[entitySpawnType_] : "?";
             }
             if (sub[0]) drawEditorText(renderer, sub, bx + 4, 24, 10, {toolColors[i].r, toolColors[i].g, toolColors[i].b, 160});

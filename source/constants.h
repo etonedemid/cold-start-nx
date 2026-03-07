@@ -3,7 +3,7 @@
 #include "vec2.h"
 
 // ── Version ──
-constexpr const char* GAME_VERSION = "0.7.1";
+constexpr const char* GAME_VERSION = "0.9";
 
 // Screen
 constexpr int SCREEN_W = 1280;
@@ -60,6 +60,42 @@ constexpr float SHOOTER_HP          = 3.0f;
 constexpr float SHOOTER_SIZE        = 64.0f;
 constexpr float SHOOTER_RENDER_SCALE= 4.5f;
 
+// Enemy variants
+constexpr float BRUTE_SPEED         = 160.0f;
+constexpr float BRUTE_HP            = 7.0f;
+constexpr float BRUTE_SIZE          = 64.0f;
+constexpr float BRUTE_DASH_DIST     = 220.0f;
+constexpr float BRUTE_DASH_FORCE    = 980.0f;
+constexpr float BRUTE_DASH_DELAY    = 0.40f;
+constexpr float BRUTE_DASH_DUR      = 0.28f;
+constexpr float BRUTE_DASH_CD       = 1.80f;
+constexpr int   BRUTE_DASH_DMG      = 3;
+constexpr float BRUTE_RENDER_SCALE  = 4.2f;
+
+constexpr float SCOUT_SPEED         = 300.0f;
+constexpr float SCOUT_HP            = 2.0f;
+constexpr float SCOUT_SIZE          = 40.0f;
+constexpr float SCOUT_DASH_DIST     = 210.0f;
+constexpr float SCOUT_DASH_FORCE    = 1050.0f;
+constexpr float SCOUT_DASH_DELAY    = 0.18f;
+constexpr float SCOUT_DASH_DUR      = 0.15f;
+constexpr float SCOUT_DASH_CD       = 0.90f;
+constexpr int   SCOUT_DASH_DMG      = 1;
+constexpr float SCOUT_RENDER_SCALE  = 2.6f;
+
+constexpr float SNIPER_SPEED        = 110.0f;
+constexpr float SNIPER_HP           = 3.0f;
+constexpr float SNIPER_SIZE         = 60.0f;
+constexpr float SNIPER_SHOOT_CD     = 1.65f;
+constexpr float SNIPER_RENDER_SCALE = 4.8f;
+
+constexpr float GUNNER_SPEED        = 155.0f;
+constexpr float GUNNER_HP           = 4.0f;
+constexpr float GUNNER_SIZE         = 62.0f;
+constexpr float GUNNER_SHOOT_CD     = 1.25f;
+constexpr float GUNNER_BURST_GAP    = 0.11f;
+constexpr float GUNNER_RENDER_SCALE = 4.6f;
+
 // Bomb
 constexpr float BOMB_ORBIT_SPEED  = 80.0f;
 constexpr float BOMB_DASH_SPEED   = 1000.0f;
@@ -83,7 +119,12 @@ constexpr int   WAVE_SIZE_BASE      = 2;     // enemies per wave at start
 constexpr int   WAVE_SIZE_GROWTH    = 1;     // extra enemies per wave number
 constexpr int   WAVE_MAX_SIZE       = 15;    // cap per wave
 constexpr float WAVE_SPAWN_INTERVAL = 0.6f;  // delay between each enemy in a wave
-constexpr float WAVE_SHOOTER_CHANCE = 0.25f; // 25% shooter
+constexpr int   WAVE_MELEE_WEIGHT   = 42;
+constexpr int   WAVE_SHOOTER_WEIGHT = 22;
+constexpr int   WAVE_BRUTE_WEIGHT   = 10;
+constexpr int   WAVE_SCOUT_WEIGHT   = 12;
+constexpr int   WAVE_SNIPER_WEIGHT  = 7;
+constexpr int   WAVE_GUNNER_WEIGHT  = 7;
 
 // Camera
 constexpr float CAM_SMOOTH  = 0.18f;

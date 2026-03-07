@@ -1,5 +1,6 @@
 #pragma once
 // ─── pickup.h ─── Upgrade crate & pickup system (TBOI-style) ────────────────
+#include "constants.h"
 #include "vec2.h"
 #include <SDL2/SDL.h>
 #include <cstdint>
@@ -16,12 +17,18 @@ enum class UpgradeType : uint8_t {
     HealthUp,       // +1 max HP and heal 1
     ReloadUp,       // faster reload
     // Special abilities
-    Shield,         // temporary invuln frames
+    Blindness,      // temporary invuln frames
     BombPickup,     // +1 bomb
     Magnet,         // bullets home slightly
     Ricochet,       // bullets bounce off walls
     Piercing,       // bullets go through enemies
     TripleShot,     // fire 3 bullets in spread
+    Overclock,      // faster fire/reload
+    HeavyRounds,    // more damage, slower handling
+    BombCore,       // bomb-focused upgrade
+    Juggernaut,     // more max HP, less speed
+    StunRounds,     // bullets briefly stun enemies
+    Scavenger,      // kills refund ammo
     // Negative (cursed) — rare
     SlowDown,       // -movement speed
     GlassCannon,    // +damage but -HP
@@ -73,12 +80,16 @@ struct PlayerUpgrades {
     float fireRateBonus   = 0;     // added to base fire rate
     int   ammoBonus       = 0;     // added to max ammo
     float reloadMulti     = 1.0f;  // reload time multiplier (<1 = faster)
-    bool  hasShield       = false;
-    float shieldTimer     = 0;
+    bool  hasBlindness    = false;
+    float blindnessTimer  = 0;
     bool  hasMagnet       = false;
     bool  hasRicochet     = false;
     bool  hasPiercing     = false;
     bool  hasTripleShot   = false;
+    bool  hasStunRounds   = false;
+    bool  hasScavenger    = false;
+    int   killsPerBomb    = KILLS_PER_BOMB;
+    float bombDashSpeedMulti = 1.0f;
 
     void reset() { *this = PlayerUpgrades{}; }
     void apply(UpgradeType type);
