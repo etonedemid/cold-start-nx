@@ -1,7 +1,7 @@
 
 <img width="848" height="204" alt="banner" src="https://github.com/user-attachments/assets/2a0af91e-a15e-462f-aa99-d2869a311675" />
 
-# COLD START  `v0.6.1`
+# COLD START  `v0.7.0`
 
 COLD START is a top-down action shooter built in C++ with SDL2 for PC and Nintendo Switch homebrew. It combines fast combat, local content editing, multiplayer support, and a lightweight modding pipeline aimed at rapid iteration.
 
@@ -9,6 +9,7 @@ COLD START is a top-down action shooter built in C++ with SDL2 for PC and Ninten
 
 - PC and Nintendo Switch builds from the same codebase
 - Arena, co-op, deathmatch, team deathmatch, playlist, and custom-map play modes
+- New `PLAY` submenu for Generated Map / Map / Pack selection
 - Host-authoritative online multiplayer with ENet-based state sync
 - Procedural and custom maps, map packs, character content, and upgrade crates
 - In-game map editor and built-in pixel-art texture editor
@@ -32,6 +33,7 @@ COLD START is a top-down action shooter built in C++ with SDL2 for PC and Ninten
 
 - Fast top-down shooter combat with melee and ranged enemies
 - Dash-capable melee enemies, projectile enemies, bombs, parry, pickups, and upgrade crates
+- Generated-map runs can now be configured directly from the `PLAY` menu
 - PvE and PvP rule sets with configurable lives, friendly fire, teams, wave count, spawn scaling, and crate intervals
 - Spectating, respawning, score tracking, and lobby flow for multiplayer sessions
 
@@ -81,6 +83,18 @@ make -j4
 
 Binary: `build-pc/cold_start`
 
+### Windows
+
+```bash
+cd cold_start
+mkdir -p build-win
+cd build-win
+cmake ..
+make -j4
+```
+
+Binary: `build-win/cold_start.exe`
+
 ### Nintendo Switch
 
 ```bash
@@ -99,12 +113,24 @@ cd cold_start/build-pc
 ./cold_start
 ```
 
+### Windows
+
+Run `build-win/cold_start.exe`
+
 ### Switch via nxlink
 
 ```bash
 cd cold_start
 nxlink -a <SWITCH_IP> -s cold_start.nro
 ```
+
+## Release artifacts
+
+Current manual release artifacts for `v0.7.0`:
+
+- `cold_start-0.7.0-linux.zip`
+- `cold_start-0.7.0-windows.zip`
+- `cold_start.nro`
 
 ## Controls
 
@@ -134,6 +160,19 @@ nxlink -a <SWITCH_IP> -s cold_start.nro
 - `characters/` — character definitions
 - `tiles/` — tile content
 - `build-pc/` — CMake build output for desktop
+- `build-win/` — CMake build output for Windows cross-builds
+
+## Main menu flow
+
+- `PLAY` → choose `GENERATED MAP`, `MAP`, or `PACK`
+- Generated-map settings now live in the `PLAY` submenu:
+	- Map Width
+	- Map Height
+	- Player HP
+	- Enemy Spawnrate
+	- Enemy HP
+	- Enemy Speed
+- Standalone `MAPS` / `PACKS` shortcuts remain available from the main menu
 
 ## Modding
 
@@ -230,6 +269,15 @@ When the host enables mods, lightweight mod data can be serialized and sent to j
 - First launch may create missing runtime content directories automatically
 
 ## Changelog
+
+### v0.7.0 (2026-03-07)
+- **New `PLAY` submenu** — `PLAY` now opens a mode picker with `GENERATED MAP`, `MAP`, and `PACK` instead of immediately starting a generated run
+- **Generated-map settings moved** — Map Width / Height were moved out of `CONFIG` into the new `PLAY` submenu; solo difficulty sliders are exposed there as well
+- **UI framework rollout** — shared UI helpers (`ui.h` / `ui.cpp`) now drive modernized menu rendering, hint bars, separators, sliders, and mouse-click support across menus
+- **Fix: multiplayer bomb credit** — enemy kills made by clients now credit the actual killer's bomb progress instead of incorrectly increasing the host's bomb counter
+- **Fix: remote player name tags** — multiplayer usernames are now drawn above HP bars to avoid overlap
+- **Fix: pause slider labels** — volume rows no longer render duplicated labels such as `Music: Music: 6%`
+- **Windows release path** — Windows desktop builds are produced from `build-win/` as `cold_start.exe`
 
 ### v0.6.1 (2026-03-06)
 - **Windows build** — cross-compile to a single static `.exe` via MinGW-w64 (`build-win/cold_start.exe`); no runtime DLLs beyond standard Windows system DLLs required
