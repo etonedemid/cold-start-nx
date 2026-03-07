@@ -25,6 +25,58 @@
 #include <arpa/inet.h>
 #endif
 
+namespace {
+bool isMeleeEnemyType(EnemyType type) {
+    return type == EnemyType::Melee || type == EnemyType::Brute || type == EnemyType::Scout;
+}
+
+bool isShooterEnemyType(EnemyType type) {
+    return type == EnemyType::Shooter || type == EnemyType::Sniper || type == EnemyType::Gunner;
+}
+
+bool isCrateSpawnType(uint8_t type) {
+    return type == ENTITY_CRATE || type == ENTITY_UPGRADE_CRATE;
+}
+
+EnemyType enemyTypeFromSpawnId(uint8_t type) {
+    switch (type) {
+        case ENTITY_SHOOTER: return EnemyType::Shooter;
+        case ENTITY_BRUTE:   return EnemyType::Brute;
+        case ENTITY_SCOUT:   return EnemyType::Scout;
+        case ENTITY_SNIPER:  return EnemyType::Sniper;
+        case ENTITY_GUNNER:  return EnemyType::Gunner;
+        case ENTITY_MELEE:
+        default:             return EnemyType::Melee;
+    }
+}
+
+SDL_Color enemyBaseTint(EnemyType type) {
+    switch (type) {
+        case EnemyType::Brute:   return {210, 110, 110, 255};
+        case EnemyType::Scout:   return {255, 150, 200, 255};
+        case EnemyType::Sniper:  return {190, 160, 255, 255};
+        case EnemyType::Gunner:  return {255, 225, 140, 255};
+        case EnemyType::Shooter: return {255, 235, 210, 255};
+        case EnemyType::Melee:
+        default:                 return {255, 255, 255, 255};
+    }
+}
+
+EnemyType rollWaveEnemyType() {
+    const int totalWeight =
+        WAVE_MELEE_WEIGHT + WAVE_SHOOTER_WEIGHT + WAVE_BRUTE_WEIGHT +
+        WAVE_SCOUT_WEIGHT + WAVE_SNIPER_WEIGHT + WAVE_GUNNER_WEIGHT;
+
+    int roll = rand() % totalWeight;
+    if ((roll -= WAVE_MELEE_WEIGHT) < 0)   return EnemyType::Melee;
+    if ((roll -= WAVE_SHOOTER_WEIGHT) < 0) return EnemyType::Shooter;
+    if ((roll -= WAVE_BRUTE_WEIGHT) < 0)   return EnemyType::Brute;
+    if ((roll -= WAVE_SCOUT_WEIGHT) < 0)   return EnemyType::Scout;
+    if ((roll -= WAVE_SNIPER_WEIGHT) < 0)  return EnemyType::Sniper;
+    return EnemyType::Gunner;
+}
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 //  Init / Shutdown
 // ═════════════════════════════════════════════════════════════════════════════
@@ -184,6 +236,22 @@ bool Game::init() {
     }
 
     return true;
+}
+
+void Game::playMapMusic(const std::string& folder, const std::string& trackPath) {
+    Mix_HaltMusic();
+    if (customMapMusic_) { Mix_FreeMusic(customMapMusic_); customMapMusic_ = nullptr; }
+    if (!trackPath.empty()) {
+        std::string resolved = (!folder.empty() && trackPath[0] != '/') ? folder + trackPath : trackPath;
+        customMapMusic_ = Mix_LoadMUS(resolved.c_str());
+        if (customMapMusic_) {
+            Mix_PlayMusic(customMapMusic_, -1);
+            Mix_VolumeMusic(config_.musicVolume);
+            return;
+        }
+        printf("Warning: could not load map music: %s\n", resolved.c_str());
+    }
+    if (bgMusic_) { Mix_PlayMusic(bgMusic_, -1); Mix_VolumeMusic(config_.musicVolume); }
 }
 
 void Game::playMenuMusic() {
@@ -407,12 +475,17 @@ void Game::loadAssets() {
     // Single sprites
     enemySprite_   = a.tex("sprites/enemy/melee.png");
     shooterSprite_ = a.tex("sprites/enemy/shooter.png");
+    bruteSprite_   = a.tex("sprites/enemy/heavy.png");
+    scoutSprite_   = a.tex("sprites/enemy/scout.png");
+    sniperSprite_  = a.tex("sprites/enemy/sniper.png");
+    gunnerSprite_  = a.tex("sprites/enemy/gunner.png");  // falls back to nullptr → uses shooterSprite_
     bulletSprite_  = a.tex("sprites/projectiles/bullet-player.png");
     // Red-tinted copy for enemy bullets – reuse same texture with color mod at draw time
     enemyBulletSprite_ = bulletSprite_;
     shieldSprite_  = a.tex("sprites/effects/shield.png");
     mainmenuBg_   = a.tex("sprites/ui/mainmenu.png");
     bloodTex_     = a.tex("sprites/effects/blood.png");
+    scorchTex_    = a.tex("sprites/effects/scorch.png");
 
     // Map tiles
     floorTex_  = a.tex("tiles/walls/floor.png");
@@ -433,14 +506,15 @@ void Game::loadAssets() {
     sfxShoot_    = a.sfx("shootfx.wav");
     sfxEnemyShoot_ = a.sfx("laserShoot.wav");
     sfxReload_   = a.sfx("reload.mp3");
-    sfxHurt_     = a.sfx("hurt.wav");
+    sfxHurt_     = a.sfx("hurt.mp3");
     sfxDeath_    = a.sfx("death.mp3");
     sfxExplosion_= a.sfx("explosion.mp3");
     sfxParry_    = a.sfx("parry.mp3");
     sfxSwoosh_   = a.sfx("swoosh.wav");
     sfxBeep_     = a.sfx("beep.mp3");
-    sfxPress_    = a.sfx("press.mp3");
-    bgMusic_     = a.music("cybergrind.mp3");
+    sfxPress_        = a.sfx("press.mp3");
+    sfxEnemyExplode_ = a.sfx("enemyexplode.mp3");
+    bgMusic_         = a.music("cybergrind.mp3");
     menuMusic_   = a.music("mainmenu.mp3");
 }
 
@@ -526,7 +600,8 @@ void Game::run() {
             || state_ == GameState::PlayingPack
             || state_ == GameState::MultiplayerGame
             || state_ == GameState::MultiplayerPaused
-            || state_ == GameState::MultiplayerDead) {
+            || state_ == GameState::MultiplayerDead
+            || state_ == GameState::LocalCoopGame) {
             update();
             if (state_ == GameState::PlayingCustom) {
                 updateCustomMapGoal();
@@ -634,15 +709,14 @@ void Game::run() {
 
                 customEnemiesTotal_ = 0;
                 for (auto& es : customMap_.enemySpawns) {
-                    if (es.enemyType == ENTITY_CRATE || es.enemyType == ENTITY_UPGRADE_CRATE) {
+                    if (isCrateSpawnType(es.enemyType)) {
                         // Spawn as a breakable crate
                         PickupCrate crate;
                         crate.pos = {es.x, es.y};
                         crate.contents = rollRandomUpgrade();
                         crates_.push_back(crate);
                     } else {
-                        EnemyType type = (es.enemyType == ENTITY_SHOOTER) ? EnemyType::Shooter : EnemyType::Melee;
-                        spawnEnemy({es.x, es.y}, type);
+                        spawnEnemy({es.x, es.y}, enemyTypeFromSpawnId(es.enemyType));
                         customEnemiesTotal_++;
                     }
                 }
@@ -716,6 +790,57 @@ void Game::handleInput() {
         }
 
         if (e.type == SDL_CONTROLLERBUTTONDOWN) {
+            // ── Local co-op lobby: intercept per-controller join/leave ──
+            if (state_ == GameState::LocalCoopLobby) {
+                SDL_JoystickID iid = e.cbutton.which;
+                // Check if this gamepad is already assigned to a slot
+                int existingSlot = -1;
+                for (int s = 0; s < 4; s++) {
+                    if (coopSlots_[s].joined && coopSlots_[s].joyInstanceId == iid)
+                        { existingSlot = s; break; }
+                }
+                if (e.cbutton.button == SDL_CONTROLLER_BUTTON_A) {
+                    if (existingSlot < 0) {
+                        // Find next free slot (1-3; slot 0 is keyboard+mouse)
+                        for (int s = 1; s < 4; s++) {
+                            if (!coopSlots_[s].joined) {
+                                int gpNum = 0;
+                                for (int k = 1; k < 4; k++) if (coopSlots_[k].joined) gpNum++;
+                                coopSlots_[s].joined = true;
+                                coopSlots_[s].joyInstanceId = iid;
+                                char uname[16]; snprintf(uname, sizeof(uname), "pc-%d", gpNum + 1);
+                                coopSlots_[s].username = uname;
+                                if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                                break;
+                            }
+                        }
+                    }
+                    continue; // consumed by lobby
+                } else if (e.cbutton.button == SDL_CONTROLLER_BUTTON_B) {
+                    if (existingSlot > 0) {
+                        coopSlots_[existingSlot] = CoopSlot{};
+                        // Renumber remaining gamepad usernames
+                        int gpNum = 1;
+                        for (int s = 1; s < 4; s++) {
+                            if (!coopSlots_[s].joined) continue;
+                            char uname[16]; snprintf(uname, sizeof(uname), "pc-%d", gpNum++);
+                            coopSlots_[s].username = uname;
+                        }
+                    } else if (existingSlot < 0) {
+                        // Unassigned gamepad pressed B — treat as global back
+                        backInput_ = true;
+                    }
+                    continue; // consumed by lobby
+                } else if (e.cbutton.button == SDL_CONTROLLER_BUTTON_START) {
+                    // Any joined gamepad can start if slot 0 is joined
+                    if (existingSlot >= 0 || coopSlots_[0].joined) {
+                        confirmInput_ = true;
+                        if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                    }
+                    continue; // consumed by lobby
+                }
+                // Other buttons in lobby — fall through to normal handling
+            }
             usingGamepad_ = true;
             switch (e.cbutton.button) {
                 case SDL_CONTROLLER_BUTTON_START:    pauseInput_ = true; break;
@@ -787,15 +912,28 @@ void Game::handleInput() {
     if (keys[SDL_SCANCODE_A]) moveInput_.x -= 1;
     if (keys[SDL_SCANCODE_D]) moveInput_.x += 1;
 
-    // Controller left stick
+    // Controller left stick — find a gamepad for P1
+    // In local co-op, skip gamepads assigned to co-op slots (P1 uses kb+mouse)
     SDL_GameController* gc = nullptr;
+    bool isCoopState = (state_ == GameState::LocalCoopLobby || state_ == GameState::LocalCoopGame ||
+                        state_ == GameState::LocalCoopPaused || state_ == GameState::LocalCoopDead);
     for (int i = 0; i < SDL_NumJoysticks(); i++) {
-        if (SDL_IsGameController(i)) {
-            SDL_JoystickID jid = SDL_JoystickGetDeviceInstanceID(i);
-            gc = SDL_GameControllerFromInstanceID(jid);
-            break;
+        if (!SDL_IsGameController(i)) continue;
+        SDL_JoystickID jid = SDL_JoystickGetDeviceInstanceID(i);
+        // In co-op, skip gamepads owned by co-op slots
+        if (isCoopState) {
+            bool taken = false;
+            for (int s = 1; s < 4; s++)
+                if (coopSlots_[s].joined && coopSlots_[s].joyInstanceId == jid) { taken = true; break; }
+            if (taken) continue;
         }
+        gc = SDL_GameControllerFromInstanceID(jid);
+        break;
     }
+
+    // Gamepad stick input (movement + aim)
+    bool gcAimActive = false;
+    bool gcFireActive = false;
     if (gc) {
         float lx = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0f;
         float ly = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTY) / 32767.0f;
@@ -805,6 +943,7 @@ void Game::handleInput() {
         float rx = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_RIGHTX) / 32767.0f;
         float ry = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_RIGHTY) / 32767.0f;
         if (fabsf(rx) > 0.2f || fabsf(ry) > 0.2f) {
+            gcAimActive = true;
             aimInput_ = {rx, ry};
 
             // Aim-assist: slight lock-on to closest enemy within a cone
@@ -840,29 +979,33 @@ void Game::handleInput() {
                 if (blen > 0.001f) aimInput_ = blended * (len / blen);
             }
         }
-        else aimInput_ = {0, 0};
 
         // ZR = fire
-        fireInput_ = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 8000;
+        gcFireActive = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 8000;
         // ZL = launch bomb (one-shot)
         bool zlDown = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 8000;
         if (zlDown && !bombLaunchHeld_) bombLaunchInput_ = true;
         bombLaunchHeld_ = zlDown;
-    } else {
-        // PC: Mouse aiming
+    }
+
+    // Mouse aiming — always active as fallback when gamepad right stick is idle
+    {
         int mx, my;
         Uint32 mb = SDL_GetMouseState(&mx, &my);
-        Vec2 mouseWorld = camera_.screenToWorld({(float)mx, (float)my});
-        Vec2 diff = mouseWorld - player_.pos;
-        if (diff.length() > 5.0f) {
-            aimInput_ = diff.normalized();
-        } else {
-            aimInput_ = moveInput_;
+        if (!gcAimActive) {
+            Vec2 mouseWorld = camera_.screenToWorld({(float)mx, (float)my});
+            Vec2 diff = mouseWorld - player_.pos;
+            if (diff.length() > 5.0f) {
+                aimInput_ = diff.normalized();
+            } else {
+                aimInput_ = moveInput_;
+            }
         }
-        fireInput_ = (mb & SDL_BUTTON_LMASK) || keys[SDL_SCANCODE_J] || keys[SDL_SCANCODE_Z];
+        // Mouse/keyboard fire — always available alongside gamepad
+        fireInput_ = gcFireActive || (mb & SDL_BUTTON_LMASK) || keys[SDL_SCANCODE_J] || keys[SDL_SCANCODE_Z];
         bool rmbDown = (mb & SDL_BUTTON_RMASK) != 0;
         if (rmbDown && !bombLaunchHeld_) bombLaunchInput_ = true;
-        bombLaunchHeld_ = rmbDown;
+        if (!gc) bombLaunchHeld_ = rmbDown;  // only track RMB hold when no gamepad (ZL tracks its own)
     }
 
     // Normalize move
@@ -941,8 +1084,9 @@ void Game::handleInput() {
         }
     }
     else if (state_ == GameState::PlayModeMenu) {
+        playModeSelection_ = menuSelection_;   // propagate DPad nav
         if (playModeSelection_ < 0) playModeSelection_ = 0;
-        if (playModeSelection_ > 9) playModeSelection_ = 9;
+        if (playModeSelection_ > 10) playModeSelection_ = 10;
         menuSelection_ = playModeSelection_;
 
         auto adjustIntPM = [&](int& value, int minV, int maxV, int step) {
@@ -954,12 +1098,12 @@ void Game::handleInput() {
             if (rightInput_) value = std::min(maxV, value + step);
         };
 
-        if      (playModeSelection_ == 3) adjustIntPM  (config_.mapWidth,        20,   120, 2);
-        else if (playModeSelection_ == 4) adjustIntPM  (config_.mapHeight,        14,    80, 2);
-        else if (playModeSelection_ == 5) adjustIntPM  (config_.playerMaxHp,       1,    20, 1);
-        else if (playModeSelection_ == 6) adjustFloatPM(config_.spawnRateScale,  0.3f,  3.0f, 0.1f);
-        else if (playModeSelection_ == 7) adjustFloatPM(config_.enemyHpScale,    0.3f,  3.0f, 0.1f);
-        else if (playModeSelection_ == 8) adjustFloatPM(config_.enemySpeedScale, 0.5f,  2.5f, 0.1f);
+        if      (playModeSelection_ == 4) adjustIntPM  (config_.mapWidth,        20,   120, 2);
+        else if (playModeSelection_ == 5) adjustIntPM  (config_.mapHeight,        14,    80, 2);
+        else if (playModeSelection_ == 6) adjustIntPM  (config_.playerMaxHp,       1,    20, 1);
+        else if (playModeSelection_ == 7) adjustFloatPM(config_.spawnRateScale,  0.3f,  3.0f, 0.1f);
+        else if (playModeSelection_ == 8) adjustFloatPM(config_.enemyHpScale,    0.3f,  3.0f, 0.1f);
+        else if (playModeSelection_ == 9) adjustFloatPM(config_.enemySpeedScale, 0.5f,  2.5f, 0.1f);
 
         if (confirmInput_) {
             if (playModeSelection_ == 0) {
@@ -976,7 +1120,16 @@ void Game::handleInput() {
                 state_ = GameState::PackSelect;
                 packSelectIdx_ = 0;
                 menuSelection_ = 0;
-            } else if (playModeSelection_ == 9) {
+            } else if (playModeSelection_ == 3) {
+                // Enter local co-op lobby
+                for (int i = 0; i < 4; i++) coopSlots_[i] = CoopSlot{};
+                coopSlots_[0].joined = true;   // keyboard+mouse user is always P1
+                coopSlots_[0].joyInstanceId = -1;
+                coopSlots_[0].username = config_.username;
+                coopPlayerCount_ = 0;
+                state_ = GameState::LocalCoopLobby;
+                menuSelection_ = 0;
+            } else if (playModeSelection_ == 10) {
                 saveConfig();
                 state_ = GameState::MainMenu;
                 menuSelection_ = 0;
@@ -986,6 +1139,50 @@ void Game::handleInput() {
             saveConfig();
             state_ = GameState::MainMenu;
             menuSelection_ = 0;
+        }
+    }
+    else if (state_ == GameState::LocalCoopLobby) {
+        // P1 (keyboard+mouse) is always joined
+        if (!coopSlots_[0].joined) {
+            coopSlots_[0].joined = true;
+            coopSlots_[0].joyInstanceId = -1;
+            coopSlots_[0].username = config_.username;
+        }
+        if (confirmInput_) {
+            // Only P1 (Enter on keyboard, START on P1 gamepad) starts the game
+            coopPlayerCount_ = 0;
+            for (int i = 0; i < 4; i++) if (coopSlots_[i].joined) coopPlayerCount_++;
+            startLocalCoopGame();
+        }
+        if (backInput_ || pauseInput_) {
+            for (int i = 0; i < 4; i++) coopSlots_[i] = CoopSlot{};
+            coopPlayerCount_ = 0;
+            state_ = GameState::PlayModeMenu; menuSelection_ = 3;
+        }
+    }
+    else if (state_ == GameState::LocalCoopGame) {
+        if (pauseInput_) { state_ = GameState::LocalCoopPaused; menuSelection_ = 0; }
+    }
+    else if (state_ == GameState::LocalCoopPaused) {
+        if (menuSelection_ < 0) menuSelection_ = 0;
+        if (menuSelection_ > 1) menuSelection_ = 1;
+        if (pauseInput_ || backInput_) state_ = GameState::LocalCoopGame;
+        if (confirmInput_) {
+            if (menuSelection_ == 0) state_ = GameState::LocalCoopGame;
+            else {
+                for (int i = 0; i < 4; i++) coopSlots_[i] = CoopSlot{};
+                coopPlayerCount_ = 0;
+                state_ = GameState::MainMenu; menuSelection_ = 0;
+                playMenuMusic();
+            }
+        }
+    }
+    else if (state_ == GameState::LocalCoopDead) {
+        if (confirmInput_ || backInput_) {
+            for (int i = 0; i < 4; i++) coopSlots_[i] = CoopSlot{};
+            coopPlayerCount_ = 0;
+            state_ = GameState::MainMenu; menuSelection_ = 0;
+            playMenuMusic();
         }
     }
     else if (state_ == GameState::ConfigMenu) {
@@ -1712,10 +1909,12 @@ void Game::handleInput() {
                 switch (lobbySettingsSel_) {
                     case 0: // Gamemode (PVP vs PVE)
                         lobbySettings_.isPvp = !lobbySettings_.isPvp;
+                        lobbySettings_.pvpEnabled   = lobbySettings_.isPvp || lobbySettings_.friendlyFire;
+                        currentRules_.pvpEnabled    = lobbySettings_.pvpEnabled;
                         break;
                     case 1: // Friendly fire
                         lobbySettings_.friendlyFire = !lobbySettings_.friendlyFire;
-                        lobbySettings_.pvpEnabled   = lobbySettings_.friendlyFire;
+                        lobbySettings_.pvpEnabled   = lobbySettings_.isPvp || lobbySettings_.friendlyFire;
                         currentRules_.friendlyFire  = lobbySettings_.friendlyFire;
                         currentRules_.pvpEnabled    = lobbySettings_.pvpEnabled;
                         break;
@@ -2103,10 +2302,15 @@ void Game::update() {
         state_ == GameState::PlayingPack || state_ == GameState::PackPaused ||
         state_ == GameState::PackDead || state_ == GameState::PackLevelWin ||
         state_ == GameState::MultiplayerGame || state_ == GameState::MultiplayerPaused ||
-        state_ == GameState::MultiplayerDead || state_ == GameState::MultiplayerSpectator;
+        state_ == GameState::MultiplayerDead || state_ == GameState::MultiplayerSpectator ||
+        state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused;
 
     if (isPlayingState) {
-        updatePlayer(dt);
+        if (state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) {
+            updateLocalCoopPlayers(dt);
+        } else {
+            updatePlayer(dt);
+        }
         updateEnemies(dt);
         updateBullets(dt);
         updateBombs(dt);
@@ -2115,13 +2319,23 @@ void Game::update() {
         updateSpawning(dt);
         updateCrates(dt);
         updatePickups(dt);
+        bool coopSlot0Alive = (state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) && !player_.dead;
         resolveCollisions();
 
+        // Sync slot 0 back after resolveCollisions (damage, death, etc.)
+        if (state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) {
+            coopSlots_[0].player   = player_;
+            coopSlots_[0].upgrades = upgrades_;
+            if (coopSlot0Alive && player_.dead) coopSlots_[0].deaths++;
+        }
+
         // Camera
-        Vec2 aimDir = {0,0};
-        if (aimInput_.lengthSq() > 0.04f) aimDir = aimInput_.normalized();
-        else if (player_.moving && player_.vel.lengthSq() > 1.0f) aimDir = player_.vel.normalized();
-        camera_.update(player_.pos, aimDir, dt);
+        if (state_ != GameState::LocalCoopGame && state_ != GameState::LocalCoopPaused) {
+            Vec2 aimDir = {0,0};
+            if (aimInput_.lengthSq() > 0.04f) aimDir = aimInput_.normalized();
+            else if (player_.moving && player_.vel.lengthSq() > 1.0f) aimDir = player_.vel.normalized();
+            camera_.update(player_.pos, aimDir, dt);
+        }
 
         // Clean up dead entities
         auto removeDeadEntities = [](auto& vec) {
@@ -2474,7 +2688,7 @@ void Game::updateEnemies(float dt) {
             if (!e.alive) continue;
             float lerpRate = (e.netIsDashing) ? 25.0f : 14.0f;
             e.pos = Vec2::lerp(e.pos, e.netTargetPos, std::min(1.0f, dt * lerpRate));
-            if (e.damageFlash > 0) e.damageFlash -= dt * 4.0f;
+            if (e.damageFlash > 0) e.damageFlash -= dt * 2.5f;
         }
         return;
     }
@@ -2486,7 +2700,7 @@ void Game::updateEnemies(float dt) {
         if (e.stunTimer > 0) { e.stunTimer -= dt; continue; }
 
         // Damage flash decay
-        if (e.damageFlash > 0) e.damageFlash -= dt * 4.0f;
+        if (e.damageFlash > 0) e.damageFlash -= dt * 2.5f;
 
         // Vision check — sets e.targetPlayerId if a player is seen
         e.canSeePlayer = enemyCanSeeAnyPlayer(e);
@@ -2538,7 +2752,7 @@ void Game::updateEnemies(float dt) {
             if (e.dashDelayTimer <= 0) {
                 // Initiate actual dash (direction was locked when charging began)
                 e.isDashing = true;
-                e.dashTimer = ENEMY_DASH_DUR;
+                e.dashTimer = e.dashDuration;
                 e.dashCharging = false;
                 if (sfxSwoosh_) { int ch = Mix_PlayChannel(-1, sfxSwoosh_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
             }
@@ -2606,6 +2820,12 @@ bool Game::enemyCanSeeAnyPlayer(Enemy& e) {
             if (p.id == net.localPlayerId()) continue; // already tested above
             if (p.alive && !p.spectating) testVis(p.id, p.pos);
         }
+    } else if (state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) {
+        // Local co-op: test visibility against all joined players
+        for (int ci = 0; ci < 4; ci++) {
+            if (!coopSlots_[ci].joined || coopSlots_[ci].player.dead) continue;
+            testVis((uint8_t)ci, coopSlots_[ci].player.pos);
+        }
     } else {
         if (!player_.dead) testVis(0, player_.pos);
     }
@@ -2630,6 +2850,17 @@ Vec2 Game::getEnemyTargetPos(const Enemy& e) const {
                 return p.pos;
         }
     }
+    // Local co-op: target the nearest alive player
+    if (state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) {
+        const Player* nearest = nullptr;
+        float nearestDist = 1e9f;
+        for (int i = 0; i < 4; i++) {
+            if (!coopSlots_[i].joined || coopSlots_[i].player.dead) continue;
+            float d = (coopSlots_[i].player.pos - e.pos).length();
+            if (d < nearestDist) { nearestDist = d; nearest = &coopSlots_[i].player; }
+        }
+        if (nearest) return nearest->pos;
+    }
     return player_.pos; // single-player fallback or host's own position
 }
 
@@ -2646,7 +2877,7 @@ void Game::enemyWander(Enemy& e, float dt) {
     }
     Vec2 desired = steerToward(e.pos, e.wanderTarget, e.speed * 0.5f, dt);
     // Melee enemies: smooth velocity with inertia
-    if (e.type == EnemyType::Melee) {
+    if (isMeleeEnemyType(e.type)) {
         float inertia = MELEE_INERTIA;
         e.vel = Vec2::lerp(e.vel, desired, dt * inertia);
     } else {
@@ -2660,15 +2891,15 @@ void Game::enemyChase(Enemy& e, float dt) {
     float dist     = toPlayer.length();
 
     // Shooter: keep range and strafe while shooting
-    if (e.type == EnemyType::Shooter) {
-        if (dist < 260.0f) {
+    if (isShooterEnemyType(e.type)) {
+        if (dist < e.preferredMinRange) {
             // Back away and strafe sideways
             Vec2 away  = (e.pos - targetPos).normalized();
             Vec2 perp  = Vec2{-away.y, away.x}; // perpendicular
             float sideSign = (sinf(gameTime_ * 1.1f) > 0) ? 1.0f : -1.0f;
             Vec2 retreat = (away + perp * sideSign * 0.6f).normalized();
             e.vel = steerToward(e.pos, e.pos + retreat * 200.0f, e.speed * 0.7f, dt);
-        } else if (dist > 420.0f) {
+        } else if (dist > e.preferredMaxRange) {
             e.vel = steerToward(e.pos, targetPos, e.speed, dt);
         } else {
             // Orbit / strafe
@@ -2686,32 +2917,56 @@ void Game::enemyChase(Enemy& e, float dt) {
     e.vel = Vec2::lerp(e.vel, desired, dt * MELEE_INERTIA);
 
     // Start dash when close — lock direction immediately
-    if (dist < ENEMY_DASH_DIST && !e.dashOnCd && !e.dashCharging) {
+    if (dist < e.dashDistance && !e.dashOnCd && !e.dashCharging) {
         e.dashCharging   = true;
-        e.dashDelayTimer = ENEMY_DASH_DELAY;
-        e.flashTimer     = ENEMY_DASH_DELAY;
+        e.dashDelayTimer = e.dashDelay;
+        e.flashTimer     = e.dashDelay;
         e.dashDir        = toPlayer.normalized(); // lock dash direction now
         e.vel = {0, 0}; // stop for wind-up
     }
 }
 
 void Game::enemyDash(Enemy& e, float dt) {
-    e.vel = e.dashDir * ENEMY_DASH_FORCE;
+    e.vel = e.dashDir * e.dashForce;
     e.dashTimer -= dt;
     if (e.dashTimer <= 0) {
         e.isDashing = false;
         e.dashOnCd = true;
-        e.dashCdTimer = ENEMY_DASH_CD;
+        e.dashCdTimer = e.dashCooldown;
         // Keep some momentum after dash instead of hard stop
-        e.vel = e.dashDir * ENEMY_SPEED * 0.5f;
+        e.vel = e.dashDir * e.speed * 0.5f;
     }
 }
 
 void Game::enemyShoot(Enemy& e, float dt) {
     e.shootCooldown -= dt;
-    if (e.shootCooldown <= 0 && e.canSeePlayer) {
-        spawnEnemyBullet(e.pos, getEnemyTargetPos(e));
-        e.shootCooldown = SHOOTER_SHOOT_CD;
+    if (e.burstGapTimer > 0) e.burstGapTimer -= dt;
+
+    if (!e.canSeePlayer) return;
+
+    if (e.burstShotsLeft <= 0 && e.shootCooldown <= 0) {
+        e.burstShotsLeft = std::max(1, e.shotsPerBurst);
+        e.burstGapTimer = 0.0f;
+    }
+
+    if (e.burstShotsLeft > 0 && e.burstGapTimer <= 0) {
+        float spread = 0.0f;
+        if (e.shootSpread > 0.001f) {
+            float t = (float)(rand() % 1000) / 999.0f;
+            spread = (t - 0.5f) * e.shootSpread;
+        }
+        // Muzzle position: offset relative to the enemy's own facing direction
+        // so the bullet originates from where the gun is on the sprite.
+        Vec2 eFwd   = Vec2::fromAngle(e.rotation);
+        Vec2 eRight = {-eFwd.y, eFwd.x};
+        Vec2 muzzle = e.pos + eFwd * 14.0f + eRight * 14.0f;
+        spawnEnemyBullet(muzzle, getEnemyTargetPos(e), spread);
+        e.burstShotsLeft--;
+        if (e.burstShotsLeft > 0) {
+            e.burstGapTimer = e.burstGap;
+        } else {
+            e.shootCooldown = e.shootCooldownBase;
+        }
     }
 }
 
@@ -2910,6 +3165,15 @@ void Game::spawnBullet(Vec2 pos, float angle) {
         if (nextBulletNetId_ == 0) nextBulletNetId_ = 1; // skip 0 (means "not networked")
         b.ownerId = net.localPlayerId();
     }
+    // In local co-op, tag bullet with the slot index of the player who fired it
+    if (state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) {
+        for (int ci = 0; ci < 4; ci++) {
+            if (coopSlots_[ci].joined &&
+                fabsf(coopSlots_[ci].player.pos.x - player_.pos.x) < 1.f &&
+                fabsf(coopSlots_[ci].player.pos.y - player_.pos.y) < 1.f)
+                { b.ownerId = (uint8_t)ci; break; }
+        }
+    }
 
     bullets_.push_back(b);
 
@@ -2924,11 +3188,11 @@ void Game::spawnBullet(Vec2 pos, float angle) {
     }
 }
 
-void Game::spawnEnemyBullet(Vec2 pos, Vec2 target) {
+void Game::spawnEnemyBullet(Vec2 pos, Vec2 target, float angleOffset) {
     Entity b;
     Vec2 dir = (target - pos).normalized();
-    Vec2 right = {-dir.y, dir.x};
-    b.pos = pos + dir * 30.0f + right * 8.0f; // gun offset for enemies too
+    if (angleOffset != 0.0f) dir = Vec2::fromAngle(dir.angle() + angleOffset);
+    b.pos = pos + dir * 20.0f;  // push forward out of the enemy body; lateral already baked into pos
     b.vel = dir * ENEMY_BULLET_SPEED;
     b.rotation = atan2f(dir.y, dir.x);
     b.size = BULLET_SIZE;
@@ -3196,7 +3460,11 @@ void Game::spawnExplosion(Vec2 pos, uint8_t ownerId) {
     screenFlashR_ = 255; screenFlashG_ = 200; screenFlashB_ = 80;
 
     // ── Spawn fire/debris particles ──
+#ifdef __SWITCH__
+    int numSparks = 10 + rand() % 6;
+#else
     int numSparks = 20 + rand() % 12;
+#endif
     for (int i = 0; i < numSparks; i++) {
         BoxFragment f;
         f.pos = {pos.x + (float)(rand() % 20 - 10), pos.y + (float)(rand() % 20 - 10)};
@@ -3215,7 +3483,11 @@ void Game::spawnExplosion(Vec2 pos, uint8_t ownerId) {
         boxFragments_.push_back(f);
     }
     // Smoke particles (darker, larger, slower)
+#ifdef __SWITCH__
+    int numSmoke = 4 + rand() % 3;
+#else
     int numSmoke = 8 + rand() % 6;
+#endif
     for (int i = 0; i < numSmoke; i++) {
         BoxFragment f;
         f.pos = {pos.x + (float)(rand() % 30 - 15), pos.y + (float)(rand() % 30 - 15)};
@@ -3230,6 +3502,15 @@ void Game::spawnExplosion(Vec2 pos, uint8_t ownerId) {
         f.color = {(Uint8)v, (Uint8)v, (Uint8)v, 200};
         boxFragments_.push_back(f);
     }
+    // Cap total fragments to prevent runaway performance loss
+#ifdef __SWITCH__
+    constexpr size_t MAX_FRAGMENTS = 150;
+#else
+    constexpr size_t MAX_FRAGMENTS = 400;
+#endif
+    if (boxFragments_.size() > MAX_FRAGMENTS)
+        boxFragments_.erase(boxFragments_.begin(),
+                            boxFragments_.begin() + (int)(boxFragments_.size() - MAX_FRAGMENTS));
 
     // ── Scorch marks on ground ──
     {
@@ -3240,7 +3521,11 @@ void Game::spawnExplosion(Vec2 pos, uint8_t ownerId) {
         scorch.type = DecalType::Scorch;
         blood_.push_back(scorch);
         // Smaller surrounding scorch splatters
+#ifdef __SWITCH__
+        int numScorch = 1 + rand() % 2;
+#else
         int numScorch = 3 + rand() % 3;
+#endif
         for (int i = 0; i < numScorch; i++) {
             BloodDecal s;
             float dist = 40.0f + (float)(rand() % 80);
@@ -3251,6 +3536,15 @@ void Game::spawnExplosion(Vec2 pos, uint8_t ownerId) {
             s.type = DecalType::Scorch;
             blood_.push_back(s);
         }
+        // Cap decals to avoid unbounded growth and renderDecals() cost
+#ifdef __SWITCH__
+        constexpr size_t MAX_DECALS = 80;
+#else
+        constexpr size_t MAX_DECALS = 200;
+#endif
+        if (blood_.size() > MAX_DECALS)
+            blood_.erase(blood_.begin(),
+                         blood_.begin() + (int)(blood_.size() - MAX_DECALS));
     }
 
     // ── Destroy boxes caught in explosion radius ──
@@ -3315,6 +3609,7 @@ void Game::spawnBomb() {
     b.orbitAngle = (float)(rand() % 360) * M_PI / 180.0f;
     b.orbitRadius = 55.0f + (float)(rand() % 20);
     b.orbitSpeed = 3.0f + (float)(rand() % 100) / 100.0f; // radians/sec
+    b.dashSpeed *= upgrades_.bombDashSpeedMulti;
     b.ownerId = net.isInGame() ? net.localPlayerId() : 255;
     bombs_.push_back(b);
     // Notify other clients so they can render the orbiting bomb
@@ -3343,9 +3638,7 @@ void Game::updateSpawning(float dt) {
                 for (int attempt = 0; attempt < 5; attempt++) {
                     Vec2 sp = map_.spawnPoints[rand() % map_.spawnPoints.size()];
                     if (!map_.worldCollides(sp.x, sp.y, ENEMY_SIZE * 0.5f)) {
-                        float roll = (float)(rand() % 100) / 100.0f;
-                        EnemyType type = (roll < WAVE_SHOOTER_CHANCE) ? EnemyType::Shooter : EnemyType::Melee;
-                        spawnEnemy(sp, type);
+                        spawnEnemy(sp, rollWaveEnemyType());
                         waveEnemiesLeft_--;
                         break;
                     }
@@ -3421,16 +3714,75 @@ void Game::spawnEnemy(Vec2 pos, EnemyType type) {
     e.type = type;
     e.wanderTarget = pos;
     e.nextWanderTime = gameTime_ + 1.0f;
-    if (type == EnemyType::Shooter) {
-        e.hp = SHOOTER_HP * config_.enemyHpScale;
-        e.maxHp = SHOOTER_HP * config_.enemyHpScale;
-        e.speed = SHOOTER_SPEED * config_.enemySpeedScale;
-        e.size = SHOOTER_SIZE;
-        e.shootCooldown = SHOOTER_SHOOT_CD;
-    } else {
-        e.hp = ENEMY_HP * config_.enemyHpScale;
-        e.maxHp = ENEMY_HP * config_.enemyHpScale;
-        e.speed = ENEMY_SPEED * config_.enemySpeedScale;
+    e.renderScale = 3.0f;
+    switch (type) {
+        case EnemyType::Shooter:
+            e.hp = SHOOTER_HP * config_.enemyHpScale;
+            e.maxHp = SHOOTER_HP * config_.enemyHpScale;
+            e.speed = SHOOTER_SPEED * config_.enemySpeedScale;
+            e.size = SHOOTER_SIZE;
+            e.shootCooldown = SHOOTER_SHOOT_CD;
+            e.shootCooldownBase = SHOOTER_SHOOT_CD;
+            e.renderScale = SHOOTER_RENDER_SCALE;
+            break;
+        case EnemyType::Brute:
+            e.hp = BRUTE_HP * config_.enemyHpScale;
+            e.maxHp = BRUTE_HP * config_.enemyHpScale;
+            e.speed = BRUTE_SPEED * config_.enemySpeedScale;
+            e.size = BRUTE_SIZE;
+            e.dashDistance = BRUTE_DASH_DIST;
+            e.dashForce = BRUTE_DASH_FORCE;
+            e.dashDelay = BRUTE_DASH_DELAY;
+            e.dashDuration = BRUTE_DASH_DUR;
+            e.dashCooldown = BRUTE_DASH_CD;
+            e.contactDamage = BRUTE_DASH_DMG;
+            e.renderScale = BRUTE_RENDER_SCALE;
+            break;
+        case EnemyType::Scout:
+            e.hp = SCOUT_HP * config_.enemyHpScale;
+            e.maxHp = SCOUT_HP * config_.enemyHpScale;
+            e.speed = SCOUT_SPEED * config_.enemySpeedScale;
+            e.size = SCOUT_SIZE;
+            e.dashDistance = SCOUT_DASH_DIST;
+            e.dashForce = SCOUT_DASH_FORCE;
+            e.dashDelay = SCOUT_DASH_DELAY;
+            e.dashDuration = SCOUT_DASH_DUR;
+            e.dashCooldown = SCOUT_DASH_CD;
+            e.contactDamage = SCOUT_DASH_DMG;
+            e.renderScale = SCOUT_RENDER_SCALE;
+            break;
+        case EnemyType::Sniper:
+            e.hp = SNIPER_HP * config_.enemyHpScale;
+            e.maxHp = SNIPER_HP * config_.enemyHpScale;
+            e.speed = SNIPER_SPEED * config_.enemySpeedScale;
+            e.size = SNIPER_SIZE;
+            e.shootCooldown = SNIPER_SHOOT_CD;
+            e.shootCooldownBase = SNIPER_SHOOT_CD;
+            e.preferredMinRange = 460.0f;
+            e.preferredMaxRange = 700.0f;
+            e.renderScale = SNIPER_RENDER_SCALE;
+            break;
+        case EnemyType::Gunner:
+            e.hp = GUNNER_HP * config_.enemyHpScale;
+            e.maxHp = GUNNER_HP * config_.enemyHpScale;
+            e.speed = GUNNER_SPEED * config_.enemySpeedScale;
+            e.size = GUNNER_SIZE;
+            e.shootCooldown = GUNNER_SHOOT_CD;
+            e.shootCooldownBase = GUNNER_SHOOT_CD;
+            e.preferredMinRange = 220.0f;
+            e.preferredMaxRange = 360.0f;
+            e.shotsPerBurst = 3;
+            e.burstGap = GUNNER_BURST_GAP;
+            e.shootSpread = 0.18f;
+            e.renderScale = GUNNER_RENDER_SCALE;
+            break;
+        case EnemyType::Melee:
+        default:
+            e.hp = ENEMY_HP * config_.enemyHpScale;
+            e.maxHp = ENEMY_HP * config_.enemyHpScale;
+            e.speed = ENEMY_SPEED * config_.enemySpeedScale;
+            e.renderScale = 3.0f;
+            break;
     }
     enemies_.push_back(e);
 }
@@ -3452,6 +3804,76 @@ void Game::resolveCollisions() {
             if (circleOverlap(b.pos, b.size, e.pos, e.size * 0.7f)) {
                 // Visual feedback on all peers
                 e.damageFlash = 1.0f;
+                // Blood splatter — visual only, runs on all peers
+                {
+                    Vec2 hitDir = b.vel.normalized();
+                    // Directional spray in bullet direction
+#ifdef __SWITCH__
+                    int numDirSparks = 4 + rand() % 3;
+#else
+                    int numDirSparks = 7 + rand() % 5;
+#endif
+                    for (int i = 0; i < numDirSparks; i++) {
+                        BoxFragment f;
+                        f.pos = {b.pos.x + (float)(rand() % 14 - 7), b.pos.y + (float)(rand() % 14 - 7)};
+                        float spread = ((float)(rand() % 160) - 80.0f) * (float)M_PI / 180.0f;
+                        float spd = 120.0f + (float)(rand() % 280);
+                        float ang = atan2f(hitDir.y, hitDir.x) + spread;
+                        f.vel = {cosf(ang) * spd, sinf(ang) * spd};
+                        f.size = 3.0f + (float)(rand() % 6);
+                        f.lifetime = 0.35f + (float)(rand() % 25) / 100.0f;
+                        f.age = 0.0f;
+                        f.rotation = (float)(rand() % 360);
+                        f.rotSpeed = (float)(rand() % 500 - 250);
+                        int shade = 80 + rand() % 130;
+                        f.color = {(Uint8)shade, 0, 0, 255};
+                        boxFragments_.push_back(f);
+                    }
+                    // Omnidirectional burst (mini death explosion)
+#ifdef __SWITCH__
+                    int numBurst = 3 + rand() % 3;
+#else
+                    int numBurst = 5 + rand() % 5;
+#endif
+                    for (int i = 0; i < numBurst; i++) {
+                        BoxFragment f;
+                        f.pos = {b.pos.x + (float)(rand() % 16 - 8), b.pos.y + (float)(rand() % 16 - 8)};
+                        float ang = (float)(rand() % 360) * (float)M_PI / 180.0f;
+                        float spd = 80.0f + (float)(rand() % 220);
+                        f.vel = {cosf(ang) * spd, sinf(ang) * spd};
+                        f.size = 2.0f + (float)(rand() % 5);
+                        f.lifetime = 0.3f + (float)(rand() % 30) / 100.0f;
+                        f.age = 0.0f;
+                        f.rotation = (float)(rand() % 360);
+                        f.rotSpeed = (float)(rand() % 400 - 200);
+                        int shade = 90 + rand() % 120;
+                        f.color = {(Uint8)shade, 0, 0, 255};
+                        boxFragments_.push_back(f);
+                    }
+                    // Central blood decal (bigger)
+                    BloodDecal bd;
+                    bd.pos = b.pos;
+                    bd.rotation = (float)(rand() % 360) * (float)M_PI / 180.0f;
+                    bd.scale = 0.5f + (float)(rand() % 50) / 100.0f;
+                    bd.type = DecalType::Blood;
+                    blood_.push_back(bd);
+                    // Extra scattered splat decals
+#ifdef __SWITCH__
+                    int numExtra = 1 + rand() % 2;
+#else
+                    int numExtra = 2 + rand() % 2;
+#endif
+                    for (int i = 0; i < numExtra; i++) {
+                        BloodDecal extra;
+                        float dist = 10.0f + (float)(rand() % 30);
+                        float ang = (float)(rand() % 360) * (float)M_PI / 180.0f;
+                        extra.pos = {b.pos.x + cosf(ang) * dist, b.pos.y + sinf(ang) * dist};
+                        extra.rotation = (float)(rand() % 360) * (float)M_PI / 180.0f;
+                        extra.scale = 0.25f + (float)(rand() % 40) / 100.0f;
+                        extra.type = DecalType::Blood;
+                        blood_.push_back(extra);
+                    }
+                }
                 if (!b.piercing) {
                     b.alive = false;
                     // Notify remote peers that this bullet is gone
@@ -3462,6 +3884,7 @@ void Game::resolveCollisions() {
                 // State changes are HOST-ONLY to keep enemy HP authoritative
                 if (!net.isOnline() || net.isHost()) {
                     e.hp -= b.damage;
+                    if (upgrades_.hasStunRounds) e.stunTimer = std::max(e.stunTimer, 0.75f);
                     // Aggro — target the player who shot this bullet
                     e.state = EnemyState::Chase;
                     e.lastSeenTime = gameTime_;
@@ -3473,6 +3896,10 @@ void Game::resolveCollisions() {
                         // In multiplayer, only credit kills for the local player's bullets.
                         bool trackKill = !net.isOnline() || b.ownerId == net.localPlayerId();
                         killEnemy(e, trackKill);
+                        // Local co-op kill tracking
+                        if ((state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) &&
+                            b.ownerId < 4 && coopSlots_[b.ownerId].joined)
+                            coopSlots_[b.ownerId].kills++;
                         // Broadcast kill — pass actual killer so clients credit the right player
                         if (net.isInGame()) {
                             net.sendEnemyKilled(eIdx, b.ownerId);
@@ -3487,7 +3914,7 @@ void Game::resolveCollisions() {
 
     // Enemy bullets vs player
     for (auto& b : enemyBullets_) {
-        if (!b.alive) continue;
+        if (!b.alive || p.dead) continue;
         if (circleOverlap(b.pos, b.size, p.pos, PLAYER_SIZE * 0.5f)) {
             if (p.isParrying) {
                 // Parry reflects!
@@ -3513,7 +3940,7 @@ void Game::resolveCollisions() {
     }
 
     // Melee enemies vs player (dash collision)
-    for (auto& e : enemies_) {
+    if (!p.dead) for (auto& e : enemies_) {
         if (!e.alive || !(e.isDashing || e.netIsDashing)) continue;
         if (circleOverlap(e.pos, e.size * 0.6f, p.pos, PLAYER_SIZE * 0.5f)) {
             if (p.isParrying) {
@@ -3527,7 +3954,7 @@ void Game::resolveCollisions() {
                 if (sfxParry_) { int ch = Mix_PlayChannel(-1, sfxParry_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
                 if (e.hp <= 0) killEnemy(e);
             } else {
-                p.takeDamage(ENEMY_DASH_DMG);
+                p.takeDamage(e.contactDamage);
                 camera_.addShake(1.8f);
                 if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
                 if (p.dead) {
@@ -3537,6 +3964,48 @@ void Game::resolveCollisions() {
                     if (net.isInGame()) net.sendPlayerDied(net.localPlayerId(), 0);
                 }
             }
+        }
+    }
+
+    // ── Local co-op: damage for extra players (slots 1–3) ──
+    if (state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) {
+        for (int ci = 1; ci < 4; ci++) {
+            if (!coopSlots_[ci].joined) continue;
+            Player& cp = coopSlots_[ci].player;
+            if (cp.dead) continue;
+            for (auto& b : enemyBullets_) {
+                if (!b.alive) continue;
+                if (circleOverlap(b.pos, b.size, cp.pos, PLAYER_SIZE * 0.5f)) {
+                    if (cp.isParrying) {
+                        b.vel = b.vel * -1.0f; b.tag = TAG_BULLET;
+                        bullets_.push_back(b); b.alive = false;
+                        coopSlots_[ci].camera.addShake(2.2f);
+                        if (sfxParry_) { int ch = Mix_PlayChannel(-1, sfxParry_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                    } else {
+                        cp.takeDamage(b.damage); b.alive = false;
+                        coopSlots_[ci].camera.addShake(1.8f);
+                        if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                    }
+                }
+            }
+            for (auto& e : enemies_) {
+                if (!e.alive || !(e.isDashing || e.netIsDashing)) continue;
+                if (circleOverlap(e.pos, e.size * 0.6f, cp.pos, PLAYER_SIZE * 0.5f)) {
+                    if (cp.isParrying) {
+                        e.hp -= PARRY_DMG; e.stunTimer = 1.0f; e.isDashing = false;
+                        e.vel = (e.pos - cp.pos).normalized() * 500.0f; e.damageFlash = 1.0f;
+                        coopSlots_[ci].camera.addShake(2.2f);
+                        if (sfxParry_) { int ch = Mix_PlayChannel(-1, sfxParry_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                        if (e.hp <= 0) killEnemy(e);
+                    } else {
+                        cp.takeDamage(e.contactDamage);
+                        coopSlots_[ci].camera.addShake(1.8f);
+                        if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                    }
+                }
+            }
+            // Track co-op death (cp was alive at loop start)
+            if (cp.dead) coopSlots_[ci].deaths++;
         }
     }
 
@@ -3654,7 +4123,11 @@ void Game::killEnemy(Enemy& e, bool trackKill) {
     blood_.push_back(bd);
 
     // Bloody explosion — big burst of red particles
+#ifdef __SWITCH__
+    int numGibs = 10 + rand() % 6;
+#else
     int numGibs = 22 + rand() % 12;
+#endif
     for (int i = 0; i < numGibs; i++) {
         BoxFragment f;
         f.pos = {e.pos.x + (float)(rand() % 20 - 10), e.pos.y + (float)(rand() % 20 - 10)};
@@ -3673,7 +4146,11 @@ void Game::killEnemy(Enemy& e, bool trackKill) {
         boxFragments_.push_back(f);
     }
     // Extra blood splatter decals — varied sizes, spread out
+#ifdef __SWITCH__
+    int numExtra = 2 + rand() % 2;
+#else
     int numExtra = 4 + rand() % 4;
+#endif
     for (int i = 0; i < numExtra; i++) {
         BloodDecal extra;
         float dist = 20.0f + (float)(rand() % 60);
@@ -3684,6 +4161,25 @@ void Game::killEnemy(Enemy& e, bool trackKill) {
         extra.type = DecalType::Blood;
         blood_.push_back(extra);
     }
+    // Cap both pools
+#ifdef __SWITCH__
+    constexpr size_t KILL_MAX_FRAGS = 150;
+    constexpr size_t KILL_MAX_DECALS = 80;
+#else
+    constexpr size_t KILL_MAX_FRAGS = 400;
+    constexpr size_t KILL_MAX_DECALS = 200;
+#endif
+    if (boxFragments_.size() > KILL_MAX_FRAGS)
+        boxFragments_.erase(boxFragments_.begin(),
+                            boxFragments_.begin() + (int)(boxFragments_.size() - KILL_MAX_FRAGS));
+    if (blood_.size() > KILL_MAX_DECALS)
+        blood_.erase(blood_.begin(),
+                     blood_.begin() + (int)(blood_.size() - KILL_MAX_DECALS));
+
+    if (sfxEnemyExplode_) {
+        int ch = Mix_PlayChannel(-1, sfxEnemyExplode_, 0);
+        if (ch >= 0) Mix_Volume(ch, config_.sfxVolume * 3 / 4);
+    }
 
     // Brief red flash
     screenFlashTimer_ = 0.05f;
@@ -3692,10 +4188,20 @@ void Game::killEnemy(Enemy& e, bool trackKill) {
     // Player kill registration (only for locally-originated kills)
     if (trackKill) {
         player_.killCounter++;
-        if (player_.killCounter >= KILLS_PER_BOMB) {
-            player_.killCounter = 0;
-            player_.bombCount++;
+        if (upgrades_.hasScavenger && player_.ammo < player_.maxAmmo) {
+            player_.ammo = std::min(player_.maxAmmo, player_.ammo + 1);
         }
+        if (player_.killCounter >= upgrades_.killsPerBomb) {
+            player_.killCounter = 0;
+            player_.bombCount = std::min(MAX_BOMBS, player_.bombCount + 1);
+        }
+    }
+    // Local co-op kills tracking: credit the slot that owns this kill
+    // (During resolveCollisions, player_ = slot 0; use ownerId if available)
+    if (state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) {
+        // The kill is credited to slot 0 via player_ above; coopSlots_[0].kills
+        // will be synced after resolveCollisions. Nothing else needed here — the
+        // per-slot kill count is incremented in resolveCollisions via b.ownerId.
     }
 }
 
@@ -3786,7 +4292,8 @@ void Game::render() {
         state_ == GameState::PlayingPack || state_ == GameState::PackPaused ||
         state_ == GameState::PackDead ||
         state_ == GameState::MultiplayerGame || state_ == GameState::MultiplayerPaused ||
-        state_ == GameState::MultiplayerDead)
+        state_ == GameState::MultiplayerDead ||
+        state_ == GameState::LocalCoopGame)
         SDL_ShowCursor(SDL_DISABLE);
     else
         SDL_ShowCursor(SDL_ENABLE);
@@ -3825,15 +4332,15 @@ void Game::render() {
         // Enemies
         for (auto& e : enemies_) {
             if (!e.alive) continue;
-            SDL_Texture* tex = (e.type == EnemyType::Shooter) ? shooterSprite_ : enemySprite_;
-            float drawScale = (e.type == EnemyType::Shooter) ? SHOOTER_RENDER_SCALE : 3.0f;
+            SDL_Texture* tex = enemySpriteTex(e.type);
+            float drawScale = e.renderScale;
             if (tex) {
                 // Dash state (works both on host and clients via netIsDashing)
                 bool showDash    = e.isDashing    || e.netIsDashing;
                 bool showCharge  = e.dashCharging || e.netDashCharging;
 
                 // Red ghost trail during dash — subtle/transparent
-                if (showDash && e.type == EnemyType::Melee) {
+                if (showDash && isMeleeEnemyType(e.type)) {
                     Vec2 trailDir = (e.dashDir.lengthSq() > 0.001f) ? e.dashDir : Vec2{1,0};
                     for (int t = 1; t <= 4; t++) {
                         Vec2 trailPos = e.pos - trailDir * e.size * 0.65f * (float)t;
@@ -3855,14 +4362,17 @@ void Game::render() {
                     SDL_Color tint = {255, pulse, pulse, 255};
                     renderSpriteEx(tex, e.pos, e.rotation + M_PI/2, drawScale, tint);
                 } else if (e.damageFlash > 0 || e.flashTimer > 0) {
-                    SDL_Color tint = {255, 100, 100, 255};
+                    Uint8 redness = (Uint8)(255.0f * std::min(1.0f, e.damageFlash + e.flashTimer));
+                    Uint8 other   = (Uint8)(15.0f * (1.0f - std::min(1.0f, e.damageFlash + e.flashTimer)));
+                    SDL_Color tint = {255, (Uint8)(other + redness/12), (Uint8)(other + redness/12), 255};
                     renderSpriteEx(tex, e.pos, e.rotation + M_PI/2, drawScale, tint);
                 } else {
                     // Health-based tint
                     float hpRatio = e.hp / e.maxHp;
-                    Uint8 r = 255;
-                    Uint8 g = (Uint8)(255 * hpRatio);
-                    Uint8 b = (Uint8)(255 * hpRatio);
+                    SDL_Color base = enemyBaseTint(e.type);
+                    Uint8 r = base.r;
+                    Uint8 g = (Uint8)(base.g * hpRatio);
+                    Uint8 b = (Uint8)(base.b * hpRatio);
                     SDL_Color tint = {r, g, b, 255};
                     renderSpriteEx(tex, e.pos, e.rotation + M_PI/2, drawScale, tint);
                 }
@@ -3964,6 +4474,8 @@ void Game::render() {
         for (auto& f : boxFragments_) {
             if (!f.alive) continue;
             Vec2 sp = camera_.worldToScreen(f.pos);
+            // Cull off-screen fragments
+            if (sp.x < -32 || sp.x > SCREEN_W + 32 || sp.y < -32 || sp.y > SCREEN_H + 32) continue;
             float alpha = 1.0f - (f.age / f.lifetime);
             int sz = (int)(f.size * alpha + 1);
             SDL_SetRenderDrawColor(renderer_, f.color.r, f.color.g, f.color.b, (Uint8)(alpha * 255));
@@ -4031,15 +4543,18 @@ void Game::render() {
         }
         for (auto& e : enemies_) {
             if (!e.alive) continue;
-            SDL_Texture* tex = (e.type == EnemyType::Shooter) ? shooterSprite_ : enemySprite_;
-            float drawScale = (e.type == EnemyType::Shooter) ? SHOOTER_RENDER_SCALE : 3.0f;
+            SDL_Texture* tex = enemySpriteTex(e.type);
+            float drawScale = e.renderScale;
             if (tex) {
                 if (e.damageFlash > 0 || e.flashTimer > 0 || e.dashCharging) {
-                    SDL_Color tint = {255, 100, 100, 255};
+                    float flash = std::min(1.0f, e.damageFlash + e.flashTimer + (e.dashCharging ? 1.0f : 0.0f));
+                    Uint8 other = (Uint8)(15.0f * (1.0f - std::min(1.0f, flash)));
+                    SDL_Color tint = {255, (Uint8)(other + (Uint8)(flash * 20.0f / 12.0f)), (Uint8)(other + (Uint8)(flash * 20.0f / 12.0f)), 255};
                     renderSpriteEx(tex, e.pos, e.rotation + (float)M_PI/2, drawScale, tint);
                 } else {
                     float hpRatio = e.hp / e.maxHp;
-                    Uint8 rr = 255, gg = (Uint8)(255 * hpRatio), bb = (Uint8)(255 * hpRatio);
+                    SDL_Color base = enemyBaseTint(e.type);
+                    Uint8 rr = base.r, gg = (Uint8)(base.g * hpRatio), bb = (Uint8)(base.b * hpRatio);
                     SDL_Color tint = {rr, gg, bb, 255};
                     renderSpriteEx(tex, e.pos, e.rotation + (float)M_PI/2, drawScale, tint);
                 }
@@ -4105,6 +4620,7 @@ void Game::render() {
         for (auto& f : boxFragments_) {
             if (!f.alive) continue;
             Vec2 sp = camera_.worldToScreen(f.pos);
+            if (sp.x < -32 || sp.x > SCREEN_W + 32 || sp.y < -32 || sp.y > SCREEN_H + 32) continue;
             float alpha = 1.0f - (f.age / f.lifetime);
             int sz = (int)(f.size * alpha + 1);
             SDL_SetRenderDrawColor(renderer_, f.color.r, f.color.g, f.color.b, (Uint8)(alpha * 255));
@@ -4150,9 +4666,9 @@ void Game::render() {
         renderDecals();
         for (auto& e : enemies_) {
             if (!e.alive) continue;
-            SDL_Texture* tex = (e.type == EnemyType::Shooter) ? shooterSprite_ : enemySprite_;
-            float drawScale = (e.type == EnemyType::Shooter) ? SHOOTER_RENDER_SCALE : 3.0f;
-            if (tex) renderSpriteEx(tex, e.pos, e.rotation + (float)M_PI/2, drawScale, {255,255,255,255});
+            SDL_Texture* tex = enemySpriteTex(e.type);
+            float drawScale = e.renderScale;
+            if (tex) renderSpriteEx(tex, e.pos, e.rotation + (float)M_PI/2, drawScale, enemyBaseTint(e.type));
         }
         if (!player_.dead && !legSprites_.empty()) {
             int idx = player_.legAnimFrame % (int)legSprites_.size();
@@ -4265,9 +4781,9 @@ void Game::render() {
         }
         for (auto& e : enemies_) {
             if (!e.alive) continue;
-            SDL_Texture* tex = (e.type == EnemyType::Shooter) ? shooterSprite_ : enemySprite_;
-            float drawScale = (e.type == EnemyType::Shooter) ? SHOOTER_RENDER_SCALE : 3.0f;
-            if (tex) renderSpriteEx(tex, e.pos, e.rotation + (float)M_PI/2, drawScale, {255,255,255,255});
+            SDL_Texture* tex = enemySpriteTex(e.type);
+            float drawScale = e.renderScale;
+            if (tex) renderSpriteEx(tex, e.pos, e.rotation + (float)M_PI/2, drawScale, enemyBaseTint(e.type));
         }
         if (!player_.dead && !legSprites_.empty()) {
             int idx = player_.legAnimFrame % (int)legSprites_.size();
@@ -4360,6 +4876,18 @@ void Game::render() {
     case GameState::ModMenu:
         renderModMenu();
         break;
+
+    case GameState::LocalCoopLobby:
+        renderLocalCoopLobby();
+        break;
+
+    case GameState::LocalCoopGame:
+    case GameState::LocalCoopPaused:
+    case GameState::LocalCoopDead:
+        renderLocalCoopGame();
+        if (state_ == GameState::LocalCoopPaused) renderPauseMenu();
+        if (state_ == GameState::LocalCoopDead)   renderDeathScreen();
+        break;
     }
 
     // Mod-save dialog overlay — rendered on top of everything
@@ -4433,14 +4961,36 @@ void Game::renderSpriteEx(SDL_Texture* tex, Vec2 worldPos, float angle, float sc
     SDL_SetTextureAlphaMod(tex, 255);
 }
 
+SDL_Texture* Game::enemySpriteTex(EnemyType t) const {
+    switch (t) {
+        case EnemyType::Brute:   return bruteSprite_   ? bruteSprite_   : enemySprite_;
+        case EnemyType::Scout:   return scoutSprite_   ? scoutSprite_   : enemySprite_;
+        case EnemyType::Sniper:  return sniperSprite_  ? sniperSprite_  : shooterSprite_;
+        case EnemyType::Gunner:  return gunnerSprite_  ? gunnerSprite_  : shooterSprite_;
+        case EnemyType::Shooter: return shooterSprite_;
+        case EnemyType::Melee:
+        default:                 return enemySprite_;
+    }
+}
+
 void Game::renderExplosionPixelated(const Explosion& ex) {
     Vec2 sp = camera_.worldToScreen(ex.pos);
+
+    // Cull completely off-screen explosions (generous margin)
+    float screenMargin = ex.radius + 32.0f;
+    if (sp.x < -screenMargin || sp.x > SCREEN_W + screenMargin ||
+        sp.y < -screenMargin || sp.y > SCREEN_H + screenMargin) return;
 
     float t = ex.duration > 0.0f ? (ex.timer / ex.duration) : 1.0f;
     t = std::max(0.0f, std::min(1.0f, t));
     float visT = std::max(0.0f, std::min(1.0f, t * 1.28f + 0.02f));
 
+    // Switch: larger pixels = 4x fewer SDL draw calls per explosion
+#ifdef __SWITCH__
+    const int pixel = 8;
+#else
     const int pixel = 4;
+#endif
     int maxRing = std::max(2, (int)(ex.radius / (float)pixel));
     int activeRing = std::max(1, (int)(maxRing * (0.30f + 0.70f * visT)));
     int innerRing = std::max(0, activeRing - (1 + (int)(3.0f * visT)));
@@ -4537,8 +5087,8 @@ void Game::renderMap() {
     // Only render visible tiles
     int startX = (int)(camera_.pos.x / TILE_SIZE) - 1;
     int startY = (int)(camera_.pos.y / TILE_SIZE) - 1;
-    int endX   = startX + SCREEN_W / TILE_SIZE + 3;
-    int endY   = startY + SCREEN_H / TILE_SIZE + 3;
+    int endX   = startX + camera_.viewW / TILE_SIZE + 3;
+    int endY   = startY + camera_.viewH / TILE_SIZE + 3;
 
     startX = std::max(0, startX);
     startY = std::max(0, startY);
@@ -4689,21 +5239,26 @@ void Game::renderDecals() {
     for (auto& bd : blood_) {
         Vec2 sp = camera_.worldToScreen(bd.pos);
         float half = 32.0f * bd.scale;
+        if (!std::isfinite(bd.rotation) || !std::isfinite(half) || half <= 0.0f) continue;
         if (bd.type == DecalType::Scorch) {
-            SDL_SetTextureColorMod(bloodTex_, 20, 20, 20);
-            SDL_SetTextureAlphaMod(bloodTex_, 160);
+            if (scorchTex_) {
+                SDL_SetTextureAlphaMod(scorchTex_, 200);
+                renderRotatedQuad(renderer_, scorchTex_, sp.x, sp.y, half, half, bd.rotation);
+                SDL_SetTextureAlphaMod(scorchTex_, 255);
+            } else {
+                SDL_SetTextureColorMod(bloodTex_, 20, 20, 20);
+                SDL_SetTextureAlphaMod(bloodTex_, 160);
+                renderRotatedQuad(renderer_, bloodTex_, sp.x, sp.y, half, half, bd.rotation);
+                SDL_SetTextureColorMod(bloodTex_, 255, 255, 255);
+                SDL_SetTextureAlphaMod(bloodTex_, 255);
+            }
         } else {
             SDL_SetTextureColorMod(bloodTex_, 255, 255, 255);
             SDL_SetTextureAlphaMod(bloodTex_, 180);
-        }
-        if (!std::isfinite(bd.rotation) || !std::isfinite(half) || half <= 0.0f) {
+            renderRotatedQuad(renderer_, bloodTex_, sp.x, sp.y, half, half, bd.rotation);
             SDL_SetTextureColorMod(bloodTex_, 255, 255, 255);
             SDL_SetTextureAlphaMod(bloodTex_, 255);
-            continue;
         }
-        renderRotatedQuad(renderer_, bloodTex_, sp.x, sp.y, half, half, bd.rotation);
-        SDL_SetTextureColorMod(bloodTex_, 255, 255, 255);
-        SDL_SetTextureAlphaMod(bloodTex_, 255);
     }
 }
 
@@ -4790,6 +5345,148 @@ void Game::renderShadingPass() {
     }
 }
 
+void Game::renderMinimap() {
+    // ── Minimap ─ bottom-right corner ────────────────────────────────────────
+    const int MMAP_MAX_PX = 160;  // maximum rendered dimension in pixels
+    const int MMAP_MARGIN = 10;   // screen-edge margin
+    const int MMAP_INNER  = 4;    // inner padding between border and tiles
+
+    int mapW = map_.width;
+    int mapH = map_.height;
+    if (mapW <= 0 || mapH <= 0) return;
+
+    // Scale: choose the largest integer pixels-per-tile that fits in MMAP_MAX_PX
+    int tpx = std::max(1, std::min(MMAP_MAX_PX / mapW, MMAP_MAX_PX / mapH));
+    int mmW = mapW * tpx;
+    int mmH = mapH * tpx;
+
+    // Position in bottom-right corner
+    int mmX = SCREEN_W - MMAP_MARGIN - mmW;
+    int mmY = SCREEN_H - MMAP_MARGIN - mmH;
+
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+
+    // Background
+    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 160);
+    SDL_Rect bg = {mmX - MMAP_INNER, mmY - MMAP_INNER,
+                   mmW + MMAP_INNER*2, mmH + MMAP_INNER*2};
+    SDL_RenderFillRect(renderer_, &bg);
+
+    // Border
+    SDL_SetRenderDrawColor(renderer_, 0, 200, 180, 100);
+    SDL_Rect border = {mmX - MMAP_INNER - 1, mmY - MMAP_INNER - 1,
+                       mmW + MMAP_INNER*2 + 2, mmH + MMAP_INNER*2 + 2};
+    SDL_RenderDrawRect(renderer_, &border);
+
+    // Tiles
+    for (int ty = 0; ty < mapH; ty++) {
+        for (int tx = 0; tx < mapW; tx++) {
+            SDL_Rect r = {mmX + tx * tpx, mmY + ty * tpx, tpx, tpx};
+            if (map_.isSolid(tx, ty))
+                SDL_SetRenderDrawColor(renderer_, 150, 140, 120, 220);
+            else
+                SDL_SetRenderDrawColor(renderer_, 28, 30, 35, 200);
+            SDL_RenderFillRect(renderer_, &r);
+        }
+    }
+
+    float worldW = map_.worldWidth();
+    float worldH = map_.worldHeight();
+
+    // Camera viewport rectangle
+    {
+        int vx = mmX + (int)(camera_.pos.x / worldW * mmW);
+        int vy = mmY + (int)(camera_.pos.y / worldH * mmH);
+        int vw = (int)((float)SCREEN_W / worldW * mmW);
+        int vh = (int)((float)SCREEN_H / worldH * mmH);
+        vx = std::max(mmX, std::min(mmX + mmW - 1, vx));
+        vy = std::max(mmY, std::min(mmY + mmH - 1, vy));
+        vw = std::min(vw, mmX + mmW - vx);
+        vh = std::min(vh, mmY + mmH - vy);
+        if (vw > 0 && vh > 0) {
+            SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 25);
+            SDL_Rect vr = {vx, vy, vw, vh};
+            SDL_RenderFillRect(renderer_, &vr);
+        }
+    }
+
+    // Team colors (indices 0-3: red, blue, green, orange)
+    static const SDL_Color kTeamColors[4] = {
+        {255, 80,  80,  255}, {80,  80,  255, 255},
+        {80,  220, 80,  255}, {255, 180, 60,  255}
+    };
+    auto blipColor = [&](int8_t team) -> SDL_Color {
+        if (team >= 0 && team < 4) return kTeamColors[(int)team];
+        return {255, 60, 60, 230};
+    };
+
+    // Helper to clamp+draw a blip
+    auto drawBlip = [&](float wx, float wy, int halfSz, SDL_Color c) {
+        int bx = mmX + (int)(wx / worldW * mmW);
+        int by = mmY + (int)(wy / worldH * mmH);
+        bx = std::max(mmX, std::min(mmX + mmW - 1, bx));
+        by = std::max(mmY, std::min(mmY + mmH - 1, by));
+        SDL_SetRenderDrawColor(renderer_, c.r, c.g, c.b, c.a);
+        SDL_Rect r = {bx - halfSz, by - halfSz, halfSz*2+1, halfSz*2+1};
+        SDL_RenderFillRect(renderer_, &r);
+    };
+
+    // Upgrade crates (yellow diamonds – just squares for simplicity)
+    for (auto& c : crates_) {
+        if (!c.alive) continue;
+        drawBlip(c.pos.x, c.pos.y, 2, {255, 220, 40, 230});
+    }
+    // Floating pickups (slightly dimmer yellow)
+    for (auto& p : pickups_) {
+        if (!p.alive) continue;
+        drawBlip(p.pos.x, p.pos.y, 1, {255, 200, 60, 180});
+    }
+
+    // Enemy blips (red / team-colored for PVE AI)
+    for (auto& e : enemies_) {
+        if (!e.alive) continue;
+        drawBlip(e.pos.x, e.pos.y, 1, {255, 60, 60, 230});
+    }
+
+    // Remote player blips
+    // • Teammate  — team-colored, normal size (5×5)
+    // • Enemy player — bright red/team-color, larger (7×7) + white outline
+    {
+        auto& net = NetworkManager::instance();
+        if (net.isOnline()) {
+            uint8_t localId = net.localPlayerId();
+            for (auto& rp : net.players()) {
+                if (rp.id == localId) continue;
+                if (!rp.alive) continue;
+
+                bool isEnemy = (localTeam_ < 0)              // FFA — all others are enemies
+                               || (rp.team < 0)              // they have no team
+                               || (rp.team != localTeam_);   // different team
+
+                if (isEnemy) {
+                    // Large blip (7×7) in the enemy's team color (or red if no team)
+                    SDL_Color col = blipColor(rp.team);
+                    drawBlip(rp.pos.x, rp.pos.y, 3, col);
+                    // White outline one pixel outside the blip
+                    int bx = mmX + (int)(rp.pos.x / worldW * mmW);
+                    int by = mmY + (int)(rp.pos.y / worldH * mmH);
+                    bx = std::max(mmX, std::min(mmX + mmW - 1, bx));
+                    by = std::max(mmY, std::min(mmY + mmH - 1, by));
+                    SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 200);
+                    SDL_Rect outline = {bx - 4, by - 4, 9, 9};
+                    SDL_RenderDrawRect(renderer_, &outline);
+                } else {
+                    // Teammate — small blip in their team color
+                    drawBlip(rp.pos.x, rp.pos.y, 2, blipColor(rp.team));
+                }
+            }
+        }
+    }
+
+    // Local player blip (cyan, drawn on top of everything)
+    drawBlip(player_.pos.x, player_.pos.y, 2, {0, 255, 228, 255});
+}
+
 void Game::renderUI() {
     SDL_Color white = {255, 255, 255, 255};
     SDL_Color cyan  = {0, 255, 228, 255};
@@ -4852,9 +5549,12 @@ void Game::renderUI() {
     // Kill counter for bomb progress
     if (player_.killCounter > 0) {
         char killStr[32];
-        snprintf(killStr, sizeof(killStr), "Kills: %d/%d", player_.killCounter, KILLS_PER_BOMB);
+        snprintf(killStr, sizeof(killStr), "Kills: %d/%d", player_.killCounter, upgrades_.killsPerBomb);
         drawText(killStr, 20, 120, 14, {180, 180, 180, 255});
     }
+
+    // Minimap
+    renderMinimap();
 
     // Parry cooldown indicator
     if (!player_.canParry) {
@@ -5094,6 +5794,7 @@ void Game::renderPlayModeMenu() {
         {0, "GENERATED MAP", UI::Color::Green},
         {1, "MAP",           UI::Color::Cyan},
         {2, "PACK",          UI::Color::Cyan},
+        {3, "LOCAL CO-OP",   UI::Color::Yellow},
     };
     for (auto& m : modes) {
         bool sel = (playModeSelection_ == m.idx);
@@ -5111,28 +5812,28 @@ void Game::renderPlayModeMenu() {
 
     // ── Divider + section label ──
     y += 8;
-    ui_.drawTextCentered("GENERATED MAP SETTINGS", y + 4, 13, UI::Color::HintGray);
+    ui_.drawTextCentered("SETTINGS", y + 4, 13, UI::Color::HintGray);
     y += 28;
     ui_.drawSeparator(SCREEN_W / 2, y, 60);
     y += 24;
 
-    // ── Slider rows (3-8): map size + difficulty ──
+    // ── Slider rows (4-9): map size + difficulty ──
     char valBuf[128];
     struct PMRow { const char* label; int idx; };
     PMRow rows[] = {
-        {"Map Width:",      3}, {"Map Height:",      4},
-        {"Player HP:",      5}, {"Enemy Spawnrate:", 6},
-        {"Enemy HP:",       7}, {"Enemy Speed:",     8},
+        {"Map Width:",      4}, {"Map Height:",      5},
+        {"Player HP:",      6}, {"Enemy Spawnrate:", 7},
+        {"Enemy HP:",       8}, {"Enemy Speed:",     9},
     };
 
     auto fmtVal = [&](int idx) -> const char* {
         switch (idx) {
-            case 3: snprintf(valBuf, sizeof(valBuf), "%d",    config_.mapWidth);        break;
-            case 4: snprintf(valBuf, sizeof(valBuf), "%d",    config_.mapHeight);       break;
-            case 5: snprintf(valBuf, sizeof(valBuf), "%d",    config_.playerMaxHp);     break;
-            case 6: snprintf(valBuf, sizeof(valBuf), "%.1fx", config_.spawnRateScale);  break;
-            case 7: snprintf(valBuf, sizeof(valBuf), "%.1fx", config_.enemyHpScale);    break;
-            case 8: snprintf(valBuf, sizeof(valBuf), "%.1fx", config_.enemySpeedScale); break;
+            case 4: snprintf(valBuf, sizeof(valBuf), "%d",    config_.mapWidth);        break;
+            case 5: snprintf(valBuf, sizeof(valBuf), "%d",    config_.mapHeight);       break;
+            case 6: snprintf(valBuf, sizeof(valBuf), "%d",    config_.playerMaxHp);     break;
+            case 7: snprintf(valBuf, sizeof(valBuf), "%.1fx", config_.spawnRateScale);  break;
+            case 8: snprintf(valBuf, sizeof(valBuf), "%.1fx", config_.enemyHpScale);    break;
+            case 9: snprintf(valBuf, sizeof(valBuf), "%.1fx", config_.enemySpeedScale); break;
             default: valBuf[0] = 0; break;
         }
         return valBuf;
@@ -5150,29 +5851,29 @@ void Game::renderPlayModeMenu() {
         }
         if (delta != 0 && ui_.hoveredItem == row.idx) {
             switch (row.idx) {
-                case 3: config_.mapWidth        = std::max(20,   std::min(120,  config_.mapWidth        + delta * 2));    break;
-                case 4: config_.mapHeight       = std::max(14,   std::min(80,   config_.mapHeight       + delta * 2));    break;
-                case 5: config_.playerMaxHp     = std::max(1,    std::min(20,   config_.playerMaxHp     + delta));        break;
-                case 6: config_.spawnRateScale  = std::max(0.3f, std::min(3.0f, config_.spawnRateScale  + delta * 0.1f)); break;
-                case 7: config_.enemyHpScale    = std::max(0.3f, std::min(3.0f, config_.enemyHpScale    + delta * 0.1f)); break;
-                case 8: config_.enemySpeedScale = std::max(0.5f, std::min(2.5f, config_.enemySpeedScale + delta * 0.1f)); break;
+                case 4: config_.mapWidth        = std::max(20,   std::min(120,  config_.mapWidth        + delta * 2));    break;
+                case 5: config_.mapHeight       = std::max(14,   std::min(80,   config_.mapHeight       + delta * 2));    break;
+                case 6: config_.playerMaxHp     = std::max(1,    std::min(20,   config_.playerMaxHp     + delta));        break;
+                case 7: config_.spawnRateScale  = std::max(0.3f, std::min(3.0f, config_.spawnRateScale  + delta * 0.1f)); break;
+                case 8: config_.enemyHpScale    = std::max(0.3f, std::min(3.0f, config_.enemyHpScale    + delta * 0.1f)); break;
+                case 9: config_.enemySpeedScale = std::max(0.5f, std::min(2.5f, config_.enemySpeedScale + delta * 0.1f)); break;
             }
         }
         y += stepY;
     }
 
-    // ── Back button (9) ──
+    // ── Back button (10) ──
     {
-        bool sel = (playModeSelection_ == 9);
-        if (ui_.menuItem(9, "BACK", SCREEN_W / 2, y + 10, rowW, sliderH,
+        bool sel = (playModeSelection_ == 10);
+        if (ui_.menuItem(10, "BACK", SCREEN_W / 2, y + 4, rowW, sliderH,
                          UI::Color::White, sel, 20, 22)) {
-            playModeSelection_ = 9;
-            menuSelection_     = 9;
+            playModeSelection_ = 10;
+            menuSelection_     = 10;
             confirmInput_      = true;
         }
-        if (ui_.hoveredItem == 9 && !usingGamepad_) {
-            playModeSelection_ = 9;
-            menuSelection_     = 9;
+        if (ui_.hoveredItem == 10 && !usingGamepad_) {
+            playModeSelection_ = 10;
+            menuSelection_     = 10;
         }
     }
 
@@ -5540,18 +6241,26 @@ void Game::startCustomMap(const std::string& path) {
     customEnemiesTotal_ = 0;
     if (!sandboxMode_) {
         for (auto& es : customMap_.enemySpawns) {
-            EnemyType type = (es.enemyType == 1) ? EnemyType::Shooter : EnemyType::Melee;
-            spawnEnemy({es.x, es.y}, type);
-            customEnemiesTotal_++;
+            if (isCrateSpawnType(es.enemyType)) {
+                PickupCrate crate;
+                crate.pos = {es.x, es.y};
+                crate.contents = rollRandomUpgrade();
+                crates_.push_back(crate);
+            } else {
+                spawnEnemy({es.x, es.y}, enemyTypeFromSpawnId(es.enemyType));
+                customEnemiesTotal_++;
+            }
         }
     }
 
     // Also generate spawn points for wave spawning if map has them
     map_.findSpawnPoints();
 
-    if (bgMusic_) {
-        Mix_PlayMusic(bgMusic_, -1);
-        Mix_VolumeMusic(config_.musicVolume);
+    {
+        std::string mf;
+        size_t sl = path.find_last_of('/');
+        mf = (sl != std::string::npos) ? path.substr(0, sl + 1) : "./";
+        playMapMusic(mf, customMap_.musicPath);
     }
 }
 
@@ -5630,17 +6339,25 @@ void Game::startCustomMapMultiplayer(const std::string& path) {
     customEnemiesTotal_ = 0;
     if (net.isHost() && !lobbySettings_.isPvp) {
         for (auto& es : customMap_.enemySpawns) {
-            EnemyType type = (es.enemyType == 1) ? EnemyType::Shooter : EnemyType::Melee;
-            spawnEnemy({es.x, es.y}, type);
-            customEnemiesTotal_++;
+            if (isCrateSpawnType(es.enemyType)) {
+                PickupCrate crate;
+                crate.pos = {es.x, es.y};
+                crate.contents = rollRandomUpgrade();
+                crates_.push_back(crate);
+            } else {
+                spawnEnemy({es.x, es.y}, enemyTypeFromSpawnId(es.enemyType));
+                customEnemiesTotal_++;
+            }
         }
     }
 
     map_.findSpawnPoints();
 
-    if (bgMusic_) {
-        Mix_PlayMusic(bgMusic_, -1);
-        Mix_VolumeMusic(config_.musicVolume);
+    {
+        std::string mf;
+        size_t sl = path.find_last_of('/');
+        mf = (sl != std::string::npos) ? path.substr(0, sl + 1) : "./";
+        playMapMusic(mf, customMap_.musicPath);
     }
 }
 
@@ -6893,13 +7610,24 @@ void Game::startPackLevel() {
 
     customEnemiesTotal_ = 0;
     for (auto& es : customMap_.enemySpawns) {
-        EnemyType type = (es.enemyType == 1) ? EnemyType::Shooter : EnemyType::Melee;
-        spawnEnemy({es.x, es.y}, type);
-        customEnemiesTotal_++;
+        if (isCrateSpawnType(es.enemyType)) {
+            PickupCrate crate;
+            crate.pos = {es.x, es.y};
+            crate.contents = rollRandomUpgrade();
+            crates_.push_back(crate);
+        } else {
+            spawnEnemy({es.x, es.y}, enemyTypeFromSpawnId(es.enemyType));
+            customEnemiesTotal_++;
+        }
     }
     map_.findSpawnPoints();
 
-    if (bgMusic_) { Mix_PlayMusic(bgMusic_, -1); Mix_VolumeMusic(config_.musicVolume); }
+    {
+        // Pack-entry music overrides map-embedded music
+        const std::string& packTrack = currentPack_.maps[currentPack_.currentMapIndex].musicPath;
+        const std::string& mapTrack  = customMap_.musicPath;
+        playMapMusic(currentPack_.folder, packTrack.empty() ? mapTrack : packTrack);
+    }
 
     printf("Pack level %d/%d: %s\n", currentPack_.currentMapIndex + 1,
            (int)currentPack_.maps.size(), path.c_str());
@@ -6966,6 +7694,427 @@ void Game::renderPackLevelWin() {
 
     { UI::HintPair hints[] = { {UI::Action::Confirm, "Select"} };
       ui_.drawHintBar(hints, 1, py + panelH - 26); }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Local Co-op (splitscreen, up to 4 players)
+// ═════════════════════════════════════════════════════════════════════════════
+
+SDL_Rect Game::coopViewport(int idx, int n) const {
+    if (n <= 1) return {0, 0, SCREEN_W, SCREEN_H};
+    if (n == 2) return {idx * SCREEN_W/2, 0, SCREEN_W/2, SCREEN_H};
+    // 3 players: top-left, top-right, bottom full
+    if (n == 3 && idx == 2) return {0, SCREEN_H/2, SCREEN_W, SCREEN_H/2};
+    int col = idx % 2, row = idx / 2;
+    return {col * SCREEN_W/2, row * SCREEN_H/2, SCREEN_W/2, SCREEN_H/2};
+}
+
+void Game::startLocalCoopGame() {
+    state_ = GameState::LocalCoopGame;
+    gameTime_ = 0;
+    lobbySettings_.isPvp = false;
+    waveNumber_ = 0; waveEnemiesLeft_ = 0; waveActive_ = false;
+    wavePauseTimer_ = WAVE_PAUSE_BASE; waveSpawnTimer_ = 0;
+    enemies_.clear(); bullets_.clear(); enemyBullets_.clear();
+    bombs_.clear(); explosions_.clear(); debris_.clear();
+    blood_.clear(); boxFragments_.clear();
+    crates_.clear(); pickups_.clear();
+    upgrades_.reset();
+    crateSpawnTimer_ = 0;
+    sandboxMode_ = false;
+    map_.generate(config_.mapWidth, config_.mapHeight);
+    map_.findSpawnPoints();
+
+    // Viewport dimensions per player count
+    const int n  = coopPlayerCount_;
+    const int vw = (n >= 2) ? SCREEN_W/2 : SCREEN_W;
+    const int vh = (n >= 3) ? SCREEN_H/2 : SCREEN_H;
+    const Vec2 base = {map_.worldWidth()/2.f, map_.worldHeight()/2.f};
+    const Vec2 off[4] = {{-80,0},{80,0},{0,-80},{0,80}};
+
+    int si = 0;
+    int gpNum = 1;
+    for (int i = 0; i < 4; i++) {
+        if (!coopSlots_[i].joined) continue;
+        coopSlots_[i].player = Player{};
+        coopSlots_[i].player.maxHp     = config_.playerMaxHp;
+        coopSlots_[i].player.hp        = config_.playerMaxHp;
+        coopSlots_[i].player.bombCount = 1;
+        coopSlots_[i].kills  = 0;
+        coopSlots_[i].deaths = 0;
+        // Usernames: P1 = config username, others = pc-N
+        if (coopSlots_[i].joyInstanceId < 0) {
+            coopSlots_[i].username = config_.username;
+        } else {
+            char uname[16]; snprintf(uname, sizeof(uname), "pc-%d", gpNum++);
+            coopSlots_[i].username = uname;
+        }
+        Vec2 sp = base + off[si % 4];
+        if (!map_.spawnPoints.empty())
+            sp = map_.spawnPoints[si % (int)map_.spawnPoints.size()];
+        coopSlots_[i].player.pos = sp;
+        coopSlots_[i].upgrades.reset();
+        coopSlots_[i].camera.worldW = map_.worldWidth();
+        coopSlots_[i].camera.worldH = map_.worldHeight();
+        coopSlots_[i].camera.viewW  = vw;
+        coopSlots_[i].camera.viewH  = vh;
+        coopSlots_[i].camera.pos    = {sp.x - vw/2.f, sp.y - vh/2.f};
+        si++;
+    }
+    player_   = coopSlots_[0].player;
+    camera_   = coopSlots_[0].camera;
+    upgrades_ = coopSlots_[0].upgrades;
+    if (bgMusic_) { Mix_PlayMusic(bgMusic_, -1); Mix_VolumeMusic(config_.musicVolume); }
+}
+
+void Game::handleLocalCoopInput() {
+    // Slot 0 = keyboard+mouse: mirrors the global input state
+    coopSlots_[0].moveInput  = moveInput_;
+    coopSlots_[0].aimInput   = aimInput_;
+    coopSlots_[0].fireInput  = fireInput_;
+    coopSlots_[0].bombInput  = bombInput_;
+    coopSlots_[0].parryInput = parryInput_;
+
+    const float dead = 0.18f;
+    // Slots 1-3 = gamepads: read from their assigned controller by joystick instance ID
+    for (int i = 1; i < 4; i++) {
+        if (!coopSlots_[i].joined) continue;
+        SDL_GameController* gc = SDL_GameControllerFromInstanceID(coopSlots_[i].joyInstanceId);
+        if (!gc) continue;
+        float lx = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTX)      / 32767.f;
+        float ly = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTY)      / 32767.f;
+        float rx = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_RIGHTX)     / 32767.f;
+        float ry = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_RIGHTY)     / 32767.f;
+        float rt = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERRIGHT)/ 32767.f;
+        if (fabsf(lx) < dead) lx = 0; if (fabsf(ly) < dead) ly = 0;
+        if (fabsf(rx) < dead) rx = 0; if (fabsf(ry) < dead) ry = 0;
+        coopSlots_[i].moveInput  = {lx, ly};
+        coopSlots_[i].aimInput   = {rx, ry};
+        coopSlots_[i].fireInput  = (rt > 0.25f);
+        coopSlots_[i].bombInput  = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_X);
+        coopSlots_[i].parryInput = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_LEFTSHOULDER);
+        coopSlots_[i].pauseInput = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_START);
+        if (coopSlots_[i].pauseInput && state_ == GameState::LocalCoopGame) {
+            state_ = GameState::LocalCoopPaused;
+            menuSelection_ = 0;
+        }
+    }
+}
+
+void Game::updateLocalCoopPlayers(float dt) {
+    handleLocalCoopInput();
+    for (int i = 0; i < 4; i++) {
+        if (!coopSlots_[i].joined) continue;
+        Player         savedPlayer  = player_;
+        PlayerUpgrades savedUpg     = upgrades_;
+        Vec2  savedMove = moveInput_, savedAim = aimInput_;
+        bool  savedFire = fireInput_, savedBomb = bombInput_, savedParry = parryInput_;
+
+        player_    = coopSlots_[i].player;
+        upgrades_  = coopSlots_[i].upgrades;
+        moveInput_ = coopSlots_[i].moveInput;
+        aimInput_  = coopSlots_[i].aimInput;
+        fireInput_ = coopSlots_[i].fireInput;
+        bombInput_ = coopSlots_[i].bombInput;
+        parryInput_= coopSlots_[i].parryInput;
+
+        updatePlayer(dt);
+
+        coopSlots_[i].player   = player_;
+        coopSlots_[i].upgrades = upgrades_;
+
+        Vec2 aimDir = {};
+        if (coopSlots_[i].aimInput.lengthSq() > 0.04f)
+            aimDir = coopSlots_[i].aimInput.normalized();
+        else if (coopSlots_[i].player.moving && coopSlots_[i].player.vel.lengthSq() > 1.f)
+            aimDir = coopSlots_[i].player.vel.normalized();
+        coopSlots_[i].camera.update(coopSlots_[i].player.pos, aimDir, dt);
+
+        player_    = savedPlayer;  upgrades_  = savedUpg;
+        moveInput_ = savedMove;    aimInput_  = savedAim;
+        fireInput_ = savedFire;    bombInput_ = savedBomb;  parryInput_ = savedParry;
+    }
+    // Sync primary state to slot 0
+    player_   = coopSlots_[0].player;
+    camera_   = coopSlots_[0].camera;
+    upgrades_ = coopSlots_[0].upgrades;
+    // All dead → game over
+    bool anyAlive = false;
+    for (int i = 0; i < 4; i++)
+        if (coopSlots_[i].joined && !coopSlots_[i].player.dead) anyAlive = true;
+    if (!anyAlive && state_ == GameState::LocalCoopGame) {
+        state_ = GameState::LocalCoopDead;
+        menuSelection_ = 0;
+    }
+}
+
+void Game::renderLocalCoopLobby() {
+    ui_.drawDarkOverlay(235, 8, 8, 12);
+    ui_.drawTextCentered("LOCAL MULTIPLAYER", 40, 36, UI::Color::Cyan);
+    ui_.drawSeparator(SCREEN_W/2, 82, 100);
+
+    static const SDL_Color slotColors[4] = {
+        {80, 220, 255, 255}, {255, 220, 50, 255},
+        {80, 220, 80,  255}, {255, 140, 50, 255}};
+    static const char* slotLabels[4] = {"P1","P2","P3","P4"};
+    const int slotW = 240, slotH = 140, gapX = 18;
+    const int totalW = 4*slotW + 3*gapX;
+    const int startX = (SCREEN_W - totalW) / 2;
+    const int slotY  = 100;
+    char buf[128];
+
+    for (int i = 0; i < 4; i++) {
+        int x = startX + i*(slotW+gapX);
+        SDL_Color col = slotColors[i];
+        SDL_Rect box = {x, slotY, slotW, slotH};
+        SDL_SetRenderDrawColor(renderer_,
+            coopSlots_[i].joined ? col.r/4 : 22,
+            coopSlots_[i].joined ? col.g/4 : 22,
+            coopSlots_[i].joined ? col.b/4 : 28, 220);
+        SDL_RenderFillRect(renderer_, &box);
+        SDL_SetRenderDrawColor(renderer_, col.r, col.g, col.b,
+                               coopSlots_[i].joined ? 255 : 50);
+        SDL_RenderDrawRect(renderer_, &box);
+        drawText(slotLabels[i], x + slotW/2 - 10, slotY + 8, 22, col);
+        if (coopSlots_[i].joined) {
+            // Username
+            drawText(coopSlots_[i].username.c_str(), x + 10, slotY + 40, 16, {255,255,255,255});
+            // Input device
+            if (coopSlots_[i].joyInstanceId < 0) {
+                drawText("Keyboard + Mouse", x + 10, slotY + 64, 13, col);
+            } else {
+                SDL_GameController* gc = SDL_GameControllerFromInstanceID(coopSlots_[i].joyInstanceId);
+                const char* gcName = gc ? SDL_GameControllerName(gc) : "Gamepad";
+                // Truncate long names
+                char devBuf[40]; snprintf(devBuf, sizeof(devBuf), "%.38s", gcName);
+                drawText(devBuf, x + 10, slotY + 64, 12, col);
+            }
+            // Status
+            drawText("READY", x + slotW/2 - 24, slotY + 100, 16, {80,255,80,255});
+        } else {
+            SDL_Color dim = {(Uint8)(col.r/2),(Uint8)(col.g/2),(Uint8)(col.b/2),255};
+            if (i == 0)
+                drawText("Auto-joined", x + 10, slotY + 56, 13, dim);
+            else
+                drawText("Press A on gamepad", x + 10, slotY + 50, 13, dim);
+            drawText("to join", x + 10, slotY + 68, 13, dim);
+        }
+    }
+    int joined = 0;
+    for (int i = 0; i < 4; i++) if (coopSlots_[i].joined) joined++;
+
+    snprintf(buf, sizeof(buf), "%d player%s", joined, joined == 1 ? "" : "s");
+    drawTextCentered(buf, slotY + slotH + 20, 17, joined >= 1 ? UI::Color::Green : UI::Color::HintGray);
+
+    drawTextCentered("Press START or Enter to begin  |  B / Esc = Back",
+                     slotY + slotH + 46, 13, UI::Color::HintGray);
+
+    UI::HintPair hints[] = {
+        {UI::Action::Confirm, "Start"},
+        {UI::Action::Back,    "Back"},
+    };
+    ui_.drawHintBar(hints, 2);
+}
+
+void Game::renderLocalCoopGame() {
+    static const SDL_Color pColors[4] = {
+        {255,255,255,255},{255,220,50,255},{80,220,80,255},{255,140,50,255}};
+    const int n = coopPlayerCount_;
+
+    Player         savedPlayer = player_;
+    Camera         savedCam    = camera_;
+    PlayerUpgrades savedUpg    = upgrades_;
+
+    int slotOrder = 0;
+    for (int i = 0; i < 4; i++) {
+        if (!coopSlots_[i].joined) continue;
+        SDL_Rect vp = coopViewport(slotOrder++, n);
+        SDL_RenderSetViewport(renderer_, &vp);
+
+        camera_   = coopSlots_[i].camera;
+        player_   = coopSlots_[i].player;
+        upgrades_ = coopSlots_[i].upgrades;
+
+        renderMap();
+        renderDecals();
+
+        for (auto& b : bombs_) {
+            if (!b.alive) continue;
+            SDL_Texture* tex = bombSprites_.empty() ? nullptr : bombSprites_[b.animFrame % bombSprites_.size()];
+            if (tex) renderSprite(tex, b.pos, 0, 2.f);
+        }
+        for (auto& ex : explosions_) { if (ex.alive) renderExplosionPixelated(ex); }
+
+        for (auto& e : enemies_) {
+            if (!e.alive) continue;
+            SDL_Texture* etex = enemySpriteTex(e.type);
+            if (!etex) continue;
+            float ds = e.renderScale;
+            if (e.damageFlash > 0 || e.flashTimer > 0) {
+                float fl = std::min(1.f, e.damageFlash + e.flashTimer);
+                Uint8 oth = (Uint8)(15.f*(1.f-fl));
+                renderSpriteEx(etex, e.pos, e.rotation+(float)M_PI/2, ds, {255,oth,oth,255});
+            } else {
+                float r = e.maxHp > 0 ? e.hp/e.maxHp : 1.f;
+                SDL_Color base = enemyBaseTint(e.type);
+                renderSpriteEx(etex, e.pos, e.rotation+(float)M_PI/2, ds,
+                               {base.r,(Uint8)(base.g*r),(Uint8)(base.b*r),255});
+            }
+        }
+        for (auto& f : boxFragments_) {
+            if (!f.alive) continue;
+            float frac = f.age / f.lifetime;
+            Uint8 a = (Uint8)((1.f-frac)*220.f);
+            Vec2 sp = camera_.worldToScreen(f.pos);
+            float s = f.size*(1.f-frac*0.3f);
+            SDL_SetRenderDrawColor(renderer_, f.color.r, f.color.g, f.color.b, a);
+            SDL_Rect fr = {(int)(sp.x-s/2),(int)(sp.y-s/2),(int)s,(int)s};
+            SDL_RenderFillRect(renderer_, &fr);
+        }
+
+        // All coop players
+        for (int j = 0; j < 4; j++) {
+            if (!coopSlots_[j].joined || coopSlots_[j].player.dead) continue;
+            Player& cp = coopSlots_[j].player;
+            // Legs
+            if (!legSprites_.empty()) {
+                int lidx = cp.legAnimFrame % (int)legSprites_.size();
+                if (j == 0) renderSprite   (legSprites_[lidx], cp.pos, cp.legRotation+(float)M_PI/2, 3.f);
+                else        renderSpriteEx (legSprites_[lidx], cp.pos, cp.legRotation+(float)M_PI/2, 3.f, pColors[j]);
+            }
+            // Body
+            if (!playerSprites_.empty()) {
+                int idx = cp.animFrame % (int)playerSprites_.size();
+                Vec2 bp = cp.pos + Vec2::fromAngle(cp.rotation)*6.f;
+                if (cp.invulnerable && ((int)(cp.invulnTimer * 10) % 2 == 0)) {
+                    SDL_Color tint = {255, 255, 255, 128};
+                    renderSpriteEx(playerSprites_[idx], bp, cp.rotation+(float)M_PI/2, 3.f, tint);
+                } else if (cp.isParrying) {
+                    SDL_Color tint = {128, 200, 255, 255};
+                    renderSpriteEx(playerSprites_[idx], bp, cp.rotation+(float)M_PI/2, 3.f, tint);
+                } else if (j == 0) {
+                    renderSprite(playerSprites_[idx], bp, cp.rotation+(float)M_PI/2, 3.f);
+                } else {
+                    renderSpriteEx(playerSprites_[idx], bp, cp.rotation+(float)M_PI/2, 3.f, pColors[j]);
+                }
+            }
+        }
+
+        // Player bullets + trails
+        for (auto& b : bullets_) {
+            if (!b.alive) continue;
+            Vec2 backDir = b.vel.normalized() * -1.0f;
+            for (int t = 1; t <= 6; t++) {
+                Vec2 tp = b.pos + backDir * (float)(t * 6);
+                Vec2 sp = camera_.worldToScreen(tp);
+                float fade = 1.0f - (float)t / 7.0f;
+                Uint8 a = (Uint8)(fade * 180);
+                SDL_SetRenderDrawColor(renderer_, 255, 255, 140, a);
+                float sz = 3.0f * fade;
+                SDL_FRect r = {sp.x - sz, sp.y - sz, sz * 2, sz * 2};
+                SDL_RenderFillRectF(renderer_, &r);
+            }
+            if (b.sprite) renderSprite(b.sprite, b.pos, b.rotation, 0.7f);
+            else {
+                Vec2 sp = camera_.worldToScreen(b.pos);
+                SDL_SetRenderDrawColor(renderer_, 255, 255, 100, 255);
+                SDL_FRect r = {sp.x - 2, sp.y - 2, 4, 4};
+                SDL_RenderFillRectF(renderer_, &r);
+            }
+        }
+        // Enemy bullets + trails
+        for (auto& b : enemyBullets_) {
+            if (!b.alive) continue;
+            Vec2 backDir = b.vel.normalized() * -1.0f;
+            for (int t = 1; t <= 6; t++) {
+                Vec2 tp = b.pos + backDir * (float)(t * 6);
+                Vec2 sp = camera_.worldToScreen(tp);
+                float fade = 1.0f - (float)t / 7.0f;
+                Uint8 a = (Uint8)(fade * 180);
+                SDL_SetRenderDrawColor(renderer_, 255, 60, 60, a);
+                float sz = 3.0f * fade;
+                SDL_FRect r = {sp.x - sz, sp.y - sz, sz * 2, sz * 2};
+                SDL_RenderFillRectF(renderer_, &r);
+            }
+            if (b.sprite) {
+                SDL_SetTextureColorMod(b.sprite, 255, 80, 80);
+                renderSprite(b.sprite, b.pos, b.rotation, 0.7f);
+                SDL_SetTextureColorMod(b.sprite, 255, 255, 255);
+            } else {
+                Vec2 sp = camera_.worldToScreen(b.pos);
+                SDL_SetRenderDrawColor(renderer_, 255, 80, 80, 255);
+                SDL_FRect r = {sp.x - 3.0f, sp.y - 3.0f, 6, 6};
+                SDL_RenderFillRectF(renderer_, &r);
+            }
+        }
+
+        renderCrates();
+        renderPickups();
+        renderWallOverlay();
+
+        // ── Multiplayer-style name tags + HP bars above other players ──
+        for (int j = 0; j < 4; j++) {
+            if (j == i) continue; // don't draw tag on own player in own viewport
+            if (!coopSlots_[j].joined || coopSlots_[j].player.dead) continue;
+            Player& op = coopSlots_[j].player;
+            Vec2 sp = camera_.worldToScreen(op.pos);
+            if (sp.x < -50 || sp.x > vp.w+50 || sp.y < -50 || sp.y > vp.h+50) continue;
+            // HP bar
+            float barW = 40.f, barH = 4.f;
+            float hpR = (op.maxHp > 0) ? (float)op.hp / op.maxHp : 0;
+            SDL_SetRenderDrawColor(renderer_, 30,30,30,180);
+            SDL_FRect hbg = {sp.x-barW/2, sp.y-28, barW, barH};
+            SDL_RenderFillRectF(renderer_, &hbg);
+            SDL_Color hbc = hpR>.5f?SDL_Color{50,220,50,255}:hpR>.25f?SDL_Color{255,180,0,255}:SDL_Color{220,50,50,255};
+            SDL_SetRenderDrawColor(renderer_, hbc.r,hbc.g,hbc.b,255);
+            SDL_FRect hfg = {sp.x-barW/2, sp.y-28, barW*hpR, barH};
+            SDL_RenderFillRectF(renderer_, &hfg);
+            // Username tag
+            drawText(coopSlots_[j].username.c_str(), (int)sp.x-20, (int)sp.y-44, 11, pColors[j]);
+        }
+
+        // ── Per-slot HUD (bottom of viewport) ──
+        {
+            Player& cp = coopSlots_[i].player;
+            int bw = vp.w-20, bh = 8, bx = 10, by = vp.h-20;
+            SDL_SetRenderDrawColor(renderer_, 30,30,30,200);
+            SDL_Rect bg = {bx,by,bw,bh}; SDL_RenderFillRect(renderer_, &bg);
+            float hf = std::max(0.f,(float)cp.hp/cp.maxHp);
+            SDL_Color hc = hf>.5f?SDL_Color{50,220,50,255}:hf>.25f?SDL_Color{255,180,0,255}:SDL_Color{220,50,50,255};
+            SDL_SetRenderDrawColor(renderer_, hc.r,hc.g,hc.b,255);
+            SDL_Rect bar = {bx,by,(int)(bw*hf),bh}; SDL_RenderFillRect(renderer_, &bar);
+            char at[32]; snprintf(at,sizeof(at),"%d/%d",cp.ammo,cp.maxAmmo);
+            drawText(at, bx, by-20, 14, UI::Color::White);
+            // Kills/deaths counter
+            char kd[32]; snprintf(kd,sizeof(kd),"K:%d D:%d",coopSlots_[i].kills,coopSlots_[i].deaths);
+            drawText(kd, bx, by-38, 12, UI::Color::HintGray);
+            // Username + slot label (top of viewport)
+            char nameTag[64]; snprintf(nameTag,sizeof(nameTag),"%s",coopSlots_[i].username.c_str());
+            drawText(nameTag, 6, 6, 14, pColors[i]);
+        }
+    }
+
+    SDL_RenderSetViewport(renderer_, nullptr);
+
+    // Divider lines between viewports
+    SDL_SetRenderDrawColor(renderer_, 0,0,0,255);
+    if (n == 2) {
+        SDL_RenderDrawLine(renderer_, SCREEN_W/2,   0, SCREEN_W/2,   SCREEN_H);
+        SDL_RenderDrawLine(renderer_, SCREEN_W/2+1, 0, SCREEN_W/2+1, SCREEN_H);
+    } else if (n >= 3) {
+        SDL_RenderDrawLine(renderer_, SCREEN_W/2,   0,         SCREEN_W/2,   SCREEN_H);
+        SDL_RenderDrawLine(renderer_, SCREEN_W/2+1, 0,         SCREEN_W/2+1, SCREEN_H);
+        SDL_RenderDrawLine(renderer_, 0, SCREEN_H/2,   SCREEN_W, SCREEN_H/2);
+        SDL_RenderDrawLine(renderer_, 0, SCREEN_H/2+1, SCREEN_W, SCREEN_H/2+1);
+    }
+
+    // Wave counter at top center
+    char wb[32]; snprintf(wb, sizeof(wb), "WAVE %d", waveNumber_);
+    drawTextCentered(wb, 4, 15, UI::Color::Cyan);
+
+    player_   = savedPlayer;
+    camera_   = savedCam;
+    upgrades_ = savedUpg;
 }
 
 void Game::renderPackComplete() {
@@ -7156,12 +8305,12 @@ void Game::setupNetworkCallbacks() {
     // Host broadcast a config change (e.g. lobby settings update)
     net.onConfigSyncReceived = [this](const LobbySettings& settings) {
         lobbySettings_ = settings;
-        currentRules_.pvpEnabled = settings.pvpEnabled;
+        currentRules_.pvpEnabled = settings.isPvp || settings.pvpEnabled;
         currentRules_.friendlyFire = settings.friendlyFire;
         currentRules_.upgradesShared = settings.upgradesShared;
         currentRules_.teamCount = settings.teamCount;
-        printf("Game: Config sync received — pvp=%d ff=%d shared=%d teams=%d\n",
-               (int)settings.pvpEnabled, (int)settings.friendlyFire,
+        printf("Game: Config sync received — isPvp=%d pvp=%d ff=%d shared=%d teams=%d\n",
+               (int)settings.isPvp, (int)settings.pvpEnabled, (int)settings.friendlyFire,
                (int)settings.upgradesShared, settings.teamCount);
     };
 
@@ -7563,7 +8712,7 @@ void Game::setupNetworkCallbacks() {
         config_.enemyHpScale   = lobbySettings_.enemyHpScale;
         config_.enemySpeedScale= lobbySettings_.enemySpeedScale;
         currentRules_.friendlyFire  = lobbySettings_.friendlyFire;
-        currentRules_.pvpEnabled    = lobbySettings_.pvpEnabled;
+        currentRules_.pvpEnabled    = lobbySettings_.isPvp || lobbySettings_.pvpEnabled;
         currentRules_.upgradesShared= lobbySettings_.upgradesShared;
         currentRules_.teamCount     = lobbySettings_.teamCount;
         currentRules_.lives         = lobbySettings_.livesPerPlayer;
@@ -8047,7 +9196,7 @@ void Game::startMultiplayerGame() {
     config_.enemyHpScale   = lobbySettings_.enemyHpScale;
     config_.enemySpeedScale= lobbySettings_.enemySpeedScale;
     currentRules_.friendlyFire  = lobbySettings_.friendlyFire;
-    currentRules_.pvpEnabled    = lobbySettings_.pvpEnabled;
+    currentRules_.pvpEnabled    = lobbySettings_.isPvp || lobbySettings_.pvpEnabled;
     currentRules_.upgradesShared= lobbySettings_.upgradesShared;
     currentRules_.teamCount     = lobbySettings_.teamCount;
     currentRules_.lives         = lobbySettings_.livesPerPlayer;
@@ -8229,7 +9378,22 @@ void Game::updatePickups(float dt) {
 
         // Player collection — walk over it (spectators can't collect)
         float collectRadius = 28.0f;
-        if (!player_.dead && !spectatorMode_ && circleOverlap(p.pos, collectRadius, player_.pos, PLAYER_SIZE * 0.5f)) {
+        if (state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) {
+            // Co-op: any alive player can collect
+            for (int ci = 0; ci < 4 && p.alive; ci++) {
+                if (!coopSlots_[ci].joined || coopSlots_[ci].player.dead) continue;
+                if (circleOverlap(p.pos, collectRadius, coopSlots_[ci].player.pos, PLAYER_SIZE * 0.5f)) {
+                    // Swap in the collecting player's state
+                    Player savedP = player_; PlayerUpgrades savedU = upgrades_;
+                    player_ = coopSlots_[ci].player; upgrades_ = coopSlots_[ci].upgrades;
+                    collectPickup(p);
+                    coopSlots_[ci].player = player_; coopSlots_[ci].upgrades = upgrades_;
+                    player_ = savedP; upgrades_ = savedU;
+                    // Sync slot 0 if it was the collector
+                    if (ci == 0) { player_ = coopSlots_[0].player; upgrades_ = coopSlots_[0].upgrades; }
+                }
+            }
+        } else if (!player_.dead && !spectatorMode_ && circleOverlap(p.pos, collectRadius, player_.pos, PLAYER_SIZE * 0.5f)) {
             collectPickup(p);
         }
     }
@@ -8302,12 +9466,30 @@ void Game::applyUpgrade(UpgradeType type) {
         case UpgradeType::ReloadUp:
             player_.reloadTime = std::max(0.2f, player_.reloadTime * 0.8f);
             break;
-        case UpgradeType::Shield:
+        case UpgradeType::Blindness:
             player_.invulnerable = true;
             player_.invulnTimer = 5.0f;
             break;
         case UpgradeType::BombPickup:
-            player_.bombCount += 3;
+            player_.bombCount = std::min(MAX_BOMBS, player_.bombCount + 3);
+            break;
+        case UpgradeType::Overclock:
+            player_.fireRate = player_.fireRate / 0.80f;
+            player_.reloadTime = std::max(0.18f, player_.reloadTime * 0.85f);
+            break;
+        case UpgradeType::HeavyRounds:
+            player_.fireRate = std::max(1.5f, player_.fireRate * 0.90f);
+            break;
+        case UpgradeType::BombCore:
+            player_.bombCount = std::min(MAX_BOMBS, player_.bombCount + 1);
+            break;
+        case UpgradeType::Juggernaut:
+            player_.maxHp += 2;
+            player_.hp = std::min(player_.maxHp, player_.hp + 2);
+            player_.speed = std::max(180.0f, player_.speed - 35.0f);
+            break;
+        case UpgradeType::StunRounds:
+        case UpgradeType::Scavenger:
             break;
         case UpgradeType::SlowDown:
             player_.speed = std::max(200.0f, player_.speed - 60.0f);

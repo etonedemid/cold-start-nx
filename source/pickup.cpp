@@ -13,12 +13,18 @@ static const UpgradeInfo s_upgradeTable[] = {
     { "Ammo Up",         "+5 max ammo",                     {200, 200, 200, 255}, false },  // AmmoUp
     { "Health Up",       "+1 max HP, full heal",            {255, 80,  80,  255}, false },  // HealthUp
     { "Quick Reload",    "30% faster reload",               {80,  200, 80,  255}, false },  // ReloadUp
-    { "Shield",          "5s invulnerability",               {100, 150, 255, 255}, false },  // Shield
+    { "Blindness",       "5s invulnerability",               {100, 150, 255, 255}, false },  // Blindness
     { "Bomb",            "+3 bombs",                        {255, 180, 50,  255}, false },  // BombPickup
     { "Magnet",          "Bullets home slightly",           {200, 100, 255, 255}, false },  // Magnet
     { "Ricochet",        "Bullets bounce off walls",        {150, 255, 150, 255}, false },  // Ricochet
     { "Piercing",        "Bullets pierce enemies",          {255, 255, 100, 255}, false },  // Piercing
     { "Triple Shot",     "Fire 3-way spread",               {255, 150, 200, 255}, false },  // TripleShot
+    { "Overclock",       "+20% fire rate, faster reload",   {100, 255, 255, 255}, false },  // Overclock
+    { "Heavy Rounds",    "+65% damage, -10% fire rate",     {210, 180, 140, 255}, false },  // HeavyRounds
+    { "Bomb Core",       "+1 bomb, bombs charge faster",    {255, 140, 60, 255},  false },  // BombCore
+    { "Juggernaut",      "+2 max HP, slower movement",      {120, 220, 140, 255}, false },  // Juggernaut
+    { "Stun Rounds",     "Hits briefly stun enemies",       {140, 180, 255, 255}, false },  // StunRounds
+    { "Scavenger",       "Kills refund 1 ammo",             {255, 240, 120, 255}, false },  // Scavenger
     { "Slow Down",       "-15% movement speed",             {150, 50,  50,  255}, true  },  // SlowDown
     { "Glass Cannon",    "+50% damage, -2 HP",              {255, 50,  255, 255}, true  },  // GlassCannon
 };
@@ -47,12 +53,21 @@ void PlayerUpgrades::apply(UpgradeType type) {
     case UpgradeType::AmmoUp:       ammoBonus += 3; break;
     case UpgradeType::HealthUp:     break; // handled in game logic (needs HP access)
     case UpgradeType::ReloadUp:     reloadMulti *= 0.7f; break;
-    case UpgradeType::Shield:       hasShield = true; shieldTimer = 5.0f; break;
+    case UpgradeType::Blindness:    hasBlindness = true; blindnessTimer = 5.0f; break;
     case UpgradeType::BombPickup:   break; // handled in game logic
     case UpgradeType::Magnet:       hasMagnet = true; break;
     case UpgradeType::Ricochet:     hasRicochet = true; break;
     case UpgradeType::Piercing:     hasPiercing = true; break;
     case UpgradeType::TripleShot:   hasTripleShot = true; break;
+    case UpgradeType::Overclock:    reloadMulti *= 0.8f; break;
+    case UpgradeType::HeavyRounds:  damageMulti += 0.65f; break;
+    case UpgradeType::BombCore:
+        killsPerBomb = std::max(3, killsPerBomb - 1);
+        bombDashSpeedMulti *= 1.2f;
+        break;
+    case UpgradeType::Juggernaut:   break; // handled in game logic
+    case UpgradeType::StunRounds:   hasStunRounds = true; break;
+    case UpgradeType::Scavenger:    hasScavenger = true; break;
     case UpgradeType::SlowDown:     speedBonus -= 78.0f; break;
     case UpgradeType::GlassCannon:  damageMulti += 0.5f; break;
     default: break;
@@ -69,12 +84,18 @@ UpgradeType rollRandomUpgrade() {
         { UpgradeType::AmmoUp,       15 },
         { UpgradeType::HealthUp,     18 },
         { UpgradeType::ReloadUp,     15 },
-        { UpgradeType::Shield,        8 },
+        { UpgradeType::Blindness,     8 },
         { UpgradeType::BombPickup,   10 },
         { UpgradeType::Magnet,        5 },
         { UpgradeType::Ricochet,      5 },
         { UpgradeType::Piercing,      5 },
         { UpgradeType::TripleShot,    4 },
+        { UpgradeType::Overclock,     8 },
+        { UpgradeType::HeavyRounds,   7 },
+        { UpgradeType::BombCore,      6 },
+        { UpgradeType::Juggernaut,    5 },
+        { UpgradeType::StunRounds,    6 },
+        { UpgradeType::Scavenger,     8 },
         { UpgradeType::SlowDown,      3 },
         { UpgradeType::GlassCannon,   3 },
     };
@@ -214,12 +235,13 @@ void drawPickupPixelArt(SDL_Renderer* r, int cx, int cy, int size, UpgradeType t
             SDL_Rect hpV = { ix + 1, iy - 2, 2, 6 }; SDL_RenderFillRect(r, &hpV);
             break;
         }
-        case UpgradeType::Shield: {
-            // Shield shape
+        case UpgradeType::Blindness: {
+            // Eye / blindfold shape
             SDL_SetRenderDrawColor(r, 255, 255, 255, 230);
-            SDL_Rect sh1 = { ix - 2, iy - 2, 6, 2 }; SDL_RenderFillRect(r, &sh1);
-            SDL_Rect sh2 = { ix - 2, iy,     6, 2 }; SDL_RenderFillRect(r, &sh2);
-            SDL_Rect sh3 = { ix - 1, iy + 2, 4, 2 }; SDL_RenderFillRect(r, &sh3);
+            SDL_RenderDrawLine(r, ix - 2, iy, ix + 4, iy);
+            SDL_RenderDrawLine(r, ix - 1, iy - 2, ix + 3, iy - 2);
+            SDL_RenderDrawLine(r, ix - 1, iy + 2, ix + 3, iy + 2);
+            SDL_RenderDrawLine(r, ix - 2, iy - 3, ix + 4, iy + 3);
             break;
         }
         case UpgradeType::BombPickup:
@@ -236,6 +258,49 @@ void drawPickupPixelArt(SDL_Renderer* r, int cx, int cy, int size, UpgradeType t
             SDL_RenderDrawLine(r, ix + 1, iy - 3, ix + 1, iy + 3);
             SDL_RenderDrawLine(r, ix - 2, iy - 2, ix - 2, iy + 2);
             SDL_RenderDrawLine(r, ix + 4, iy - 2, ix + 4, iy + 2);
+            break;
+        case UpgradeType::Overclock:
+            SDL_SetRenderDrawColor(r, 255, 255, 255, 230);
+            SDL_RenderDrawLine(r, ix - 2, iy + 2, ix, iy - 3);
+            SDL_RenderDrawLine(r, ix, iy - 3, ix + 2, iy);
+            SDL_RenderDrawLine(r, ix + 2, iy, ix + 4, iy - 1);
+            SDL_RenderDrawLine(r, ix + 1, iy + 3, ix + 4, iy + 1);
+            break;
+        case UpgradeType::HeavyRounds: {
+            SDL_SetRenderDrawColor(r, 255, 255, 255, 230);
+            SDL_Rect slug = { ix - 1, iy - 2, 6, 4 };
+            SDL_RenderFillRect(r, &slug);
+            SDL_RenderDrawLine(r, ix + 5, iy - 1, ix + 5, iy + 1);
+            break;
+        }
+        case UpgradeType::BombCore: {
+            SDL_SetRenderDrawColor(r, 255, 255, 255, 230);
+            SDL_Rect core = { ix - 1, iy - 1, 4, 4 };
+            SDL_RenderFillRect(r, &core);
+            SDL_RenderDrawLine(r, ix + 1, iy - 4, ix + 1, iy - 2);
+            SDL_RenderDrawLine(r, ix + 1, iy + 2, ix + 1, iy + 4);
+            SDL_RenderDrawLine(r, ix - 4, iy + 1, ix - 2, iy + 1);
+            SDL_RenderDrawLine(r, ix + 4, iy + 1, ix + 6, iy + 1);
+            break;
+        }
+        case UpgradeType::Juggernaut: {
+            SDL_SetRenderDrawColor(r, 255, 255, 255, 230);
+            SDL_Rect helm = { ix - 2, iy - 2, 6, 5 };
+            SDL_RenderDrawRect(r, &helm);
+            SDL_RenderDrawLine(r, ix, iy + 3, ix + 2, iy + 3);
+            break;
+        }
+        case UpgradeType::StunRounds:
+            SDL_SetRenderDrawColor(r, 255, 255, 255, 230);
+            SDL_RenderDrawLine(r, ix - 2, iy, ix + 4, iy);
+            SDL_RenderDrawLine(r, ix, iy - 3, ix + 2, iy - 1);
+            SDL_RenderDrawLine(r, ix, iy + 3, ix + 2, iy + 1);
+            break;
+        case UpgradeType::Scavenger:
+            SDL_SetRenderDrawColor(r, 255, 255, 255, 230);
+            SDL_RenderDrawLine(r, ix - 2, iy - 2, ix + 4, iy + 4);
+            SDL_RenderDrawLine(r, ix - 2, iy + 4, ix + 1, iy + 1);
+            SDL_RenderDrawLine(r, ix + 4, iy - 2, ix + 1, iy + 1);
             break;
         default: {
             // Generic star
