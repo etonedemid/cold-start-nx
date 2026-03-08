@@ -15,6 +15,23 @@
 #include <switch.h>
 #endif
 
+namespace {
+// On Switch, A/B and X/Y are physically swapped compared to Xbox layout
+inline Uint8 remapButton(Uint8 btn) {
+#ifdef __SWITCH__
+    switch (btn) {
+        case SDL_CONTROLLER_BUTTON_A: return SDL_CONTROLLER_BUTTON_B;
+        case SDL_CONTROLLER_BUTTON_B: return SDL_CONTROLLER_BUTTON_A;
+        case SDL_CONTROLLER_BUTTON_X: return SDL_CONTROLLER_BUTTON_Y;
+        case SDL_CONTROLLER_BUTTON_Y: return SDL_CONTROLLER_BUTTON_X;
+        default: return btn;
+    }
+#else
+    return btn;
+#endif
+}
+} // namespace
+
 // ═════════════════════════════════════════════════════════════════════════════
 //  Init / Shutdown
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1910,7 +1927,8 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
         // Gamepad text input: DPad L/R = cycle char, A = append, B = backspace, Start = confirm
         if (e.type == SDL_CONTROLLERBUTTONDOWN) {
             int paletteLen = (int)strlen(charPalette);
-            switch (e.cbutton.button) {
+            Uint8 btn = remapButton(e.cbutton.button);
+            switch (btn) {
                 case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
                     charIdx = (charIdx - 1 + paletteLen) % paletteLen;
                     break;
@@ -2039,7 +2057,8 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
 
     // Navigation via gamepad
     if (e.type == SDL_CONTROLLERBUTTONDOWN) {
-        switch (e.cbutton.button) {
+        Uint8 btn = remapButton(e.cbutton.button);
+        switch (btn) {
             case SDL_CONTROLLER_BUTTON_DPAD_UP:
                 cfg.field--;
                 if (cfg.action == EditorConfig::Action::LoadMap && cfg.field > 1 && cfg.field < 6)
@@ -2420,8 +2439,9 @@ void MapEditor::renderConfig(SDL_Renderer* renderer) {
 void MapEditor::handleGamepadInput(SDL_Event& e) {
     if (e.type == SDL_CONTROLLERBUTTONDOWN) {
         useGamepad_ = true;
+        Uint8 btn = remapButton(e.cbutton.button);
 
-        switch (e.cbutton.button) {
+        switch (btn) {
             case SDL_CONTROLLER_BUTTON_A: { // Place / confirm (like left click)
                 mouseDown_ = true;
                 mouseX_ = (int)cursorX_;

@@ -1,7 +1,7 @@
 
 <img width="848" height="204" alt="banner" src="https://github.com/user-attachments/assets/2a0af91e-a15e-462f-aa99-d2869a311675" />
 
-# COLD START  `v0.9.1`
+# COLD START  `v0.9.3`
 
 COLD START is a top-down action shooter built in C++ with SDL2 for PC and Nintendo Switch homebrew. It combines fast combat, local content editing, multiplayer support, and a lightweight modding pipeline aimed at rapid iteration.
 
@@ -269,6 +269,10 @@ When the host enables mods, lightweight mod data can be serialized and sent to j
 - First launch may create missing runtime content directories automatically
 
 ## Changelog
+
+### v0.9.3 (2026-03-08)
+- **Multiplayer menu reorganization** — moved Local Co-op entry from Play menu to Multiplayer menu for clearer navigation; Play menu now contains only singleplayer game modes
+- **Lobby sub-player display** — multiplayer lobby now shows local split-screen companions under each network player with indented "↳ local-N" labels; gamepad join/leave events sync sub-player counts across the network in real-time
 
 ### v0.9.1 (2026-03-07)
 - **Fix: clients can't damage host in PvP** — the first PvP collision loop was testing ALL bullets (including remote player bullets) against remote players, consuming client bullets near their own NetPlayer representation before they could reach the host; now only local player bullets are checked against remote players

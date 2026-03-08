@@ -89,6 +89,7 @@ enum class NetPacketType : uint8_t {
     LivesUpdate     = 0x58,  // sync remaining lives for a player
     HitRequest      = 0x59,  // client→host: "bullet X hit me for Y damage" (PvP validation)
     PlayerHpSync    = 0x5A,  // host→all: authoritative HP update for a player
+    SubPlayerState  = 0x5B,  // local splitscreen sub-player positions (unreliable, frequent)
 };
 
 // ── Network channels ──
@@ -96,6 +97,24 @@ enum NetChannel : uint8_t {
     NET_CHAN_RELIABLE   = 0,  // game events, file sync, chat
     NET_CHAN_UNRELIABLE = 1,  // game state updates (position etc.)
     NET_CHAN_COUNT      = 2,
+};
+
+// ── Sub-player info (splitscreen additional players on a single client) ──
+struct SubPlayerInfo {
+    Vec2  pos;
+    float rotation = 0;
+    float legRotation = 0;
+    int   hp = 10;
+    int   maxHp = 10;
+    int   animFrame = 0;
+    int   legFrame = 0;
+    bool  moving = false;
+    bool  alive = true;
+    // Interpolation for smooth remote rendering
+    Vec2  prevPos, targetPos;
+    float interpT = 0;
+    float prevRotation = 0, targetRotation = 0;
+    uint32_t lastUpdateTick = 0;
 };
 
 // ── Player info on network ──
@@ -114,6 +133,7 @@ struct NetPlayer {
     float       legRotation = 0;
     bool        alive = true;
     bool        ready = false;
+    uint8_t     localSubPlayers = 0; // additional local players on this client (0..3)
     bool        moving = false;
     float       speed = 520.0f;
     int8_t      team = -1;         // -1 = no team, 0..3 = team index
@@ -128,6 +148,9 @@ struct NetPlayer {
     float interpT = 0;
     float prevRotation = 0;
     float targetRotation = 0;
+
+    // Splitscreen sub-players on this client (rendered remotely)
+    std::vector<SubPlayerInfo> subPlayers;
 };
 
 // ── File transfer state ──
@@ -214,6 +237,7 @@ public:
     // Lobby
     const LobbyInfo& lobbyInfo() const { return lobby_; }
     void setReady(bool ready);
+    void setLocalSubPlayers(uint8_t count);
     void setGamemode(const std::string& gamemodeId);
     void setMap(const std::string& mapFile, const std::string& mapName);
     void startGame(uint32_t mapSeed, int mapW, int mapH, const std::vector<uint8_t>& customMapData = {});
@@ -224,6 +248,7 @@ public:
 
     // Game state sending (called by game update)
     void sendPlayerState(const NetPlayer& state);
+    void sendSubPlayerStates(uint8_t localId, const SubPlayerInfo* subs, int count);
     void sendBulletSpawn(Vec2 pos, float angle, uint8_t playerId, uint32_t netId = 0);
     void sendBulletHit(uint32_t bulletNetId);
     void sendBombSpawn(Vec2 pos, Vec2 vel, uint8_t playerId);

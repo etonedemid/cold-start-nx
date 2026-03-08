@@ -1,5 +1,5 @@
 #---------------------------------------------------------------------------------
-# COLD START - Nintendo Switch Homebrew
+# COLD START — Nintendo Switch Homebrew Build
 #---------------------------------------------------------------------------------
 ifeq ($(strip $(DEVKITPRO)),)
 $(error "Please set DEVKITPRO in your environment. export DEVKITPRO=<path to>/devkitpro")
@@ -9,48 +9,48 @@ TOPDIR ?= $(CURDIR)
 include $(DEVKITPRO)/libnx/switch_rules
 
 #---------------------------------------------------------------------------------
-# TARGET is the name of the output
-# BUILD is the directory where object files & intermediate files will be placed
-# SOURCES is a list of directories containing source code
-# DATA is a list of directories containing data files
-# INCLUDES is a list of directories containing header files
-# ROMFS is the directory containing data to be added to RomFS
+# Build configuration
 #---------------------------------------------------------------------------------
-TARGET		:=	$(notdir $(CURDIR))
+TARGET		:=	cold_start
 BUILD		:=	build
 SOURCES		:=	source source/enet
 DATA		:=	data
 INCLUDES	:=	source source/enet/include
 ROMFS		:=	romfs
 
+APP_TITLE	:=	COLD START
+APP_AUTHOR	:=	etonedemid
+APP_VERSION	:=	9.5.0
+
 #---------------------------------------------------------------------------------
-# options for code generation
+# Compiler flags
 #---------------------------------------------------------------------------------
 ARCH	:=	-march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 
 CFLAGS	:=	-g -Wall -O2 -ffunction-sections \
 			$(ARCH) $(DEFINES)
 
-CFLAGS	+=	$(INCLUDE) -D__SWITCH__ `$(PREFIX)pkg-config --cflags SDL2_image SDL2_ttf SDL2_mixer sdl2` \
-			-DHAS_SOCKLEN_T=1 -DHAS_FCNTL=1 -DHAS_GETADDRINFO=1 -DHAS_GETNAMEINFO=1 \
-			-DHAS_INET_PTON=1 -DHAS_INET_NTOP=1 -DHAS_POLL=1
+CFLAGS	+=	$(INCLUDE) -D__SWITCH__ \
+			`$(PREFIX)pkg-config --cflags SDL2_image SDL2_ttf SDL2_mixer sdl2` \
+			-DHAS_SOCKLEN_T=1 -DHAS_FCNTL=1 -DHAS_GETADDRINFO=1 \
+			-DHAS_GETNAMEINFO=1 -DHAS_INET_PTON=1 -DHAS_INET_NTOP=1 \
+			-DHAS_POLL=1
 
 CXXFLAGS	:=	$(CFLAGS) -std=gnu++17 -fno-rtti -fno-exceptions
 
 ASFLAGS	:=	-g $(ARCH)
-LDFLAGS	=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
+LDFLAGS	=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) \
+			-Wl,-Map,$(notdir $*.map)
 
 LIBS	:=	`$(PREFIX)pkg-config --libs SDL2_image SDL2_ttf SDL2_mixer sdl2` -lnx
 
 #---------------------------------------------------------------------------------
-# list of directories containing libraries, this must be the top level containing
-# include and lib
+# Library search paths
 #---------------------------------------------------------------------------------
 LIBDIRS	:= $(PORTLIBS) $(LIBNX)
 
 #---------------------------------------------------------------------------------
-# no real need to edit anything past this point unless you need to add additional
-# temporary files to clean (for example, from using gennamedtile)
+# Build rules (devkitPro standard — no need to edit below)
 #---------------------------------------------------------------------------------
 ifneq ($(BUILD),$(notdir $(CURDIR)))
 
@@ -58,7 +58,7 @@ export OUTPUT	:=	$(CURDIR)/$(TARGET)
 export TOPDIR	:=	$(CURDIR)
 
 export VPATH	:=	$(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
-			$(foreach dir,$(DATA),$(CURDIR)/$(dir))
+					$(foreach dir,$(DATA),$(CURDIR)/$(dir))
 
 export DEPSDIR	:=	$(CURDIR)/$(BUILD)
 
@@ -75,15 +75,16 @@ endif
 
 export OFILES_BIN	:=	$(addsuffix .o,$(BINFILES))
 export OFILES_SRC	:=	$(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
-export OFILES	:=	$(OFILES_BIN) $(OFILES_SRC)
+export OFILES		:=	$(OFILES_BIN) $(OFILES_SRC)
 export HFILES_BIN	:=	$(addsuffix .h,$(subst .,_,$(BINFILES)))
 
 export INCLUDE	:=	$(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
-			$(foreach dir,$(LIBDIRS),-I$(dir)/include) \
-			-I$(CURDIR)/$(BUILD)
+					$(foreach dir,$(LIBDIRS),-I$(dir)/include) \
+					-I$(CURDIR)/$(BUILD)
 
 export LIBPATHS	:=	$(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 
+# JSON app metadata
 ifeq ($(strip $(CONFIG_JSON)),)
 	jsons := $(wildcard *.json)
 	ifneq (,$(findstring $(TARGET).json,$(jsons)))
@@ -97,6 +98,7 @@ else
 	export APP_JSON := $(TOPDIR)/$(CONFIG_JSON)
 endif
 
+# Icon
 ifeq ($(strip $(ICON)),)
 	icons := $(wildcard *.jpg)
 	ifneq (,$(findstring $(TARGET).jpg,$(icons)))
@@ -139,11 +141,11 @@ clean:
 	@rm -fr $(BUILD) $(TARGET).nro $(TARGET).nacp $(TARGET).elf
 
 else
-.PHONY:	all
+.PHONY: all
 
 DEPENDS	:=	$(OFILES:.o=.d)
 
-all:	$(OUTPUT).nro
+all: $(OUTPUT).nro
 
 ifeq ($(strip $(NO_NACP)),)
 $(OUTPUT).nro	:	$(OUTPUT).elf $(OUTPUT).nacp
