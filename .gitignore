@@ -1,36 +1,46 @@
-# Build output directories
+# ─── Build output ────────────────────────────────────────────────────────────
 build/
 build-pc/
 build-win/
-
-# Local distribution folder (created during release packaging)
 dist/
 
-# Release zip archives (created locally, uploaded to GitHub)
+# ─── Release archives ───────────────────────────────────────────────────────
 cold_start-*.zip
 *.zip
 
-# Log files
+# ─── Logs ────────────────────────────────────────────────────────────────────
 *.log
 
-# Nintendo Switch compiled outputs
+# ─── Nintendo Switch binaries ────────────────────────────────────────────────
 *.elf
 *.nacp
 *.nro
 *.nso
 *.pfs0
 
-# PC compiled output
+# ─── PC binaries ────────────────────────────────────────────────────────────
 cold_start
 cold_start.exe
 
-# Config and save files (user-specific, not for repo)
+# ─── User-specific config ───────────────────────────────────────────────────
 config.txt
 presets.txt
 servers.txt
 modconfig.cfg
 
-# Editor / OS garbage
+# ─── Android ────────────────────────────────────────────────────────────────
+android/app/jni/SDL2/
+android/app/jni/SDL2_image/
+android/app/jni/SDL2_ttf/
+android/app/jni/SDL2_mixer/
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+*.apk
+*.aab
+
+# ─── IDE / OS ───────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 *.swp
