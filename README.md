@@ -1,7 +1,7 @@
 
 <img width="848" height="204" alt="banner" src="https://github.com/user-attachments/assets/2a0af91e-a15e-462f-aa99-d2869a311675" />
 
-# COLD START  `v0.9.5`
+# COLD START  `v0.9.6`
 
 COLD START is a top-down action shooter built in C++ with SDL2 for PC and Nintendo Switch homebrew. It combines fast combat, local content editing, multiplayer support, and a lightweight modding pipeline aimed at rapid iteration.
 
@@ -269,6 +269,9 @@ When the host enables mods, lightweight mod data can be serialized and sent to j
 - First launch may create missing runtime content directories automatically
 
 ## Changelog
+
+### v0.9.6 (2026-03-08)
+- **Join menu address input update** — IP CONNECT address field now accepts hostname text (letters, numbers, dots, dashes, and `:` for host:port style endpoints) with increased input length for real-world server addresses
 
 ### v0.9.5 (2026-03-08)
 - **Splitscreen in multiplayer** — local split-screen now works inside network games; host or join a lobby with multiple gamepads and each local player gets an independent viewport during gameplay; sub-player positions are synced to remote clients via a new `SubPlayerState` network packet so everyone sees all players
