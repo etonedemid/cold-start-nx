@@ -163,6 +163,7 @@ bool NetworkManager::host(uint16_t port, int maxClients) {
     local.id = 0;
     local.username = username_;
     local.ready = false;
+    local.localSubPlayers = 0;
     local.peer = nullptr;
     players_.clear();
     players_.push_back(local);
@@ -270,10 +271,20 @@ void NetworkManager::update(float dt) {
     for (auto& p : players_) {
         if (p.id != localId_) {
             // Remote player — interpolate (applies on both host and clients)
-            p.interpT += dt * 15.0f; // smooth over ~66ms
+            p.interpT += dt * 24.0f; // smooth over ~42ms
             if (p.interpT > 1.0f) p.interpT = 1.0f;
             p.pos = Vec2::lerp(p.prevPos, p.targetPos, p.interpT);
-            p.rotation = p.prevRotation + (p.targetRotation - p.prevRotation) * p.interpT;
+            float rotDelta = fmodf((p.targetRotation - p.prevRotation) + (float)M_PI, (float)(2.0 * M_PI)) - (float)M_PI;
+            p.rotation = p.prevRotation + rotDelta * p.interpT;
+
+            // Interpolate sub-players
+            for (auto& sp : p.subPlayers) {
+                sp.interpT += dt * 24.0f;
+                if (sp.interpT > 1.0f) sp.interpT = 1.0f;
+                sp.pos = Vec2::lerp(sp.prevPos, sp.targetPos, sp.interpT);
+                float spRotDelta = fmodf((sp.targetRotation - sp.prevRotation) + (float)M_PI, (float)(2.0 * M_PI)) - (float)M_PI;
+                sp.rotation = sp.prevRotation + spRotDelta * sp.interpT;
+            }
         }
     }
 
@@ -292,6 +303,7 @@ void NetworkManager::processEvent(ENetEvent& event) {
             np.id = newId;
             np.peer = event.peer;
             np.username = "Player " + std::to_string(newId);
+            np.localSubPlayers = 0;
             event.peer->data = (void*)(uintptr_t)newId;
             players_.push_back(np);
             lobby_.currentPlayers = (int)players_.size();
@@ -303,7 +315,7 @@ void NetworkManager::processEvent(ENetEvent& event) {
                 std::vector<uint8_t> payload;
                 // [assignedId:1][hostNameLen:1][hostName][mapNameLen:1][mapName]
                 // [mapFileLen:1][mapFile][gamemodeNameLen:1][gamemodeName]
-                // [gamemodeIdLen:1][gamemodeId][maxPlayers:1][currentPlayers:1][inProgress:1]
+                // [gamemodeIdLen:1][gamemodeId][maxPlayers:1][currentPlayers:1][inProgress:1][hostSubPlayers:1]
                 payload.push_back(newId); // assigned player ID
                 payload.push_back((uint8_t)lobby_.hostName.size());
                 payload.insert(payload.end(), lobby_.hostName.begin(), lobby_.hostName.end());
@@ -318,6 +330,7 @@ void NetworkManager::processEvent(ENetEvent& event) {
                 payload.push_back((uint8_t)lobby_.maxPlayers);
                 payload.push_back((uint8_t)lobby_.currentPlayers);
                 payload.push_back(lobby_.inProgress ? 1 : 0);
+                payload.push_back(players_.empty() ? 0 : players_[0].localSubPlayers);
                 auto pkt = buildPacket(NetPacketType::LobbyInfo, payload.data(), payload.size());
                 sendReliable(pkt, event.peer);
             }
@@ -328,6 +341,7 @@ void NetworkManager::processEvent(ENetEvent& event) {
                 joinPayload.push_back(newId);
                 joinPayload.push_back((uint8_t)np.username.size());
                 joinPayload.insert(joinPayload.end(), np.username.begin(), np.username.end());
+                joinPayload.push_back(np.localSubPlayers);
                 auto jpkt = buildPacket(NetPacketType::PlayerJoined, joinPayload.data(), joinPayload.size());
                 for (auto& p : players_) {
                     if (p.peer && p.peer != event.peer) sendReliable(jpkt, p.peer);
@@ -342,6 +356,7 @@ void NetworkManager::processEvent(ENetEvent& event) {
                     existPayload.push_back(p.id);
                     existPayload.push_back((uint8_t)p.username.size());
                     existPayload.insert(existPayload.end(), p.username.begin(), p.username.end());
+                    existPayload.push_back(p.localSubPlayers);
                     auto epkt = buildPacket(NetPacketType::PlayerJoined, existPayload.data(), existPayload.size());
                     sendReliable(epkt, event.peer);
                 }
@@ -450,6 +465,7 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
                 joinPayload.push_back(peerId);
                 joinPayload.push_back((uint8_t)name.size());
                 joinPayload.insert(joinPayload.end(), name.begin(), name.end());
+                joinPayload.push_back(p->localSubPlayers);
                 auto jpkt = buildPacket(NetPacketType::PlayerJoined, joinPayload.data(), joinPayload.size());
                 for (auto& op : players_) {
                     if (op.peer) sendReliable(jpkt, op.peer);
@@ -493,7 +509,9 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             lobby_.maxPlayers = payload[off++];
             lobby_.currentPlayers = payload[off++];
             lobby_.inProgress = payload[off++] != 0;
+            if (off < payloadLen) hostP.localSubPlayers = payload[off++];
             lobby_.hostName = hostP.username;
+            players_[0].localSubPlayers = hostP.localSubPlayers;
 
             state_ = NetState::InLobby;
             printf("Network: Lobby info received (host=%s, gamemode=%s)\n",
@@ -509,15 +527,25 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             std::string name = (payloadLen > 2 + nameLen) ?
                 std::string((char*)payload + 2, nameLen) :
                 std::string((char*)payload + 2, payloadLen - 2);
+            uint8_t localSubPlayers = 0;
+            if (payloadLen > 2 + nameLen) {
+                localSubPlayers = payload[2 + nameLen];
+            }
             // Don't duplicate
             bool exists = false;
             for (auto& p : players_) {
-                if (p.id == pid) { p.username = name; exists = true; break; }
+                if (p.id == pid) {
+                    p.username = name;
+                    p.localSubPlayers = localSubPlayers;
+                    exists = true;
+                    break;
+                }
             }
             if (!exists) {
                 NetPlayer np;
                 np.id = pid;
                 np.username = name;
+                np.localSubPlayers = localSubPlayers;
                 players_.push_back(np);
             }
             lobby_.currentPlayers = (int)players_.size();
@@ -575,6 +603,66 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
                 for (auto& p : players_) {
                     if (p.peer && p.peer != from) {
                         sendUnreliable(pkt, p.peer);
+                    }
+                }
+            }
+        }
+        break;
+    }
+
+    case NetPacketType::SubPlayerState: {
+        if (payloadLen >= 2) {
+            uint8_t pid = payload[0];
+            uint8_t count = payload[1];
+            const size_t PER_SUB = 34;
+            if (count > 3) count = 3;
+            if (payloadLen >= 2 + count * PER_SUB) {
+                if (auto* p = findPlayer(pid)) {
+                    p->subPlayers.resize(count);
+                    for (int i = 0; i < count; i++) {
+                        const uint8_t* s = payload + 2 + i * PER_SUB;
+                        SubPlayerInfo sp;
+                        memcpy(&sp.pos.x, s, 4);
+                        memcpy(&sp.pos.y, s + 4, 4);
+                        memcpy(&sp.rotation, s + 8, 4);
+                        memcpy(&sp.legRotation, s + 12, 4);
+                        memcpy(&sp.hp, s + 16, 4);
+                        memcpy(&sp.maxHp, s + 20, 4);
+                        memcpy(&sp.animFrame, s + 24, 4);
+                        memcpy(&sp.legFrame, s + 28, 4);
+                        sp.moving = (s[32] != 0);
+                        sp.alive  = (s[33] != 0);
+                        // Interpolation
+                        if (p->subPlayers[i].lastUpdateTick == 0) {
+                            p->subPlayers[i].prevPos = sp.pos;
+                            p->subPlayers[i].targetPos = sp.pos;
+                            p->subPlayers[i].pos = sp.pos;
+                            p->subPlayers[i].prevRotation = sp.rotation;
+                            p->subPlayers[i].targetRotation = sp.rotation;
+                        } else {
+                            p->subPlayers[i].prevPos = p->subPlayers[i].targetPos;
+                            p->subPlayers[i].prevRotation = p->subPlayers[i].targetRotation;
+                            p->subPlayers[i].targetPos = sp.pos;
+                            p->subPlayers[i].targetRotation = sp.rotation;
+                        }
+                        p->subPlayers[i].interpT = 0;
+                        p->subPlayers[i].hp = sp.hp;
+                        p->subPlayers[i].maxHp = sp.maxHp;
+                        p->subPlayers[i].animFrame = sp.animFrame;
+                        p->subPlayers[i].legFrame = sp.legFrame;
+                        p->subPlayers[i].legRotation = sp.legRotation;
+                        p->subPlayers[i].moving = sp.moving;
+                        p->subPlayers[i].alive = sp.alive;
+                        p->subPlayers[i].lastUpdateTick = tick_;
+                    }
+                }
+                // Host relays to other clients
+                if (isHost_) {
+                    auto pkt = buildPacket(NetPacketType::SubPlayerState, payload, payloadLen);
+                    for (auto& pl : players_) {
+                        if (pl.peer && pl.peer != from) {
+                            sendUnreliable(pkt, pl.peer);
+                        }
                     }
                 }
             }
@@ -968,7 +1056,26 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
         if (isHost_ && payloadLen >= 1) {
             uint8_t peerId = (uint8_t)(uintptr_t)from->data;
             bool ready = payload[0] != 0;
-            if (auto* p = findPlayer(peerId)) p->ready = ready;
+            uint8_t localSubPlayers = (payloadLen >= 2) ? payload[1] : 0;
+            if (auto* p = findPlayer(peerId)) {
+                p->ready = ready;
+                p->localSubPlayers = localSubPlayers;
+            }
+            // Broadcast host-authoritative ready/sub-player state as [playerId, ready, localSubPlayers]
+            uint8_t relay[3] = { peerId, (uint8_t)(ready ? 1 : 0), localSubPlayers };
+            auto pkt = buildPacket(NetPacketType::Ready, relay, sizeof(relay));
+            for (auto& p : players_) {
+                if (p.peer) sendReliable(pkt, p.peer);
+            }
+        } else if (!isHost_ && payloadLen >= 2) {
+            // Host relay format: [playerId, ready, localSubPlayers?]
+            uint8_t pid = payload[0];
+            bool ready = payload[1] != 0;
+            uint8_t localSubPlayers = (payloadLen >= 3) ? payload[2] : 0;
+            if (auto* p = findPlayer(pid)) {
+                p->ready = ready;
+                p->localSubPlayers = localSubPlayers;
+            }
         }
         break;
     }
@@ -1251,11 +1358,43 @@ NetPlayer* NetworkManager::findPlayer(uint8_t id) {
 void NetworkManager::setReady(bool ready) {
 #if HAS_ENET
     if (isHost_) {
-        if (auto* p = localPlayer()) p->ready = ready;
+        if (auto* p = localPlayer()) {
+            p->ready = ready;
+            uint8_t relay[3] = { p->id, (uint8_t)(ready ? 1 : 0), p->localSubPlayers };
+            auto pkt = buildPacket(NetPacketType::Ready, relay, sizeof(relay));
+            for (auto& op : players_) {
+                if (op.peer) sendReliable(pkt, op.peer);
+            }
+        }
     } else {
-        uint8_t val = ready ? 1 : 0;
-        auto pkt = buildPacket(NetPacketType::Ready, &val, 1);
+        uint8_t localSubPlayers = 0;
+        if (auto* p = localPlayer()) {
+            p->ready = ready;
+            localSubPlayers = p->localSubPlayers;
+        }
+        uint8_t payload[2] = { (uint8_t)(ready ? 1 : 0), localSubPlayers };
+        auto pkt = buildPacket(NetPacketType::Ready, payload, sizeof(payload));
         sendReliable(pkt);
+    }
+#endif
+}
+
+void NetworkManager::setLocalSubPlayers(uint8_t count) {
+#if HAS_ENET
+    if (count > 3) count = 3;
+    if (auto* p = localPlayer()) {
+        p->localSubPlayers = count;
+        if (isHost_) {
+            uint8_t relay[3] = { p->id, (uint8_t)(p->ready ? 1 : 0), p->localSubPlayers };
+            auto pkt = buildPacket(NetPacketType::Ready, relay, sizeof(relay));
+            for (auto& op : players_) {
+                if (op.peer) sendReliable(pkt, op.peer);
+            }
+        } else {
+            uint8_t payload[2] = { (uint8_t)(p->ready ? 1 : 0), p->localSubPlayers };
+            auto pkt = buildPacket(NetPacketType::Ready, payload, sizeof(payload));
+            sendReliable(pkt);
+        }
     }
 #endif
 }
@@ -1333,6 +1472,32 @@ void NetworkManager::sendPlayerState(const NetPlayer& state) {
     memcpy(payload + 31, &state.maxHp, 4);
 
     auto pkt = buildPacket(NetPacketType::PlayerState, payload, 35);
+    sendUnreliable(pkt);
+#endif
+}
+
+void NetworkManager::sendSubPlayerStates(uint8_t localId, const SubPlayerInfo* subs, int count) {
+#if HAS_ENET
+    if (count <= 0 || count > 3) return;
+    // Payload: 1 byte localId + 1 byte count + 34 bytes per sub-player
+    const size_t PER_SUB = 34;
+    std::vector<uint8_t> payload(2 + count * PER_SUB);
+    payload[0] = localId;
+    payload[1] = (uint8_t)count;
+    for (int i = 0; i < count; i++) {
+        uint8_t* p = payload.data() + 2 + i * PER_SUB;
+        memcpy(p,      &subs[i].pos.x, 4);
+        memcpy(p + 4,  &subs[i].pos.y, 4);
+        memcpy(p + 8,  &subs[i].rotation, 4);
+        memcpy(p + 12, &subs[i].legRotation, 4);
+        memcpy(p + 16, &subs[i].hp, 4);
+        memcpy(p + 20, &subs[i].maxHp, 4);
+        memcpy(p + 24, &subs[i].animFrame, 4);
+        memcpy(p + 28, &subs[i].legFrame, 4);
+        p[32] = subs[i].moving ? 1 : 0;
+        p[33] = subs[i].alive  ? 1 : 0;
+    }
+    auto pkt = buildPacket(NetPacketType::SubPlayerState, payload.data(), payload.size());
     sendUnreliable(pkt);
 #endif
 }

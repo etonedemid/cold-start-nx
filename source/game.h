@@ -119,6 +119,7 @@ struct CoopSlot {
     PlayerUpgrades upgrades;
     int    kills  = 0;
     int    deaths = 0;
+    float  respawnTimer = 0;  // countdown to respawn when dead
     // Per-frame input
     Vec2  moveInput  = {};
     Vec2  aimInput   = {};
@@ -205,6 +206,7 @@ private:
     std::string lobbyPassword_ = "";     // password for this hosted lobby
     bool hostPasswordTyping_ = false;    // editing lobby password in HostSetup
     int  hostPasswordCharIdx_ = 0;       // char picker index for host password
+    int  lobbySubPlayersSent_ = -1;      // last sent local sub-player count (for lobby sync)
 
     // ── World ──
     Player              player_;
@@ -271,7 +273,7 @@ private:
     int      coopMapMode_     = 0;     // 0=generated, 1=map file, 2=pack
 
     // ── Play Mode Menu ──
-    int playModeSelection_ = 0;   // 0=Generated,1=Map,2=Pack,3=LocalCoop,4-9=sliders,10=Back
+    int playModeSelection_ = 0;   // 0=Generated,1=Map,2=Pack,3-8=sliders,9=Back
     GameState prevMenuState_ = GameState::MainMenu; // for back nav in MapSelect/PackSelect
 
     // ── Map file browser ──
@@ -595,6 +597,7 @@ private:
     void renderMultiplayerHUD();
     void renderMultiplayerPause();
     void renderMultiplayerDeath();
+    void renderMultiplayerSplitscreen();
     // ── Match result ──
     enum class MatchEndReason : uint8_t {
         Unknown      = 0,

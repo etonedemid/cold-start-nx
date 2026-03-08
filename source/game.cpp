@@ -26,6 +26,21 @@
 #endif
 
 namespace {
+// On Switch, A/B and X/Y are physically swapped compared to Xbox layout
+inline Uint8 remapButton(Uint8 btn) {
+#ifdef __SWITCH__
+    switch (btn) {
+        case SDL_CONTROLLER_BUTTON_A: return SDL_CONTROLLER_BUTTON_B;
+        case SDL_CONTROLLER_BUTTON_B: return SDL_CONTROLLER_BUTTON_A;
+        case SDL_CONTROLLER_BUTTON_X: return SDL_CONTROLLER_BUTTON_Y;
+        case SDL_CONTROLLER_BUTTON_Y: return SDL_CONTROLLER_BUTTON_X;
+        default: return btn;
+    }
+#else
+    return btn;
+#endif
+}
+
 bool isMeleeEnemyType(EnemyType type) {
     return type == EnemyType::Melee || type == EnemyType::Brute || type == EnemyType::Scout;
 }
@@ -74,6 +89,22 @@ EnemyType rollWaveEnemyType() {
     if ((roll -= WAVE_SCOUT_WEIGHT) < 0)   return EnemyType::Scout;
     if ((roll -= WAVE_SNIPER_WEIGHT) < 0)  return EnemyType::Sniper;
     return EnemyType::Gunner;
+}
+
+bool sweptCircleOverlap(Vec2 curPos, Vec2 vel, float backtrackSec, Vec2 center, float radius) {
+    Vec2 start = curPos - vel * backtrackSec;
+    Vec2 end = curPos;
+    Vec2 seg = end - start;
+    float segLenSq = seg.x * seg.x + seg.y * seg.y;
+    if (segLenSq <= 0.0001f) return circleOverlap(curPos, 0.0f, center, radius);
+
+    Vec2 toCenter = center - start;
+    float t = (toCenter.x * seg.x + toCenter.y * seg.y) / segLenSq;
+    t = std::clamp(t, 0.0f, 1.0f);
+    Vec2 closest = start + seg * t;
+    float dx = closest.x - center.x;
+    float dy = closest.y - center.y;
+    return (dx * dx + dy * dy) <= (radius * radius);
 }
 }
 
@@ -335,22 +366,23 @@ bool Game::handleSoftKBEvent(SDL_Event& e) {
         return true; // consume all keydowns while keyboard active
     }
     if (e.type == SDL_CONTROLLERBUTTONDOWN) {
-        switch (e.cbutton.button) {
+        Uint8 btn = remapButton(e.cbutton.button);
+        switch (btn) {
             case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
                 kb.charIdx = (kb.charIdx - 1 + palLen) % palLen;
-                kb.heldButton = e.cbutton.button; kb.repeatAt = SDL_GetTicks() + 350;
+                kb.heldButton = btn; kb.repeatAt = SDL_GetTicks() + 350;
                 break;
             case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
                 kb.charIdx = (kb.charIdx + 1) % palLen;
-                kb.heldButton = e.cbutton.button; kb.repeatAt = SDL_GetTicks() + 350;
+                kb.heldButton = btn; kb.repeatAt = SDL_GetTicks() + 350;
                 break;
             case SDL_CONTROLLER_BUTTON_DPAD_UP:
                 kb.charIdx = (kb.charIdx - kb.cols + palLen) % palLen;
-                kb.heldButton = e.cbutton.button; kb.repeatAt = SDL_GetTicks() + 350;
+                kb.heldButton = btn; kb.repeatAt = SDL_GetTicks() + 350;
                 break;
             case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
                 kb.charIdx = (kb.charIdx + kb.cols) % palLen;
-                kb.heldButton = e.cbutton.button; kb.repeatAt = SDL_GetTicks() + 350;
+                kb.heldButton = btn; kb.repeatAt = SDL_GetTicks() + 350;
                 break;
             case SDL_CONTROLLER_BUTTON_A:
                 if ((int)kb.target->size() < kb.maxLen) *kb.target += kb.palette[kb.charIdx];
@@ -369,7 +401,8 @@ bool Game::handleSoftKBEvent(SDL_Event& e) {
         return true;
     }
     if (e.type == SDL_CONTROLLERBUTTONUP) {
-        if (e.cbutton.button == (Uint8)kb.heldButton) kb.heldButton = -1;
+        Uint8 btn = remapButton(e.cbutton.button);
+        if (btn == (Uint8)kb.heldButton) kb.heldButton = -1;
         return true;
     }
     return false;
@@ -769,7 +802,8 @@ void Game::handleInput() {
 
         // Clear D-pad hold-repeat when button released
         if (e.type == SDL_CONTROLLERBUTTONUP) {
-            if (e.cbutton.button == (Uint8)kbNavHeldButton_)
+            Uint8 btn = remapButton(e.cbutton.button);
+            if (btn == (Uint8)kbNavHeldButton_)
                 kbNavHeldButton_ = -1;
         }
 
@@ -790,8 +824,10 @@ void Game::handleInput() {
         }
 
         if (e.type == SDL_CONTROLLERBUTTONDOWN) {
-            // ── Local co-op lobby: intercept per-controller join/leave ──
-            if (state_ == GameState::LocalCoopLobby) {
+            Uint8 btn = remapButton(e.cbutton.button);
+            // ── Local join/leave handling in lobby screens ──
+            if (state_ == GameState::LocalCoopLobby || state_ == GameState::Lobby) {
+                bool isMultiplayerLobby = (state_ == GameState::Lobby);
                 SDL_JoystickID iid = e.cbutton.which;
                 // Check if this gamepad is already assigned to a slot
                 int existingSlot = -1;
@@ -799,41 +835,99 @@ void Game::handleInput() {
                     if (coopSlots_[s].joined && coopSlots_[s].joyInstanceId == iid)
                         { existingSlot = s; break; }
                 }
-                if (e.cbutton.button == SDL_CONTROLLER_BUTTON_A) {
+                if (btn == SDL_CONTROLLER_BUTTON_A) {
                     if (existingSlot < 0) {
-                        // Find next free slot (1-3; slot 0 is keyboard+mouse)
-                        for (int s = 1; s < 4; s++) {
+#ifdef __SWITCH__
+                        // On Switch, gamepads can join slot 0-3
+                        int startSlot = 0;
+#else
+                        // On PC, slot 0 is keyboard+mouse, gamepads join 1-3
+                        int startSlot = 1;
+#endif
+                        for (int s = startSlot; s < 4; s++) {
                             if (!coopSlots_[s].joined) {
                                 int gpNum = 0;
-                                for (int k = 1; k < 4; k++) if (coopSlots_[k].joined) gpNum++;
+                                for (int k = startSlot; k < 4; k++) if (coopSlots_[k].joined) gpNum++;
                                 coopSlots_[s].joined = true;
                                 coopSlots_[s].joyInstanceId = iid;
+#ifdef __SWITCH__
+                                char uname[16];
+                                if (s == 0) {
+                                    snprintf(uname, sizeof(uname), "%s", config_.username.c_str());
+                                } else {
+                                    snprintf(uname, sizeof(uname), "nx-%d", gpNum);
+                                }
+#else
                                 char uname[16]; snprintf(uname, sizeof(uname), "pc-%d", gpNum + 1);
+#endif
                                 coopSlots_[s].username = uname;
+                                if (isMultiplayerLobby) {
+                                    int localSubPlayers = 0;
+                                    for (int si = startSlot; si < 4; si++) if (coopSlots_[si].joined && si > 0) localSubPlayers++;
+                                    NetworkManager::instance().setLocalSubPlayers((uint8_t)localSubPlayers);
+                                    lobbySubPlayersSent_ = localSubPlayers;
+                                }
                                 if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
                                 break;
                             }
                         }
                     }
-                    continue; // consumed by lobby
-                } else if (e.cbutton.button == SDL_CONTROLLER_BUTTON_B) {
-                    if (existingSlot > 0) {
+                    // In multiplayer lobby, let already joined gamepads still use A as confirm/ready.
+                    if (!isMultiplayerLobby || existingSlot < 0) continue;
+                } else if (btn == SDL_CONTROLLER_BUTTON_B) {
+#ifdef __SWITCH__
+                    int minSlot = 0; // On Switch, slot 0 can leave
+#else
+                    int minSlot = 1; // On PC, slot 0 is keyboard+mouse
+#endif
+                    if (existingSlot >= minSlot) {
                         coopSlots_[existingSlot] = CoopSlot{};
                         // Renumber remaining gamepad usernames
                         int gpNum = 1;
+#ifdef __SWITCH__
+                        // On Switch: slot 0 gets config name, others get nx-N
+                        for (int s = 0; s < 4; s++) {
+                            if (!coopSlots_[s].joined) continue;
+                            if (s == 0) {
+                                coopSlots_[s].username = config_.username;
+                            } else {
+                                char uname[16]; snprintf(uname, sizeof(uname), "nx-%d", gpNum++);
+                                coopSlots_[s].username = uname;
+                            }
+                        }
+#else
+                        // On PC: all gamepads get pc-N
                         for (int s = 1; s < 4; s++) {
                             if (!coopSlots_[s].joined) continue;
                             char uname[16]; snprintf(uname, sizeof(uname), "pc-%d", gpNum++);
                             coopSlots_[s].username = uname;
                         }
-                    } else if (existingSlot < 0) {
+#endif
+                        if (isMultiplayerLobby) {
+                            int localSubPlayers = 0;
+                            for (int s = 1; s < 4; s++) if (coopSlots_[s].joined) localSubPlayers++;
+                            NetworkManager::instance().setLocalSubPlayers((uint8_t)localSubPlayers);
+                            lobbySubPlayersSent_ = localSubPlayers;
+                        }
+                    } else if (existingSlot < 0 && !isMultiplayerLobby) {
                         // Unassigned gamepad pressed B — treat as global back
                         backInput_ = true;
                     }
-                    continue; // consumed by lobby
-                } else if (e.cbutton.button == SDL_CONTROLLER_BUTTON_START) {
-                    // Any joined gamepad can start if slot 0 is joined
+#ifdef __SWITCH__
+                    if (existingSlot >= 0 || !isMultiplayerLobby) continue;
+#else
+                    if (existingSlot > 0 || !isMultiplayerLobby) continue;
+#endif
+                } else if (btn == SDL_CONTROLLER_BUTTON_START) {
+#ifdef __SWITCH__
+                    // On Switch, any joined gamepad can start if at least one player is joined
+                    bool anyJoined = false;
+                    for (int s = 0; s < 4; s++) if (coopSlots_[s].joined) { anyJoined = true; break; }
+                    if (existingSlot >= 0 || anyJoined) {
+#else
+                    // On PC, any joined gamepad can start if slot 0 (keyboard+mouse) is joined
                     if (existingSlot >= 0 || coopSlots_[0].joined) {
+#endif
                         confirmInput_ = true;
                         if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
                     }
@@ -842,7 +936,7 @@ void Game::handleInput() {
                 // Other buttons in lobby — fall through to normal handling
             }
             usingGamepad_ = true;
-            switch (e.cbutton.button) {
+            switch (btn) {
                 case SDL_CONTROLLER_BUTTON_START:    pauseInput_ = true; break;
                 case SDL_CONTROLLER_BUTTON_A:        confirmInput_ = true; if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); } break;
                 case SDL_CONTROLLER_BUTTON_B:        backInput_ = true; break;
@@ -1086,7 +1180,7 @@ void Game::handleInput() {
     else if (state_ == GameState::PlayModeMenu) {
         playModeSelection_ = menuSelection_;   // propagate DPad nav
         if (playModeSelection_ < 0) playModeSelection_ = 0;
-        if (playModeSelection_ > 10) playModeSelection_ = 10;
+        if (playModeSelection_ > 9) playModeSelection_ = 9;
         menuSelection_ = playModeSelection_;
 
         auto adjustIntPM = [&](int& value, int minV, int maxV, int step) {
@@ -1098,12 +1192,12 @@ void Game::handleInput() {
             if (rightInput_) value = std::min(maxV, value + step);
         };
 
-        if      (playModeSelection_ == 4) adjustIntPM  (config_.mapWidth,        20,   120, 2);
-        else if (playModeSelection_ == 5) adjustIntPM  (config_.mapHeight,        14,    80, 2);
-        else if (playModeSelection_ == 6) adjustIntPM  (config_.playerMaxHp,       1,    20, 1);
-        else if (playModeSelection_ == 7) adjustFloatPM(config_.spawnRateScale,  0.3f,  3.0f, 0.1f);
-        else if (playModeSelection_ == 8) adjustFloatPM(config_.enemyHpScale,    0.3f,  3.0f, 0.1f);
-        else if (playModeSelection_ == 9) adjustFloatPM(config_.enemySpeedScale, 0.5f,  2.5f, 0.1f);
+        if      (playModeSelection_ == 3) adjustIntPM  (config_.mapWidth,        20,   120, 2);
+        else if (playModeSelection_ == 4) adjustIntPM  (config_.mapHeight,        14,    80, 2);
+        else if (playModeSelection_ == 5) adjustIntPM  (config_.playerMaxHp,       1,    20, 1);
+        else if (playModeSelection_ == 6) adjustFloatPM(config_.spawnRateScale,  0.3f,  3.0f, 0.1f);
+        else if (playModeSelection_ == 7) adjustFloatPM(config_.enemyHpScale,    0.3f,  3.0f, 0.1f);
+        else if (playModeSelection_ == 8) adjustFloatPM(config_.enemySpeedScale, 0.5f,  2.5f, 0.1f);
 
         if (confirmInput_) {
             if (playModeSelection_ == 0) {
@@ -1120,16 +1214,7 @@ void Game::handleInput() {
                 state_ = GameState::PackSelect;
                 packSelectIdx_ = 0;
                 menuSelection_ = 0;
-            } else if (playModeSelection_ == 3) {
-                // Enter local co-op lobby
-                for (int i = 0; i < 4; i++) coopSlots_[i] = CoopSlot{};
-                coopSlots_[0].joined = true;   // keyboard+mouse user is always P1
-                coopSlots_[0].joyInstanceId = -1;
-                coopSlots_[0].username = config_.username;
-                coopPlayerCount_ = 0;
-                state_ = GameState::LocalCoopLobby;
-                menuSelection_ = 0;
-            } else if (playModeSelection_ == 10) {
+            } else if (playModeSelection_ == 9) {
                 saveConfig();
                 state_ = GameState::MainMenu;
                 menuSelection_ = 0;
@@ -1142,11 +1227,18 @@ void Game::handleInput() {
         }
     }
     else if (state_ == GameState::LocalCoopLobby) {
-        // P1 (keyboard+mouse) is always joined
+#ifndef __SWITCH__
+        // P1 (keyboard+mouse) is always joined on PC
         if (!coopSlots_[0].joined) {
             coopSlots_[0].joined = true;
             coopSlots_[0].joyInstanceId = -1;
             coopSlots_[0].username = config_.username;
+        }
+#endif
+        // Toggle mode with TAB
+        if (tabInput_) {
+            lobbySettings_.isPvp = !lobbySettings_.isPvp;
+            lobbySettings_.pvpEnabled = lobbySettings_.isPvp || lobbySettings_.friendlyFire;
         }
         if (confirmInput_) {
             // Only P1 (Enter on keyboard, START on P1 gamepad) starts the game
@@ -1157,7 +1249,12 @@ void Game::handleInput() {
         if (backInput_ || pauseInput_) {
             for (int i = 0; i < 4; i++) coopSlots_[i] = CoopSlot{};
             coopPlayerCount_ = 0;
-            state_ = GameState::PlayModeMenu; menuSelection_ = 3;
+            state_ = GameState::MultiplayerMenu; multiMenuSelection_ = 0; menuSelection_ = 0;
+        }
+        // Allow gamepad join/unjoin
+        for (int ci = 0; ci < 4; ci++) {
+            auto& slot = coopSlots_[ci];
+            (void)slot; // handled by joy events
         }
     }
     else if (state_ == GameState::LocalCoopGame) {
@@ -1779,6 +1876,21 @@ void Game::handleInput() {
     else if (state_ == GameState::Lobby) {
         auto& net = NetworkManager::instance();
 
+#ifndef __SWITCH__
+        // On PC, auto-join keyboard+mouse as P1
+        if (!coopSlots_[0].joined) {
+            coopSlots_[0].joined = true;
+            coopSlots_[0].joyInstanceId = -1;
+        }
+        coopSlots_[0].username = config_.username;
+#endif
+        int localSubPlayers = 0;
+        for (int i = 1; i < 4; i++) if (coopSlots_[i].joined) localSubPlayers++;
+        if (localSubPlayers != lobbySubPlayersSent_) {
+            net.setLocalSubPlayers((uint8_t)localSubPlayers);
+            lobbySubPlayersSent_ = localSubPlayers;
+        }
+
         // Check if the connection was lost or timed out
         if (!net.isHost()) {
             if (net.state() == NetState::Connecting) {
@@ -1843,6 +1955,8 @@ void Game::handleInput() {
             connectStatus_.clear();
             lobbyKickCursor_ = -1;
             bannedPlayerIds_.clear();
+            for (int i = 0; i < 4; i++) coopSlots_[i] = CoopSlot{};
+            lobbySubPlayersSent_ = -1;
             state_ = GameState::MultiplayerMenu; multiMenuSelection_ = 0; menuSelection_ = 0;
         }
         // Compute setting count here so we can check preset indices before the start-game confirm
@@ -2306,7 +2420,12 @@ void Game::update() {
         state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused;
 
     if (isPlayingState) {
-        if (state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) {
+        bool isCoopState = (state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused);
+        bool isMPSplitscreen = !isCoopState && coopPlayerCount_ > 1 &&
+            (state_ == GameState::MultiplayerGame || state_ == GameState::MultiplayerPaused ||
+             state_ == GameState::MultiplayerDead || state_ == GameState::MultiplayerSpectator);
+
+        if (isCoopState || isMPSplitscreen) {
             updateLocalCoopPlayers(dt);
         } else {
             updatePlayer(dt);
@@ -2319,18 +2438,18 @@ void Game::update() {
         updateSpawning(dt);
         updateCrates(dt);
         updatePickups(dt);
-        bool coopSlot0Alive = (state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) && !player_.dead;
+        bool coopSlot0Alive = (isCoopState || isMPSplitscreen) && !player_.dead;
         resolveCollisions();
 
         // Sync slot 0 back after resolveCollisions (damage, death, etc.)
-        if (state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) {
+        if (isCoopState || isMPSplitscreen) {
             coopSlots_[0].player   = player_;
             coopSlots_[0].upgrades = upgrades_;
             if (coopSlot0Alive && player_.dead) coopSlots_[0].deaths++;
         }
 
-        // Camera
-        if (state_ != GameState::LocalCoopGame && state_ != GameState::LocalCoopPaused) {
+        // Camera — co-op/splitscreen cameras are updated inside updateLocalCoopPlayers
+        if (!isCoopState && !isMPSplitscreen) {
             Vec2 aimDir = {0,0};
             if (aimInput_.lengthSq() > 0.04f) aimDir = aimInput_.normalized();
             else if (player_.moving && player_.vel.lengthSq() > 1.0f) aimDir = player_.vel.normalized();
@@ -2408,7 +2527,9 @@ void Game::updatePlayer(float dt) {
         if (p.deathTimer > 1.5f && state_ != GameState::Dead
             && state_ != GameState::MultiplayerDead
             && state_ != GameState::CustomDead
-            && state_ != GameState::PackDead) {
+            && state_ != GameState::PackDead
+            && state_ != GameState::LocalCoopGame
+            && state_ != GameState::LocalCoopPaused) {
             // Transition to the appropriate death state
             if (state_ == GameState::MultiplayerGame || state_ == GameState::MultiplayerPaused) {
                 // Check individual lives
@@ -2568,9 +2689,9 @@ void Game::updatePlayer(float dt) {
     // ── Bombs ──
     if (!spectatorMode_) {
         uint8_t localBombOwner = NetworkManager::instance().isInGame() ? NetworkManager::instance().localPlayerId() : (uint8_t)255;
-        bool hasOrbiting = false;
-        for (auto& b : bombs_) if (b.alive && !b.hasDashed && b.ownerId == localBombOwner) { hasOrbiting = true; break; }
-        if (!hasOrbiting && p.bombCount > 0) {
+        bool hasActiveBomb = false;
+        for (auto& b : bombs_) if (b.alive && b.ownerId == localBombOwner) { hasActiveBomb = true; break; }
+        if (!hasActiveBomb && p.bombCount > 0) {
             spawnBomb();
             p.bombCount--;
         }
@@ -3393,11 +3514,13 @@ void Game::updateExplosions(float dt) {
                     if (exOwner && exOwner->team == localTeam_) teamFire = true;
                 }
                 if (!selfFire && !teamFire && netEx.isHost()) {
-                    // Host applies damage and broadcasts authoritative HP
-                    player_.takeDamage(3);
+                    // Host applies authoritative PvP explosion damage (not blocked by invulnerability)
+                    int newHp = std::max(0, player_.hp - 3);
+                    player_.hp = newHp;
                     NetPlayer* localNetP = netEx.localPlayer();
-                    if (localNetP) localNetP->hp = player_.hp;
-                    if (player_.dead) {
+                    if (localNetP) localNetP->hp = newHp;
+                    if (newHp <= 0) {
+                        player_.die();
                         netEx.sendPlayerDied(localId, 255);
                     } else {
                         netEx.sendPlayerHpSync(localId, player_.hp, player_.maxHp, 255);
@@ -3421,7 +3544,7 @@ void Game::updateExplosions(float dt) {
                         if (rp.id == netEx2.localPlayerId() || !rp.alive) continue;
                         if (rp.id == ex.ownerId) continue;           // can't hurt yourself
                         if (exOwnerTeam >= 0 && rp.team == exOwnerTeam) continue;  // same team
-                        if (Vec2::dist(ex.pos, rp.pos) < ex.radius) {
+                        if (Vec2::dist(ex.pos, rp.targetPos) < ex.radius) {
                             NetPlayer* rpM = netEx2.findPlayer(rp.id);
                             if (!rpM) continue;
                             rpM->hp -= (int)ex.damage;
@@ -3433,6 +3556,19 @@ void Game::updateExplosions(float dt) {
                                 netEx2.sendPlayerHpSync(rp.id, rpM->hp, rpM->maxHp, 255);
                             }
                         }
+                    }
+                }
+            }
+            // Local co-op: explosions damage co-op players (skip owner)
+            if ((state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) &&
+                currentRules_.pvpEnabled) {
+                for (int ci = 0; ci < 4; ci++) {
+                    if (!coopSlots_[ci].joined) continue;
+                    CoopSlot& slot = coopSlots_[ci];
+                    if (slot.player.dead) continue;
+                    if (ex.ownerId == ci) continue;  // can't hurt yourself with your own bomb
+                    if (Vec2::dist(ex.pos, slot.player.pos) < ex.radius) {
+                        slot.player.takeDamage(3);  // 3 damage from explosion
                     }
                 }
             }
@@ -3627,7 +3763,8 @@ void Game::updateSpawning(float dt) {
         if (net.isOnline() && !net.isHost()) return;
     }
     // In sandbox mode or PvP mode skip all wave spawning
-    if (sandboxMode_ || lobbySettings_.isPvp) return;
+    bool pvpActive = (lobbySettings_.isPvp || currentRules_.pvpEnabled);
+    if (sandboxMode_ || pvpActive) return;
     // Wave-based spawning system
     if (waveActive_) {
         // Spawning enemies within current wave
@@ -3649,7 +3786,7 @@ void Game::updateSpawning(float dt) {
             waveActive_ = false;
 
             // ── PVE victory check: all enemies dead + reached wave count ──
-            if (!lobbySettings_.isPvp && lobbySettings_.waveCount > 0 &&
+            if (!pvpActive && lobbySettings_.waveCount > 0 &&
                 waveNumber_ >= lobbySettings_.waveCount) {
                 // Check if all enemies are dead
                 bool allDead = true;
@@ -3673,7 +3810,7 @@ void Game::updateSpawning(float dt) {
         wavePauseTimer_ -= dt;
         if (wavePauseTimer_ <= 0) {
             // PVE: don't start new wave if we've reached the wave count
-            if (!lobbySettings_.isPvp && lobbySettings_.waveCount > 0 &&
+            if (!pvpActive && lobbySettings_.waveCount > 0 &&
                 waveNumber_ >= lobbySettings_.waveCount) {
                 // Check if all enemies are dead for victory
                 bool allDead = true;
@@ -4004,6 +4141,19 @@ void Game::resolveCollisions() {
                     }
                 }
             }
+            // Player bullets vs other co-op players (PvP)
+            if (currentRules_.pvpEnabled) {
+                for (auto& b : bullets_) {
+                    if (!b.alive) continue;
+                    if (b.ownerId == ci) continue;  // can't hurt yourself
+                    if (circleOverlap(b.pos, b.size, cp.pos, PLAYER_SIZE * 0.5f)) {
+                        cp.takeDamage(b.damage);
+                        b.alive = false;
+                        coopSlots_[ci].camera.addShake(1.8f);
+                        if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                    }
+                }
+            }
             // Track co-op death (cp was alive at loop start)
             if (cp.dead) coopSlots_[ci].deaths++;
         }
@@ -4049,20 +4199,23 @@ void Game::resolveCollisions() {
                     NetPlayer* shooter = net.findPlayer(b.ownerId);
                     if (shooter && shooter->team == localTeam_ && localTeam_ >= 0) continue;
                 }
-                if (circleOverlap(b.pos, b.size, p.pos, PLAYER_SIZE * 0.5f)) {
+                float hitRadius = b.size + PLAYER_SIZE * 0.6f;
+                bool pointHit = circleOverlap(b.pos, b.size, p.pos, PLAYER_SIZE * 0.6f);
+                bool sweptHit = sweptCircleOverlap(b.pos, b.vel, 1.0f / 30.0f, p.pos, hitRadius);
+                if (pointHit || sweptHit) {
                     b.alive = false;
                     if (net.isHost()) {
                         // Host processes damage directly and broadcasts to all
                         NetPlayer* localNetP = net.localPlayer();
-                        int newHp = player_.hp - b.damage;
-                        if (localNetP) localNetP->hp = std::max(0, newHp);
+                        int newHp = std::max(0, player_.hp - b.damage);
+                        player_.hp = newHp;
+                        if (localNetP) localNetP->hp = newHp;
                         if (newHp <= 0) {
-                            p.takeDamage(b.damage);  // sets dead flag
+                            p.die();
                             camera_.addShake(4.0f);
                             if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
                             net.sendPlayerDied(net.localPlayerId(), b.ownerId);
                         } else {
-                            p.takeDamage(b.damage);
                             camera_.addShake(2.0f);
                             if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
                             net.sendPlayerHpSync(net.localPlayerId(), player_.hp, player_.maxHp, b.ownerId);
@@ -4768,6 +4921,10 @@ void Game::render() {
     case GameState::MultiplayerPaused:
     case GameState::MultiplayerDead:
     case GameState::MultiplayerSpectator:
+        if (coopPlayerCount_ > 1) {
+            // ── Splitscreen multiplayer rendering ──
+            renderMultiplayerSplitscreen();
+        } else {
         // Reuse standard gameplay rendering
         renderMap();
         renderDecals();
@@ -4848,6 +5005,7 @@ void Game::render() {
         renderShadingPass();
         renderUI();
         renderMultiplayerHUD();
+        } // end single-viewport block
 
         if (state_ == GameState::MultiplayerPaused) renderMultiplayerPause();
         if (state_ == GameState::MultiplayerDead)   renderMultiplayerDeath();
@@ -5796,7 +5954,6 @@ void Game::renderPlayModeMenu() {
         {0, "GENERATED MAP", UI::Color::Green},
         {1, "MAP",           UI::Color::Cyan},
         {2, "PACK",          UI::Color::Cyan},
-        {3, "LOCAL CO-OP",   UI::Color::Yellow},
     };
     for (auto& m : modes) {
         bool sel = (playModeSelection_ == m.idx);
@@ -5819,23 +5976,23 @@ void Game::renderPlayModeMenu() {
     ui_.drawSeparator(SCREEN_W / 2, y, 60);
     y += 24;
 
-    // ── Slider rows (4-9): map size + difficulty ──
+    // ── Slider rows (3-8): map size + difficulty ──
     char valBuf[128];
     struct PMRow { const char* label; int idx; };
     PMRow rows[] = {
-        {"Map Width:",      4}, {"Map Height:",      5},
-        {"Player HP:",      6}, {"Enemy Spawnrate:", 7},
-        {"Enemy HP:",       8}, {"Enemy Speed:",     9},
+        {"Map Width:",      3}, {"Map Height:",      4},
+        {"Player HP:",      5}, {"Enemy Spawnrate:", 6},
+        {"Enemy HP:",       7}, {"Enemy Speed:",     8},
     };
 
     auto fmtVal = [&](int idx) -> const char* {
         switch (idx) {
-            case 4: snprintf(valBuf, sizeof(valBuf), "%d",    config_.mapWidth);        break;
-            case 5: snprintf(valBuf, sizeof(valBuf), "%d",    config_.mapHeight);       break;
-            case 6: snprintf(valBuf, sizeof(valBuf), "%d",    config_.playerMaxHp);     break;
-            case 7: snprintf(valBuf, sizeof(valBuf), "%.1fx", config_.spawnRateScale);  break;
-            case 8: snprintf(valBuf, sizeof(valBuf), "%.1fx", config_.enemyHpScale);    break;
-            case 9: snprintf(valBuf, sizeof(valBuf), "%.1fx", config_.enemySpeedScale); break;
+            case 3: snprintf(valBuf, sizeof(valBuf), "%d",    config_.mapWidth);        break;
+            case 4: snprintf(valBuf, sizeof(valBuf), "%d",    config_.mapHeight);       break;
+            case 5: snprintf(valBuf, sizeof(valBuf), "%d",    config_.playerMaxHp);     break;
+            case 6: snprintf(valBuf, sizeof(valBuf), "%.1fx", config_.spawnRateScale);  break;
+            case 7: snprintf(valBuf, sizeof(valBuf), "%.1fx", config_.enemyHpScale);    break;
+            case 8: snprintf(valBuf, sizeof(valBuf), "%.1fx", config_.enemySpeedScale); break;
             default: valBuf[0] = 0; break;
         }
         return valBuf;
@@ -5853,29 +6010,29 @@ void Game::renderPlayModeMenu() {
         }
         if (delta != 0 && ui_.hoveredItem == row.idx) {
             switch (row.idx) {
-                case 4: config_.mapWidth        = std::max(20,   std::min(120,  config_.mapWidth        + delta * 2));    break;
-                case 5: config_.mapHeight       = std::max(14,   std::min(80,   config_.mapHeight       + delta * 2));    break;
-                case 6: config_.playerMaxHp     = std::max(1,    std::min(20,   config_.playerMaxHp     + delta));        break;
-                case 7: config_.spawnRateScale  = std::max(0.3f, std::min(3.0f, config_.spawnRateScale  + delta * 0.1f)); break;
-                case 8: config_.enemyHpScale    = std::max(0.3f, std::min(3.0f, config_.enemyHpScale    + delta * 0.1f)); break;
-                case 9: config_.enemySpeedScale = std::max(0.5f, std::min(2.5f, config_.enemySpeedScale + delta * 0.1f)); break;
+                case 3: config_.mapWidth        = std::max(20,   std::min(120,  config_.mapWidth        + delta * 2));    break;
+                case 4: config_.mapHeight       = std::max(14,   std::min(80,   config_.mapHeight       + delta * 2));    break;
+                case 5: config_.playerMaxHp     = std::max(1,    std::min(20,   config_.playerMaxHp     + delta));        break;
+                case 6: config_.spawnRateScale  = std::max(0.3f, std::min(3.0f, config_.spawnRateScale  + delta * 0.1f)); break;
+                case 7: config_.enemyHpScale    = std::max(0.3f, std::min(3.0f, config_.enemyHpScale    + delta * 0.1f)); break;
+                case 8: config_.enemySpeedScale = std::max(0.5f, std::min(2.5f, config_.enemySpeedScale + delta * 0.1f)); break;
             }
         }
         y += stepY;
     }
 
-    // ── Back button (10) ──
+    // ── Back button (9) ──
     {
-        bool sel = (playModeSelection_ == 10);
-        if (ui_.menuItem(10, "BACK", SCREEN_W / 2, y + 4, rowW, sliderH,
+        bool sel = (playModeSelection_ == 9);
+        if (ui_.menuItem(9, "BACK", SCREEN_W / 2, y + 4, rowW, sliderH,
                          UI::Color::White, sel, 20, 22)) {
-            playModeSelection_ = 10;
-            menuSelection_     = 10;
+            playModeSelection_ = 9;
+            menuSelection_     = 9;
             confirmInput_      = true;
         }
-        if (ui_.hoveredItem == 10 && !usingGamepad_) {
-            playModeSelection_ = 10;
-            menuSelection_     = 10;
+        if (ui_.hoveredItem == 9 && !usingGamepad_) {
+            playModeSelection_ = 9;
+            menuSelection_     = 9;
         }
     }
 
@@ -7015,7 +7172,8 @@ void Game::handleModSaveDialogEvent(const SDL_Event& e) {
             }
         }
         if (e.type == SDL_CONTROLLERBUTTONDOWN) {
-            switch (e.cbutton.button) {
+            Uint8 btn = remapButton(e.cbutton.button);
+            switch (btn) {
                 case SDL_CONTROLLER_BUTTON_DPAD_UP:
                     d.selIdx = (d.selIdx - 1 + total) % total; break;
                 case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
@@ -7083,7 +7241,8 @@ void Game::handleModSaveDialogEvent(const SDL_Event& e) {
             }
         }
         if (e.type == SDL_CONTROLLERBUTTONDOWN) {
-            switch (e.cbutton.button) {
+            Uint8 btn = remapButton(e.cbutton.button);
+            switch (btn) {
                 case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
                     d.gpCharIdx = (d.gpCharIdx - 1 + palLen) % palLen; break;
                 case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
@@ -7127,7 +7286,8 @@ void Game::handleModSaveDialogEvent(const SDL_Event& e) {
             }
         }
         if (e.type == SDL_CONTROLLERBUTTONDOWN) {
-            switch (e.cbutton.button) {
+            Uint8 btn = remapButton(e.cbutton.button);
+            switch (btn) {
                 case SDL_CONTROLLER_BUTTON_DPAD_UP:
                     d.catIdx = (d.catIdx - 1 + ModSaveDialogState::CAT_COUNT) % ModSaveDialogState::CAT_COUNT; break;
                 case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
@@ -7714,7 +7874,29 @@ SDL_Rect Game::coopViewport(int idx, int n) const {
 void Game::startLocalCoopGame() {
     state_ = GameState::LocalCoopGame;
     gameTime_ = 0;
-    lobbySettings_.isPvp = false;
+    matchElapsed_ = 0.0f;
+    spectatorMode_ = false;
+    
+    // Apply lobby settings to config and rules (like multiplayer)
+    config_.playerMaxHp    = lobbySettings_.playerMaxHp;
+    currentRules_.friendlyFire  = lobbySettings_.friendlyFire;
+    currentRules_.pvpEnabled    = lobbySettings_.isPvp || lobbySettings_.pvpEnabled;
+    currentRules_.lives         = lobbySettings_.livesPerPlayer;
+    currentRules_.sharedLives   = lobbySettings_.livesShared;
+    currentRules_.respawnTime    = 3.0f;
+    
+    // Initialize lives tracking
+    if (currentRules_.lives > 0 && !currentRules_.sharedLives) {
+        localLives_ = currentRules_.lives;
+    } else {
+        localLives_ = -1;
+    }
+    if (currentRules_.lives > 0 && currentRules_.sharedLives) {
+        sharedLives_ = currentRules_.lives * coopPlayerCount_;
+    } else {
+        sharedLives_ = -1;
+    }
+    
     waveNumber_ = 0; waveEnemiesLeft_ = 0; waveActive_ = false;
     wavePauseTimer_ = WAVE_PAUSE_BASE; waveSpawnTimer_ = 0;
     enemies_.clear(); bullets_.clear(); enemyBullets_.clear();
@@ -7755,6 +7937,7 @@ void Game::startLocalCoopGame() {
         if (!map_.spawnPoints.empty())
             sp = map_.spawnPoints[si % (int)map_.spawnPoints.size()];
         coopSlots_[i].player.pos = sp;
+        coopSlots_[i].respawnTimer = 0;
         coopSlots_[i].upgrades.reset();
         coopSlots_[i].camera.worldW = map_.worldWidth();
         coopSlots_[i].camera.worldH = map_.worldHeight();
@@ -7763,13 +7946,47 @@ void Game::startLocalCoopGame() {
         coopSlots_[i].camera.pos    = {sp.x - vw/2.f, sp.y - vh/2.f};
         si++;
     }
-    player_   = coopSlots_[0].player;
-    camera_   = coopSlots_[0].camera;
-    upgrades_ = coopSlots_[0].upgrades;
+    // Sync global state with first joined slot
+    for (int i = 0; i < 4; i++) {
+        if (coopSlots_[i].joined) {
+            player_   = coopSlots_[i].player;
+            camera_   = coopSlots_[i].camera;
+            upgrades_ = coopSlots_[i].upgrades;
+            break;
+        }
+    }
+    respawnTimer_ = currentRules_.respawnTime;
     if (bgMusic_) { Mix_PlayMusic(bgMusic_, -1); Mix_VolumeMusic(config_.musicVolume); }
 }
 
 void Game::handleLocalCoopInput() {
+#ifdef __SWITCH__
+    // On Switch, all slots can be gamepads
+    const float dead = 0.18f;
+    for (int i = 0; i < 4; i++) {
+        if (!coopSlots_[i].joined) continue;
+        SDL_GameController* gc = SDL_GameControllerFromInstanceID(coopSlots_[i].joyInstanceId);
+        if (!gc) continue;
+        float lx = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTX)      / 32767.f;
+        float ly = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTY)      / 32767.f;
+        float rx = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_RIGHTX)     / 32767.f;
+        float ry = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_RIGHTY)     / 32767.f;
+        float rt = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERRIGHT)/ 32767.f;
+        if (fabsf(lx) < dead) lx = 0; if (fabsf(ly) < dead) ly = 0;
+        if (fabsf(rx) < dead) rx = 0; if (fabsf(ry) < dead) ry = 0;
+        coopSlots_[i].moveInput  = {lx, ly};
+        coopSlots_[i].aimInput   = {rx, ry};
+        coopSlots_[i].fireInput  = (rt > 0.25f);
+        coopSlots_[i].bombInput  = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_X);
+        coopSlots_[i].parryInput = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_LEFTSHOULDER);
+        coopSlots_[i].pauseInput = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_START);
+        if (coopSlots_[i].pauseInput && state_ == GameState::LocalCoopGame) {
+            state_ = GameState::LocalCoopPaused;
+            menuSelection_ = 0;
+        }
+    }
+#else
+    // On PC: Slot 0 = keyboard+mouse, slots 1-3 = gamepads
     // Slot 0 = keyboard+mouse: mirrors the global input state
     coopSlots_[0].moveInput  = moveInput_;
     coopSlots_[0].aimInput   = aimInput_;
@@ -7801,6 +8018,7 @@ void Game::handleLocalCoopInput() {
             menuSelection_ = 0;
         }
     }
+#endif
 }
 
 void Game::updateLocalCoopPlayers(float dt) {
@@ -7822,6 +8040,11 @@ void Game::updateLocalCoopPlayers(float dt) {
 
         updatePlayer(dt);
 
+        // Check if player just died and set respawn timer
+        if (coopSlots_[i].player.dead && coopSlots_[i].respawnTimer == 0) {
+            coopSlots_[i].respawnTimer = currentRules_.respawnTime;
+        }
+
         coopSlots_[i].player   = player_;
         coopSlots_[i].upgrades = upgrades_;
 
@@ -7836,15 +8059,74 @@ void Game::updateLocalCoopPlayers(float dt) {
         moveInput_ = savedMove;    aimInput_  = savedAim;
         fireInput_ = savedFire;    bombInput_ = savedBomb;  parryInput_ = savedParry;
     }
-    // Sync primary state to slot 0
-    player_   = coopSlots_[0].player;
-    camera_   = coopSlots_[0].camera;
-    upgrades_ = coopSlots_[0].upgrades;
-    // All dead → game over
+    // Sync primary state to first joined slot
+    for (int i = 0; i < 4; i++) {
+        if (coopSlots_[i].joined) {
+            player_   = coopSlots_[i].player;
+            camera_   = coopSlots_[i].camera;
+            upgrades_ = coopSlots_[i].upgrades;
+            break;
+        }
+    }
+    
+    // Handle respawning for dead players (like multiplayer)
+    for (int i = 0; i < 4; i++) {
+        if (!coopSlots_[i].joined) continue;
+        if (coopSlots_[i].player.dead) {
+            coopSlots_[i].respawnTimer -= dt;
+            if (coopSlots_[i].respawnTimer <= 0) {
+                // Check lives
+                bool canRespawn = true;
+                if (currentRules_.lives > 0) {
+                    if (currentRules_.sharedLives) {
+                        if (sharedLives_ > 0) {
+                            sharedLives_--;
+                        } else {
+                            canRespawn = false;
+                        }
+                    } else {
+                        if (localLives_ > 0) {
+                            localLives_--;
+                        } else {
+                            canRespawn = false;
+                        }
+                    }
+                }
+                
+                if (canRespawn) {
+                    // Respawn player
+                    Vec2 sp;
+                    if (!map_.spawnPoints.empty())
+                        sp = map_.spawnPoints[rand() % (int)map_.spawnPoints.size()];
+                    else
+                        sp = {map_.worldWidth()/2.f, map_.worldHeight()/2.f};
+                    coopSlots_[i].player = Player{};
+                    coopSlots_[i].player.pos = sp;
+                    coopSlots_[i].player.maxHp = config_.playerMaxHp;
+                    coopSlots_[i].player.hp = config_.playerMaxHp;
+                    coopSlots_[i].player.bombCount = 1;
+                    coopSlots_[i].player.invulnerable = true;
+                    coopSlots_[i].player.invulnTimer = 3.0f;
+                    coopSlots_[i].respawnTimer = 0;
+                }
+            }
+        }
+    }
+    
+    // All dead + no lives → game over
     bool anyAlive = false;
-    for (int i = 0; i < 4; i++)
-        if (coopSlots_[i].joined && !coopSlots_[i].player.dead) anyAlive = true;
-    if (!anyAlive && state_ == GameState::LocalCoopGame) {
+    bool anyCanRespawn = false;
+    for (int i = 0; i < 4; i++) {
+        if (!coopSlots_[i].joined) continue;
+        if (!coopSlots_[i].player.dead) anyAlive = true;
+        if (coopSlots_[i].player.dead && coopSlots_[i].respawnTimer > 0) anyCanRespawn = true;
+    }
+    
+    bool hasLives = (currentRules_.lives == 0) || 
+                   (currentRules_.sharedLives && sharedLives_ > 0) ||
+                   (!currentRules_.sharedLives && localLives_ > 0);
+    
+    if (!anyAlive && !anyCanRespawn && !hasLives && state_ == GameState::LocalCoopGame) {
         state_ = GameState::LocalCoopDead;
         menuSelection_ = 0;
     }
@@ -7859,7 +8141,7 @@ void Game::renderLocalCoopLobby() {
         {80, 220, 255, 255}, {255, 220, 50, 255},
         {80, 220, 80,  255}, {255, 140, 50, 255}};
     static const char* slotLabels[4] = {"P1","P2","P3","P4"};
-    const int slotW = 240, slotH = 140, gapX = 18;
+    const int slotW = 200, slotH = 110, gapX = 12;
     const int totalW = 4*slotW + 3*gapX;
     const int startX = (SCREEN_W - totalW) / 2;
     const int slotY  = 100;
@@ -7906,16 +8188,47 @@ void Game::renderLocalCoopLobby() {
     for (int i = 0; i < 4; i++) if (coopSlots_[i].joined) joined++;
 
     snprintf(buf, sizeof(buf), "%d player%s", joined, joined == 1 ? "" : "s");
-    drawTextCentered(buf, slotY + slotH + 20, 17, joined >= 1 ? UI::Color::Green : UI::Color::HintGray);
+    drawTextCentered(buf, slotY + slotH + 16, 15, joined >= 1 ? UI::Color::Green : UI::Color::HintGray);
 
-    drawTextCentered("Press START or Enter to begin  |  B / Esc = Back",
-                     slotY + slotH + 46, 13, UI::Color::HintGray);
+    // Game settings panel
+    int settingsY = slotY + slotH + 48;
+    drawText("GAME SETTINGS:", 50, settingsY, 16, UI::Color::Cyan);
+    settingsY += 28;
+
+    auto drawSetting = [&](const char* label, const char* value) {
+        drawText(label, 50, settingsY, 14, UI::Color::White);
+        drawText(value, 350, settingsY, 14, UI::Color::Yellow);
+        settingsY += 24;
+    };
+
+    snprintf(buf, sizeof(buf), "%s", lobbySettings_.isPvp ? "PVP" : "CO-OP");
+    drawSetting("Mode:", buf);
+
+    if (lobbySettings_.isPvp && lobbySettings_.teamCount > 0) {
+        snprintf(buf, sizeof(buf), "%s", lobbySettings_.friendlyFire ? "ON" : "OFF");
+        drawSetting("Friendly Fire:", buf);
+    }
+
+    if (lobbySettings_.livesPerPlayer > 0) {
+        snprintf(buf, sizeof(buf), "%d %s", lobbySettings_.livesPerPlayer, 
+                 lobbySettings_.livesShared ? "(shared)" : "(each)");
+    } else {
+        snprintf(buf, sizeof(buf), "Infinite");
+    }
+    drawSetting("Lives:", buf);
+
+    snprintf(buf, sizeof(buf), "%d HP", lobbySettings_.playerMaxHp);
+    drawSetting("Player HP:", buf);
+
+    drawTextCentered("Press TAB to cycle mode  |  START to begin  |  B/Esc to cancel",
+                     settingsY + 12, 13, UI::Color::HintGray);
 
     UI::HintPair hints[] = {
+        {UI::Action::Tab,     "Cycle Mode"},
         {UI::Action::Confirm, "Start"},
         {UI::Action::Back,    "Back"},
     };
-    ui_.drawHintBar(hints, 2);
+    ui_.drawHintBar(hints, 3);
 }
 
 void Game::renderLocalCoopGame() {
@@ -8078,6 +8391,16 @@ void Game::renderLocalCoopGame() {
         // ── Per-slot HUD (bottom of viewport) ──
         {
             Player& cp = coopSlots_[i].player;
+            
+            // Show respawn timer if dead
+            if (cp.dead && coopSlots_[i].respawnTimer > 0) {
+                char respawnMsg[64];
+                snprintf(respawnMsg, sizeof(respawnMsg), "RESPAWNING IN %.1f", coopSlots_[i].respawnTimer);
+                drawTextCentered(respawnMsg, vp.h/2, 22, UI::Color::Yellow);
+            } else if (cp.dead) {
+                drawTextCentered("OUT OF LIVES", vp.h/2, 22, UI::Color::Red);
+            }
+            
             int bw = vp.w-20, bh = 8, bx = 10, by = vp.h-20;
             SDL_SetRenderDrawColor(renderer_, 30,30,30,200);
             SDL_Rect bg = {bx,by,bw,bh}; SDL_RenderFillRect(renderer_, &bg);
@@ -8094,6 +8417,39 @@ void Game::renderLocalCoopGame() {
             char nameTag[64]; snprintf(nameTag,sizeof(nameTag),"%s",coopSlots_[i].username.c_str());
             drawText(nameTag, 6, 6, 14, pColors[i]);
         }
+
+        // ── Crosshair / aim indicator ──
+        {
+            Player& cp = coopSlots_[i].player;
+            if (!cp.dead) {
+                Vec2 aimDir = {};
+                // Use aim input if present, otherwise use movement direction
+                if (coopSlots_[i].aimInput.lengthSq() > 0.04f) {
+                    aimDir = coopSlots_[i].aimInput.normalized();
+                } else if (cp.moving && cp.vel.lengthSq() > 1.f) {
+                    aimDir = cp.vel.normalized();
+                }
+
+                if (aimDir.lengthSq() > 0.01f) {
+                    // Position crosshair 80 pixels from player in aim direction
+                    Vec2 chWorld = cp.pos + aimDir * 80.f;
+                    Vec2 chScreen = camera_.worldToScreen(chWorld);
+                    
+                    // Draw crosshair arms
+                    const int sz = 10;
+                    SDL_Color col = pColors[i];
+                    SDL_SetRenderDrawColor(renderer_, col.r, col.g, col.b, 200);
+                    SDL_RenderDrawLine(renderer_, (int)(chScreen.x - sz), (int)chScreen.y, 
+                                                  (int)(chScreen.x + sz), (int)chScreen.y);
+                    SDL_RenderDrawLine(renderer_, (int)chScreen.x, (int)(chScreen.y - sz), 
+                                                  (int)chScreen.x, (int)(chScreen.y + sz));
+                    
+                    // Draw center dot
+                    SDL_Rect dot = {(int)chScreen.x - 1, (int)chScreen.y - 1, 3, 3};
+                    SDL_RenderFillRect(renderer_, &dot);
+                }
+            }
+        }
     }
 
     SDL_RenderSetViewport(renderer_, nullptr);
@@ -8108,6 +8464,85 @@ void Game::renderLocalCoopGame() {
         SDL_RenderDrawLine(renderer_, SCREEN_W/2+1, 0,         SCREEN_W/2+1, SCREEN_H);
         SDL_RenderDrawLine(renderer_, 0, SCREEN_H/2,   SCREEN_W, SCREEN_H/2);
         SDL_RenderDrawLine(renderer_, 0, SCREEN_H/2+1, SCREEN_W, SCREEN_H/2+1);
+    }
+
+    // ── Minimap placement ──
+    // For 3 players: put minimap in 4th section (bottom-right area)
+    // Otherwise: put minimap in center
+    if (n >= 2 && map_.width > 0 && map_.height > 0) {
+        const int MMAP_MAX_PX = 140;
+        const int MMAP_MARGIN = 6;
+        const int MMAP_INNER  = 4;
+
+        int mapW = map_.width;
+        int mapH = map_.height;
+        int tpx = std::max(1, std::min(MMAP_MAX_PX / mapW, MMAP_MAX_PX / mapH));
+        int mmW = mapW * tpx;
+        int mmH = mapH * tpx;
+
+        int mmX, mmY;
+        if (n == 3) {
+            // Bottom-right quadrant (4th section)
+            mmX = SCREEN_W/2 + (SCREEN_W/2 - mmW - MMAP_MARGIN);
+            mmY = SCREEN_H/2 + (SCREEN_H/2 - mmH - MMAP_MARGIN);
+        } else {
+            // Center of screen
+            mmX = (SCREEN_W - mmW) / 2;
+            mmY = (SCREEN_H - mmH) / 2;
+        }
+
+        // Background
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 180);
+        SDL_Rect bg = {mmX - MMAP_INNER, mmY - MMAP_INNER,
+                       mmW + MMAP_INNER*2, mmH + MMAP_INNER*2};
+        SDL_RenderFillRect(renderer_, &bg);
+
+        // Border
+        SDL_SetRenderDrawColor(renderer_, 0, 200, 180, 140);
+        SDL_Rect border = {mmX - MMAP_INNER - 1, mmY - MMAP_INNER - 1,
+                           mmW + MMAP_INNER*2 + 2, mmH + MMAP_INNER*2 + 2};
+        SDL_RenderDrawRect(renderer_, &border);
+
+        // Tiles
+        for (int ty = 0; ty < mapH; ty++) {
+            for (int tx = 0; tx < mapW; tx++) {
+                SDL_Rect r = {mmX + tx * tpx, mmY + ty * tpx, tpx, tpx};
+                if (map_.isSolid(tx, ty))
+                    SDL_SetRenderDrawColor(renderer_, 150, 140, 120, 240);
+                else
+                    SDL_SetRenderDrawColor(renderer_, 28, 30, 35, 220);
+                SDL_RenderFillRect(renderer_, &r);
+            }
+        }
+
+        float worldW = map_.worldWidth();
+        float worldH = map_.worldHeight();
+
+        // Enemies (red dots)
+        for (auto& e : enemies_) {
+            if (!e.alive) continue;
+            int ex = mmX + (int)(e.pos.x / worldW * mmW);
+            int ey = mmY + (int)(e.pos.y / worldH * mmH);
+            ex = std::max(mmX, std::min(mmX + mmW - 1, ex));
+            ey = std::max(mmY, std::min(mmY + mmH - 1, ey));
+            SDL_SetRenderDrawColor(renderer_, 255, 80, 80, 255);
+            SDL_Rect r = {ex - 1, ey - 1, 3, 3};
+            SDL_RenderFillRect(renderer_, &r);
+        }
+
+        // Co-op players as colored dots
+        for (int i = 0; i < 4; i++) {
+            if (!coopSlots_[i].joined || coopSlots_[i].player.dead) continue;
+            int px = mmX + (int)(coopSlots_[i].player.pos.x / worldW * mmW);
+            int py = mmY + (int)(coopSlots_[i].player.pos.y / worldH * mmH);
+            px = std::max(mmX, std::min(mmX + mmW - 1, px));
+            py = std::max(mmY, std::min(mmY + mmH - 1, py));
+            SDL_Color pColors[4] = {{255,255,255,255},{255,220,50,255},{80,220,80,255},{255,140,50,255}};
+            SDL_SetRenderDrawColor(renderer_, pColors[i].r, pColors[i].g, pColors[i].b, 255);
+            SDL_Rect r = {px - 2, py - 2, 5, 5};
+            SDL_RenderFillRect(renderer_, &r);
+        }
     }
 
     // Wave counter at top center
@@ -8163,6 +8598,295 @@ void Game::renderPackComplete() {
     { UI::HintPair hints[] = { {UI::Action::Confirm, "Continue"} };
       ui_.drawHintBar(hints, 1, py + panelH - 22); }
 
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Multiplayer Splitscreen Rendering
+// ═════════════════════════════════════════════════════════════════════════════
+
+void Game::renderMultiplayerSplitscreen() {
+    static const SDL_Color pColors[4] = {
+        {255,255,255,255},{255,220,50,255},{80,220,80,255},{255,140,50,255}};
+    const int n = coopPlayerCount_;
+
+    Player         savedPlayer = player_;
+    Camera         savedCam    = camera_;
+    PlayerUpgrades savedUpg    = upgrades_;
+
+    int slotOrder = 0;
+    for (int i = 0; i < 4; i++) {
+        if (!coopSlots_[i].joined) continue;
+        SDL_Rect vp = coopViewport(slotOrder++, n);
+        SDL_RenderSetViewport(renderer_, &vp);
+
+        camera_   = coopSlots_[i].camera;
+        player_   = coopSlots_[i].player;
+        upgrades_ = coopSlots_[i].upgrades;
+
+        // ── World rendering ──
+        renderMap();
+        renderDecals();
+
+        for (auto& b : bombs_) {
+            if (!b.alive) continue;
+            SDL_Texture* tex = bombSprites_.empty() ? nullptr : bombSprites_[b.animFrame % bombSprites_.size()];
+            if (tex) renderSprite(tex, b.pos, 0, 2.f);
+        }
+        for (auto& ex : explosions_) { if (ex.alive) renderExplosionPixelated(ex); }
+
+        // Enemies
+        for (auto& e : enemies_) {
+            if (!e.alive) continue;
+            SDL_Texture* etex = enemySpriteTex(e.type);
+            if (!etex) continue;
+            float ds = e.renderScale;
+            if (e.damageFlash > 0 || e.flashTimer > 0) {
+                float fl = std::min(1.f, e.damageFlash + e.flashTimer);
+                Uint8 oth = (Uint8)(15.f*(1.f-fl));
+                renderSpriteEx(etex, e.pos, e.rotation+(float)M_PI/2, ds, {255,oth,oth,255});
+            } else {
+                float r = e.maxHp > 0 ? e.hp/e.maxHp : 1.f;
+                SDL_Color base = enemyBaseTint(e.type);
+                renderSpriteEx(etex, e.pos, e.rotation+(float)M_PI/2, ds,
+                               {base.r,(Uint8)(base.g*r),(Uint8)(base.b*r),255});
+            }
+        }
+
+        // Box fragments
+        for (auto& f : boxFragments_) {
+            if (!f.alive) continue;
+            Vec2 sp = camera_.worldToScreen(f.pos);
+            SDL_SetRenderDrawColor(renderer_, f.color.r, f.color.g, f.color.b, f.color.a);
+            SDL_Rect r = {(int)sp.x - 2, (int)sp.y - 2, 5, 5};
+            SDL_RenderFillRect(renderer_, &r);
+        }
+
+        // ── Render ALL local co-op players in this viewport ──
+        for (int j = 0; j < 4; j++) {
+            if (!coopSlots_[j].joined) continue;
+            Player& cp = coopSlots_[j].player;
+            if (cp.dead) continue;
+
+            // Legs
+            if (!legSprites_.empty() && cp.moving) {
+                int idx = cp.legAnimFrame % (int)legSprites_.size();
+                renderSprite(legSprites_[idx], cp.pos, cp.legRotation + (float)M_PI/2, 3.f);
+            }
+            // Body — tint by slot color
+            if (!playerSprites_.empty()) {
+                int idx = cp.animFrame % (int)playerSprites_.size();
+                Vec2 bodyPos = cp.pos + Vec2::fromAngle(cp.rotation) * 6.f;
+                renderSpriteEx(playerSprites_[idx], bodyPos, cp.rotation + (float)M_PI/2, 3.f, pColors[j]);
+            }
+        }
+
+        // ── Remote players (other network clients + their sub-players) ──
+        renderRemotePlayers();
+
+        // Bullets (player)
+        for (auto& b : bullets_) {
+            if (!b.alive) continue;
+            Vec2 backDir = b.vel.normalized() * -1.0f;
+            for (int t = 1; t <= 6; t++) {
+                Vec2 tp = b.pos + backDir * (float)(t * 6);
+                Vec2 sp = camera_.worldToScreen(tp);
+                float fade = 1.0f - (float)t / 7.0f;
+                SDL_SetRenderDrawColor(renderer_, 255, 255, 140, (Uint8)(fade * 180));
+                float sz = 3.0f * fade;
+                SDL_FRect r = {sp.x - sz, sp.y - sz, sz * 2, sz * 2};
+                SDL_RenderFillRectF(renderer_, &r);
+            }
+            if (b.sprite) renderSprite(b.sprite, b.pos, b.rotation, 0.7f);
+        }
+
+        // Enemy bullets
+        for (auto& b : enemyBullets_) {
+            if (!b.alive) continue;
+            Vec2 backDir = b.vel.normalized() * -1.0f;
+            for (int t = 1; t <= 6; t++) {
+                Vec2 tp = b.pos + backDir * (float)(t * 6);
+                Vec2 sp = camera_.worldToScreen(tp);
+                float fade = 1.0f - (float)t / 7.0f;
+                SDL_SetRenderDrawColor(renderer_, 255, 60, 60, (Uint8)(fade * 180));
+                float sz = 3.0f * fade;
+                SDL_FRect r = {sp.x - sz, sp.y - sz, sz * 2, sz * 2};
+                SDL_RenderFillRectF(renderer_, &r);
+            }
+            if (b.sprite) {
+                SDL_SetTextureColorMod(b.sprite, 255, 80, 80);
+                renderSprite(b.sprite, b.pos, b.rotation, 0.7f);
+                SDL_SetTextureColorMod(b.sprite, 255, 255, 255);
+            }
+        }
+
+        renderCrates();
+        renderPickups();
+
+        // ── Name tags for other local co-op players ──
+        for (int j = 0; j < 4; j++) {
+            if (!coopSlots_[j].joined || j == i) continue;
+            Player& cp = coopSlots_[j].player;
+            if (cp.dead) continue;
+            Vec2 sp = camera_.worldToScreen(cp.pos + Vec2{0, -32});
+            drawText(coopSlots_[j].username.c_str(), (int)sp.x - 20, (int)sp.y, 10, pColors[j]);
+        }
+
+        renderWallOverlay();
+        renderRoofOverlay();
+        renderShadingPass();
+
+        // ── Per-slot HUD (bottom of viewport) ──
+        {
+            Player& cp = coopSlots_[i].player;
+
+            if (cp.dead && coopSlots_[i].respawnTimer > 0) {
+                char respawnMsg[64];
+                snprintf(respawnMsg, sizeof(respawnMsg), "RESPAWNING IN %.1f", coopSlots_[i].respawnTimer);
+                drawTextCentered(respawnMsg, vp.h/2, 22, UI::Color::Yellow);
+            } else if (cp.dead) {
+                drawTextCentered("WAITING FOR RESPAWN", vp.h/2, 22, UI::Color::Red);
+            }
+
+            int bw = vp.w-20, bh = 8, bx = 10, by = vp.h-20;
+            SDL_SetRenderDrawColor(renderer_, 30,30,30,200);
+            SDL_Rect bg = {bx,by,bw,bh}; SDL_RenderFillRect(renderer_, &bg);
+            float hf = std::max(0.f,(float)cp.hp/cp.maxHp);
+            SDL_Color hc = hf>.5f?SDL_Color{50,220,50,255}:hf>.25f?SDL_Color{255,180,0,255}:SDL_Color{220,50,50,255};
+            SDL_SetRenderDrawColor(renderer_, hc.r,hc.g,hc.b,255);
+            SDL_Rect bar = {bx,by,(int)(bw*hf),bh}; SDL_RenderFillRect(renderer_, &bar);
+            char at[32]; snprintf(at,sizeof(at),"%d/%d",cp.ammo,cp.maxAmmo);
+            drawText(at, bx, by-20, 14, UI::Color::White);
+            char kd[32]; snprintf(kd,sizeof(kd),"K:%d D:%d",coopSlots_[i].kills,coopSlots_[i].deaths);
+            drawText(kd, bx, by-38, 12, UI::Color::HintGray);
+            char nameTag[64]; snprintf(nameTag,sizeof(nameTag),"%s",coopSlots_[i].username.c_str());
+            drawText(nameTag, 6, 6, 14, pColors[i]);
+        }
+
+        // ── Crosshair ──
+        {
+            Player& cp = coopSlots_[i].player;
+            if (!cp.dead) {
+                Vec2 aimDir = {};
+                if (coopSlots_[i].aimInput.lengthSq() > 0.04f)
+                    aimDir = coopSlots_[i].aimInput.normalized();
+                else if (cp.moving && cp.vel.lengthSq() > 1.f)
+                    aimDir = cp.vel.normalized();
+                if (aimDir.lengthSq() > 0.01f) {
+                    Vec2 chWorld = cp.pos + aimDir * 80.f;
+                    Vec2 chScreen = camera_.worldToScreen(chWorld);
+                    const int sz = 10;
+                    SDL_Color col = pColors[i];
+                    SDL_SetRenderDrawColor(renderer_, col.r, col.g, col.b, 200);
+                    SDL_RenderDrawLine(renderer_, (int)(chScreen.x-sz), (int)chScreen.y,
+                                                  (int)(chScreen.x+sz), (int)chScreen.y);
+                    SDL_RenderDrawLine(renderer_, (int)chScreen.x, (int)(chScreen.y-sz),
+                                                  (int)chScreen.x, (int)(chScreen.y+sz));
+                    SDL_Rect dot = {(int)chScreen.x-1, (int)chScreen.y-1, 3, 3};
+                    SDL_RenderFillRect(renderer_, &dot);
+                }
+            }
+        }
+    }
+
+    SDL_RenderSetViewport(renderer_, nullptr);
+
+    // Divider lines between viewports
+    SDL_SetRenderDrawColor(renderer_, 0,0,0,255);
+    if (n == 2) {
+        SDL_RenderDrawLine(renderer_, SCREEN_W/2,   0, SCREEN_W/2,   SCREEN_H);
+        SDL_RenderDrawLine(renderer_, SCREEN_W/2+1, 0, SCREEN_W/2+1, SCREEN_H);
+    } else if (n >= 3) {
+        SDL_RenderDrawLine(renderer_, SCREEN_W/2,   0,         SCREEN_W/2,   SCREEN_H);
+        SDL_RenderDrawLine(renderer_, SCREEN_W/2+1, 0,         SCREEN_W/2+1, SCREEN_H);
+        SDL_RenderDrawLine(renderer_, 0, SCREEN_H/2,   SCREEN_W, SCREEN_H/2);
+        SDL_RenderDrawLine(renderer_, 0, SCREEN_H/2+1, SCREEN_W, SCREEN_H/2+1);
+    }
+
+    // ── Minimap ──
+    if (n >= 2 && map_.width > 0 && map_.height > 0) {
+        const int MMAP_MAX_PX = 140;
+        const int MMAP_MARGIN = 6;
+        const int MMAP_INNER  = 4;
+        int mapW = map_.width, mapH = map_.height;
+        int tpx = std::max(1, std::min(MMAP_MAX_PX / mapW, MMAP_MAX_PX / mapH));
+        int mmW = mapW * tpx, mmH = mapH * tpx;
+        int mmX, mmY;
+        if (n == 3) {
+            mmX = SCREEN_W/2 + (SCREEN_W/2 - mmW - MMAP_MARGIN);
+            mmY = SCREEN_H/2 + (SCREEN_H/2 - mmH - MMAP_MARGIN);
+        } else {
+            mmX = (SCREEN_W - mmW) / 2;
+            mmY = (SCREEN_H - mmH) / 2;
+        }
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 180);
+        SDL_Rect bg = {mmX-MMAP_INNER, mmY-MMAP_INNER, mmW+MMAP_INNER*2, mmH+MMAP_INNER*2};
+        SDL_RenderFillRect(renderer_, &bg);
+        SDL_SetRenderDrawColor(renderer_, 0, 200, 180, 140);
+        SDL_Rect border = {mmX-MMAP_INNER-1, mmY-MMAP_INNER-1, mmW+MMAP_INNER*2+2, mmH+MMAP_INNER*2+2};
+        SDL_RenderDrawRect(renderer_, &border);
+        for (int ty = 0; ty < mapH; ty++) {
+            for (int tx = 0; tx < mapW; tx++) {
+                SDL_Rect r = {mmX + tx*tpx, mmY + ty*tpx, tpx, tpx};
+                if (map_.isSolid(tx, ty))
+                    SDL_SetRenderDrawColor(renderer_, 150, 140, 120, 240);
+                else
+                    SDL_SetRenderDrawColor(renderer_, 28, 30, 35, 220);
+                SDL_RenderFillRect(renderer_, &r);
+            }
+        }
+        float worldW = map_.worldWidth(), worldH = map_.worldHeight();
+        // Enemies (red dots)
+        for (auto& e : enemies_) {
+            if (!e.alive) continue;
+            int ex = mmX + (int)(e.pos.x / worldW * mmW);
+            int ey = mmY + (int)(e.pos.y / worldH * mmH);
+            SDL_SetRenderDrawColor(renderer_, 255, 80, 80, 255);
+            SDL_Rect r = {std::max(mmX,std::min(mmX+mmW-1,ex))-1,
+                          std::max(mmY,std::min(mmY+mmH-1,ey))-1, 3, 3};
+            SDL_RenderFillRect(renderer_, &r);
+        }
+        // Local co-op players (colored dots)
+        for (int i = 0; i < 4; i++) {
+            if (!coopSlots_[i].joined || coopSlots_[i].player.dead) continue;
+            int px = mmX + (int)(coopSlots_[i].player.pos.x / worldW * mmW);
+            int py = mmY + (int)(coopSlots_[i].player.pos.y / worldH * mmH);
+            SDL_SetRenderDrawColor(renderer_, pColors[i].r, pColors[i].g, pColors[i].b, 255);
+            SDL_Rect r = {std::max(mmX,std::min(mmX+mmW-1,px))-2,
+                          std::max(mmY,std::min(mmY+mmH-1,py))-2, 5, 5};
+            SDL_RenderFillRect(renderer_, &r);
+        }
+        // Remote players (blue dots)
+        auto& net = NetworkManager::instance();
+        const auto& rpPlayers = net.players();
+        for (auto& rp : rpPlayers) {
+            if (rp.id == net.localPlayerId() || !rp.alive) continue;
+            int rx = mmX + (int)(rp.pos.x / worldW * mmW);
+            int ry = mmY + (int)(rp.pos.y / worldH * mmH);
+            SDL_SetRenderDrawColor(renderer_, 120, 180, 255, 255);
+            SDL_Rect r = {std::max(mmX,std::min(mmX+mmW-1,rx))-2,
+                          std::max(mmY,std::min(mmY+mmH-1,ry))-2, 5, 5};
+            SDL_RenderFillRect(renderer_, &r);
+            // Remote sub-players
+            for (auto& sp : rp.subPlayers) {
+                if (!sp.alive) continue;
+                int sx = mmX + (int)(sp.pos.x / worldW * mmW);
+                int sy = mmY + (int)(sp.pos.y / worldH * mmH);
+                SDL_SetRenderDrawColor(renderer_, 100, 160, 220, 255);
+                SDL_Rect sr = {std::max(mmX,std::min(mmX+mmW-1,sx))-1,
+                               std::max(mmY,std::min(mmY+mmH-1,sy))-1, 3, 3};
+                SDL_RenderFillRect(renderer_, &sr);
+            }
+        }
+    }
+
+    // Wave counter at top center
+    char wb[32]; snprintf(wb, sizeof(wb), "WAVE %d", waveNumber_);
+    drawTextCentered(wb, 4, 15, UI::Color::Cyan);
+
+    player_   = savedPlayer;
+    camera_   = savedCam;
+    upgrades_ = savedUpg;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -8757,6 +9481,46 @@ void Game::setupNetworkCallbacks() {
         state_ = GameState::MultiplayerGame;
         menuSelection_ = 0;
         respawnTimer_ = currentRules_.respawnTime;
+
+        // ── Splitscreen: init coopSlots for local sub-players (client side) ──
+        {
+            int joined = 0;
+            for (int i = 0; i < 4; i++) if (coopSlots_[i].joined) joined++;
+            coopPlayerCount_ = joined;
+            if (coopPlayerCount_ > 1) {
+                const int vw = (coopPlayerCount_ >= 2) ? SCREEN_W/2 : SCREEN_W;
+                const int vh = (coopPlayerCount_ >= 3) ? SCREEN_H/2 : SCREEN_H;
+                const Vec2 off[4] = {{-80,0},{80,0},{0,-80},{0,80}};
+                int si = 0;
+                for (int i = 0; i < 4; i++) {
+                    if (!coopSlots_[i].joined) continue;
+                    if (si == 0) {
+                        coopSlots_[i].player   = player_;
+                        coopSlots_[i].upgrades = upgrades_;
+                    } else {
+                        coopSlots_[i].player = Player{};
+                        coopSlots_[i].player.maxHp     = config_.playerMaxHp;
+                        coopSlots_[i].player.hp        = config_.playerMaxHp;
+                        coopSlots_[i].player.bombCount = 1;
+                        Vec2 sp = player_.pos + off[si % 4];
+                        if (!map_.spawnPoints.empty())
+                            sp = map_.spawnPoints[si % (int)map_.spawnPoints.size()];
+                        coopSlots_[i].player.pos = sp;
+                        coopSlots_[i].upgrades.reset();
+                    }
+                    coopSlots_[i].kills  = 0;
+                    coopSlots_[i].deaths = 0;
+                    coopSlots_[i].respawnTimer = 0;
+                    coopSlots_[i].camera.worldW = map_.worldWidth();
+                    coopSlots_[i].camera.worldH = map_.worldHeight();
+                    coopSlots_[i].camera.viewW  = vw;
+                    coopSlots_[i].camera.viewH  = vh;
+                    coopSlots_[i].camera.pos    = {coopSlots_[i].player.pos.x - vw/2.f,
+                                                    coopSlots_[i].player.pos.y - vh/2.f};
+                    si++;
+                }
+            }
+        }
     };
 
     net.onGameEnded = [this](uint8_t rawReason) {
@@ -8947,7 +9711,7 @@ void Game::updateMultiplayer(float dt) {
     if (net.isInGame()) {
         netStateSendTimer_ -= dt;
         if (netStateSendTimer_ <= 0) {
-            netStateSendTimer_ = 1.0f / 30.0f; // 30 Hz
+            netStateSendTimer_ = 1.0f / 60.0f; // 60 Hz
 
             NetPlayer state;
             state.id = net.localPlayerId();
@@ -8961,6 +9725,31 @@ void Game::updateMultiplayer(float dt) {
             state.moving = player_.moving;
             state.alive = !player_.dead;
             net.sendPlayerState(state);
+
+            // ── Splitscreen: send sub-player states to other clients ──
+            if (coopPlayerCount_ > 1) {
+                SubPlayerInfo subs[3];
+                int subCount = 0;
+                int si = 0;
+                for (int i = 0; i < 4 && subCount < 3; i++) {
+                    if (!coopSlots_[i].joined) continue;
+                    if (si++ == 0) continue; // skip primary (slot 0 = main player state)
+                    auto& cp = coopSlots_[i].player;
+                    subs[subCount].pos = cp.pos;
+                    subs[subCount].rotation = cp.rotation;
+                    subs[subCount].legRotation = cp.legRotation;
+                    subs[subCount].hp = cp.hp;
+                    subs[subCount].maxHp = cp.maxHp;
+                    subs[subCount].animFrame = cp.animFrame;
+                    subs[subCount].legFrame = cp.legAnimFrame;
+                    subs[subCount].moving = cp.moving;
+                    subs[subCount].alive = !cp.dead;
+                    subCount++;
+                }
+                if (subCount > 0) {
+                    net.sendSubPlayerStates(net.localPlayerId(), subs, subCount);
+                }
+            }
         }
 
         // Host sends enemy states at 20 Hz, or immediately when an enemy dies
@@ -9101,6 +9890,12 @@ void Game::hostGame() {
         lobbyReady_ = false;
         lobbyKickCursor_ = -1;
         bannedPlayerIds_.clear();
+        for (int i = 0; i < 4; i++) coopSlots_[i] = CoopSlot{};
+        coopSlots_[0].joined = true;
+        coopSlots_[0].joyInstanceId = -1;
+        coopSlots_[0].username = config_.username;
+        lobbySubPlayersSent_ = 0;
+        net.setLocalSubPlayers(0);
         // Initialize lobby settings from current config
         lobbySettings_.mapWidth       = config_.mapWidth;
         lobbySettings_.mapHeight      = config_.mapHeight;
@@ -9178,6 +9973,11 @@ void Game::joinGame() {
         menuSelection_ = 0;
         lobbyReady_ = false;
         lobbyKickCursor_ = -1;
+        for (int i = 0; i < 4; i++) coopSlots_[i] = CoopSlot{};
+        coopSlots_[0].joined = true;
+        coopSlots_[0].joyInstanceId = -1;
+        coopSlots_[0].username = config_.username;
+        lobbySubPlayersSent_ = -1;
         connectTimer_ = 5.0f; // 5 second timeout
         printf("Joining %s:%d...\n", joinAddress_.c_str(), joinPort_);
     } else {
@@ -9262,6 +10062,46 @@ void Game::startMultiplayerGame() {
             state_ = GameState::MultiplayerGame;
             net.startGame(0, map_.width, map_.height, customMapData);
             respawnTimer_ = currentRules_.respawnTime;
+
+            // ── Splitscreen: init coopSlots for local sub-players (custom map) ──
+            {
+                int joined = 0;
+                for (int i = 0; i < 4; i++) if (coopSlots_[i].joined) joined++;
+                coopPlayerCount_ = joined;
+                if (coopPlayerCount_ > 1) {
+                    const int vw = (coopPlayerCount_ >= 2) ? SCREEN_W/2 : SCREEN_W;
+                    const int vh = (coopPlayerCount_ >= 3) ? SCREEN_H/2 : SCREEN_H;
+                    const Vec2 off[4] = {{-80,0},{80,0},{0,-80},{0,80}};
+                    int si = 0;
+                    for (int i = 0; i < 4; i++) {
+                        if (!coopSlots_[i].joined) continue;
+                        if (si == 0) {
+                            coopSlots_[i].player   = player_;
+                            coopSlots_[i].upgrades = upgrades_;
+                        } else {
+                            coopSlots_[i].player = Player{};
+                            coopSlots_[i].player.maxHp     = config_.playerMaxHp;
+                            coopSlots_[i].player.hp        = config_.playerMaxHp;
+                            coopSlots_[i].player.bombCount = 1;
+                            Vec2 sp = player_.pos + off[si % 4];
+                            if (!map_.spawnPoints.empty())
+                                sp = map_.spawnPoints[si % (int)map_.spawnPoints.size()];
+                            coopSlots_[i].player.pos = sp;
+                            coopSlots_[i].upgrades.reset();
+                        }
+                        coopSlots_[i].kills  = 0;
+                        coopSlots_[i].deaths = 0;
+                        coopSlots_[i].respawnTimer = 0;
+                        coopSlots_[i].camera.worldW = map_.worldWidth();
+                        coopSlots_[i].camera.worldH = map_.worldHeight();
+                        coopSlots_[i].camera.viewW  = vw;
+                        coopSlots_[i].camera.viewH  = vh;
+                        coopSlots_[i].camera.pos    = {coopSlots_[i].player.pos.x - vw/2.f,
+                                                        coopSlots_[i].player.pos.y - vh/2.f};
+                        si++;
+                    }
+                }
+            }
             return;
         }
         // If file can't be read, fall through to generated map
@@ -9279,6 +10119,47 @@ void Game::startMultiplayerGame() {
     state_ = GameState::MultiplayerGame;
     net.startGame(mapSeed, config_.mapWidth, config_.mapHeight);
     respawnTimer_ = currentRules_.respawnTime;
+
+    // ── Splitscreen: initialise coopSlots for local sub-players in MP ──
+    {
+        int joined = 0;
+        for (int i = 0; i < 4; i++) if (coopSlots_[i].joined) joined++;
+        coopPlayerCount_ = joined;
+        if (coopPlayerCount_ > 1) {
+            const int vw = (coopPlayerCount_ >= 2) ? SCREEN_W/2 : SCREEN_W;
+            const int vh = (coopPlayerCount_ >= 3) ? SCREEN_H/2 : SCREEN_H;
+            const Vec2 off[4] = {{-80,0},{80,0},{0,-80},{0,80}};
+            int si = 0;
+            for (int i = 0; i < 4; i++) {
+                if (!coopSlots_[i].joined) continue;
+                if (si == 0) {
+                    // Slot 0 = primary player — already initialised by startGame()
+                    coopSlots_[i].player   = player_;
+                    coopSlots_[i].upgrades = upgrades_;
+                } else {
+                    coopSlots_[i].player = Player{};
+                    coopSlots_[i].player.maxHp     = config_.playerMaxHp;
+                    coopSlots_[i].player.hp        = config_.playerMaxHp;
+                    coopSlots_[i].player.bombCount = 1;
+                    Vec2 sp = player_.pos + off[si % 4];
+                    if (!map_.spawnPoints.empty())
+                        sp = map_.spawnPoints[si % (int)map_.spawnPoints.size()];
+                    coopSlots_[i].player.pos = sp;
+                    coopSlots_[i].upgrades.reset();
+                }
+                coopSlots_[i].kills  = 0;
+                coopSlots_[i].deaths = 0;
+                coopSlots_[i].respawnTimer = 0;
+                coopSlots_[i].camera.worldW = map_.worldWidth();
+                coopSlots_[i].camera.worldH = map_.worldHeight();
+                coopSlots_[i].camera.viewW  = vw;
+                coopSlots_[i].camera.viewH  = vh;
+                coopSlots_[i].camera.pos    = {coopSlots_[i].player.pos.x - vw/2.f,
+                                                coopSlots_[i].player.pos.y - vh/2.f};
+                si++;
+            }
+        }
+    }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -9562,7 +10443,7 @@ void Game::renderMultiplayerMenu() {
     struct MenuItem { const char* label; const char* desc; SDL_Color accent; };
     MenuItem items[] = {
         {"HOST GAME",       "Create a server for others to join", {50, 255, 150, 255}},
-        {"IP CONNECT",   "Enter IP and connect directly",      blue},
+        {"IP CONNECT",      "Enter IP and connect directly",      blue},
         {"BACK",            "",                                    {255, 100, 100, 255}},
     };
     int count = 3;
@@ -9610,7 +10491,7 @@ void Game::renderMultiplayerMenu() {
         if (serverListSelection_ >= maxVisible) startIdx = serverListSelection_ - maxVisible + 1;
 
         for (int i = startIdx; i < (int)savedServers_.size() && (i - startIdx) < maxVisible; i++) {
-            bool sel = (multiMenuSelection_ == 3 + i);
+            bool sel = (multiMenuSelection_ == 4 + i);
             auto& s = savedServers_[i];
 
             // Click detection for server rows
@@ -10055,11 +10936,13 @@ void Game::renderLobby() {
             drawSettingRow(0, "Gamemode:", val);
         }
 
-        // 1: Friendly fire
+        // 1: Friendly fire (only in PvP with teams)
         {
-            const char* val = lobbySettings_.friendlyFire ? "ON" : "OFF";
-            drawSettingRow(1, "Friendly Fire:", val,
-                lobbySettings_.friendlyFire ? red : (SDL_Color){80,200,120,255});
+            if (lobbySettings_.isPvp && lobbySettings_.teamCount > 0) {
+                const char* val = lobbySettings_.friendlyFire ? "ON" : "OFF";
+                drawSettingRow(1, "Friendly Fire:", val,
+                    lobbySettings_.friendlyFire ? red : (SDL_Color){80,200,120,255});
+            }
         }
 
         // 2: Upgrades
@@ -10307,6 +11190,31 @@ void Game::renderLobby() {
         }
 
         py += 30;
+
+        // Render local sub-players under each network player row.
+        int subCount = (int)players[i].localSubPlayers;
+        if (subCount < 0) subCount = 0;
+        if (subCount > 3) subCount = 3;
+        for (int s = 0; s < subCount; s++) {
+            std::string subLabel;
+            if (isLocal) {
+                int found = 0;
+                for (int si = 1; si < 4; si++) {
+                    if (!coopSlots_[si].joined) continue;
+                    if (found == s) {
+                        subLabel = coopSlots_[si].username.empty() ? ("local-" + std::to_string(s + 1)) : coopSlots_[si].username;
+                        break;
+                    }
+                    found++;
+                }
+                if (subLabel.empty()) subLabel = "local-" + std::to_string(s + 1);
+            } else {
+                subLabel = "local-" + std::to_string(s + 1);
+            }
+            std::string rowText = std::string("\xe2\x86\xb3 ") + subLabel;
+            drawText(rowText.c_str(), listX + 32, py - 1, 13, SDL_Color{120, 150, 170, 220});
+            py += 18;
+        }
     }
 
     // ── Bottom buttons ──
@@ -10948,12 +11856,9 @@ void Game::renderRemotePlayers() {
         if (rp.id == net.localPlayerId()) continue;
         if (!rp.alive) continue;
 
-        // Interpolated position
-        Vec2 drawPos = {
-            rp.prevPos.x + (rp.targetPos.x - rp.prevPos.x) * rp.interpT,
-            rp.prevPos.y + (rp.targetPos.y - rp.prevPos.y) * rp.interpT
-        };
-        float drawRot = rp.prevRotation + (rp.targetRotation - rp.prevRotation) * rp.interpT;
+        // Position/rotation are already interpolated in network.cpp
+        Vec2 drawPos = rp.pos;
+        float drawRot = rp.rotation;
 
         const Uint8 ghostAlpha = 80;
         const bool isGhost = rp.spectating;
@@ -10976,6 +11881,30 @@ void Game::renderRemotePlayers() {
             if (isGhost) SDL_SetTextureAlphaMod(playerSprites_[idx], ghostAlpha);
             renderSpriteEx(playerSprites_[idx], bodyPos, drawRot + (float)M_PI / 2, 3.0f, tint);
             if (isGhost) SDL_SetTextureAlphaMod(playerSprites_[idx], 255);
+        }
+
+        // ── Render this client's sub-players (splitscreen partners) ──
+        static const SDL_Color subTints[3] = {
+            {255, 220, 140, 255}, {140, 255, 180, 255}, {255, 160, 200, 255}
+        };
+        for (int si = 0; si < (int)rp.subPlayers.size(); si++) {
+            auto& sp = rp.subPlayers[si];
+            if (!sp.alive) continue;
+            Vec2 spPos = sp.pos;
+            float spRot = sp.rotation;
+            // Legs
+            if (sp.moving && !legSprites_.empty()) {
+                int idx = sp.legFrame % (int)legSprites_.size();
+                renderSprite(legSprites_[idx], spPos, sp.legRotation + (float)M_PI / 2, 3.0f);
+            }
+            // Body — slightly different tint from primary
+            if (!playerSprites_.empty()) {
+                int idx = sp.animFrame % (int)playerSprites_.size();
+                Vec2 bodyPos = spPos + Vec2::fromAngle(spRot) * 6.0f;
+                SDL_Color tint = subTints[si % 3];
+                if (rp.team >= 0 && rp.team < 4) tint = teamTints[rp.team]; // use team color if teams
+                renderSpriteEx(playerSprites_[idx], bodyPos, spRot + (float)M_PI / 2, 3.0f, tint);
+            }
         }
     }
 }
