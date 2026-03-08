@@ -1827,7 +1827,7 @@ void Game::handleInput() {
                 if (joinMenuSelection_ == 0) {
                     // Edit address
                     ipTyping_ = true;
-                    softKB_.open("0123456789.", 11, &joinAddress_, 21, [this](bool confirmed) {
+                    softKB_.open("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-:", 11, &joinAddress_, 64, [this](bool confirmed) {
                         ipTyping_ = false;
                         if (confirmed && !joinAddress_.empty()) joinGame();
                     });
