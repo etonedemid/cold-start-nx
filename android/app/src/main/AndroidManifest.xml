@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ─── COLD START — Android Manifest ────────────────────────────────────── -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Game controller support -->
+    <uses-feature
+        android:name="android.hardware.gamepad"
+        android:required="false" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="COLD START"
+        android:hasCode="true"
+        android:supportsRtl="false">
+
+        <activity
+            android:name="com.coldstart.game.ColdStartActivity"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode"
+            android:exported="true"
+            android:screenOrientation="sensorLandscape"
+            android:hardwareAccelerated="true"
+            android:launchMode="singleInstance">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <meta-data
+                android:name="SDL_ENV.SDL_ACCELEROMETER_AS_JOYSTICK"
+                android:value="0" />
+        </activity>
+    </application>
+
+</manifest>

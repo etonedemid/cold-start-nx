@@ -13,6 +13,23 @@
 #include <cctype>
 #include <queue>
 
+namespace {
+// On Switch, A/B and X/Y are physically swapped compared to Xbox layout
+inline Uint8 remapButton(Uint8 btn) {
+#ifdef __SWITCH__
+    switch (btn) {
+        case SDL_CONTROLLER_BUTTON_A: return SDL_CONTROLLER_BUTTON_B;
+        case SDL_CONTROLLER_BUTTON_B: return SDL_CONTROLLER_BUTTON_A;
+        case SDL_CONTROLLER_BUTTON_X: return SDL_CONTROLLER_BUTTON_Y;
+        case SDL_CONTROLLER_BUTTON_Y: return SDL_CONTROLLER_BUTTON_X;
+        default: return btn;
+    }
+#else
+    return btn;
+#endif
+}
+} // namespace
+
 // ═════════════════════════════════════════════════════════════════════════════
 //  Init / Shutdown
 // ═════════════════════════════════════════════════════════════════════════════
@@ -606,22 +623,23 @@ void TextureEditor::handleConfigInput(const SDL_Event& e) {
             config_.name += e.text.text;
     }
     else if (e.type == SDL_CONTROLLERBUTTONDOWN) {
-        if (e.cbutton.button == SDL_CONTROLLER_BUTTON_B) {
+        Uint8 btn = remapButton(e.cbutton.button);
+        if (btn == SDL_CONTROLLER_BUTTON_B) {
             if (config_.textEditing) config_.textEditing = false;
             else wantsExit_ = true;
         }
-        if (e.cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_UP)
+        if (btn == SDL_CONTROLLER_BUTTON_DPAD_UP)
             config_.field = (config_.field - 1 + TOTAL) % TOTAL;
-        if (e.cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_DOWN)
+        if (btn == SDL_CONTROLLER_BUTTON_DPAD_DOWN)
             config_.field = (config_.field + 1) % TOTAL;
-        if (e.cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_LEFT || e.cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) {
-            int dir = (e.cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) ? 1 : -1;
+        if (btn == SDL_CONTROLLER_BUTTON_DPAD_LEFT || btn == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) {
+            int dir = (btn == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) ? 1 : -1;
             if (config_.field == 0) {
                 config_.action = (config_.action == TexEditorConfig::NewImage)
                     ? TexEditorConfig::LoadImage : TexEditorConfig::NewImage;
             }
         }
-        if (e.cbutton.button == SDL_CONTROLLER_BUTTON_A) {
+        if (btn == SDL_CONTROLLER_BUTTON_A) {
             // Confirm — same as Enter
             SDL_Event fake; fake.type = SDL_KEYDOWN;
             fake.key.keysym.sym = SDLK_RETURN;
@@ -773,7 +791,7 @@ void TextureEditor::handleEditingInput(const SDL_Event& e) {
     }
     else if (e.type == SDL_CONTROLLERBUTTONDOWN) {
         useGamepadCursor_ = true;
-        int btn = e.cbutton.button;
+        Uint8 btn = remapButton(e.cbutton.button);
         if (btn == SDL_CONTROLLER_BUTTON_B) { wantsExit_ = true; return; }
         if (btn == SDL_CONTROLLER_BUTTON_A) {
             int cx, cy;
@@ -877,7 +895,8 @@ void TextureEditor::handleColorPickerInput(const SDL_Event& e) {
         currentColor_ = hsvToRgb(hue_, sat_, val_, currentColor_.a);
     }
     if (e.type == SDL_CONTROLLERBUTTONDOWN) {
-        if (e.cbutton.button == SDL_CONTROLLER_BUTTON_B || e.cbutton.button == SDL_CONTROLLER_BUTTON_A) {
+        Uint8 btn = remapButton(e.cbutton.button);
+        if (btn == SDL_CONTROLLER_BUTTON_B || btn == SDL_CONTROLLER_BUTTON_A) {
             currentColor_ = hsvToRgb(hue_, sat_, val_, currentColor_.a);
             palette_[paletteIdx_] = currentColor_;
             state_ = TexEditorState::Editing;
