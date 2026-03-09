@@ -297,11 +297,6 @@ jobs:
           # Switch
           cp artifacts/cold_start-switch/cold_start.nro "cold-start-nx.nro"
 
-          # Android
-          if [ -d "artifacts/cold_start-android" ]; then
-            cp artifacts/cold_start-android/*.apk "cold_start-android-${VER}.apk" 2>/dev/null || true
-          fi
-
       - name: Extract changelog for this release
         id: changelog
         run: |
@@ -331,4 +326,3 @@ jobs:
             cold_start-linux-server-${{ steps.version.outputs.tag }}.zip
             cold_start-windows-${{ steps.version.outputs.tag }}.zip
             cold-start-nx.nro
-            cold_start-android-${{ steps.version.outputs.tag }}.apk
