@@ -139,6 +139,7 @@ bool Game::init() {
     }
     if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 4096) < 0) {
         printf("Mix_OpenAudio: %s\n", Mix_GetError());
+        // Non-fatal: continue without audio
     }
     Mix_AllocateChannels(32);
 
@@ -477,7 +478,8 @@ void Game::shutdown() {
     ui_.shutdown();
     Assets::instance().shutdown();
     if (vignetteTex_) SDL_DestroyTexture(vignetteTex_);
-    if (bgMusic_) Mix_HaltMusic();
+    Mix_HaltMusic();
+    if (customMapMusic_) { Mix_FreeMusic(customMapMusic_); customMapMusic_ = nullptr; }
     Mix_CloseAudio();
     TTF_Quit();
     if (renderer_) SDL_DestroyRenderer(renderer_);
@@ -3776,7 +3778,22 @@ Vec2 Game::pickSpawnPos() {
         if (!map_.worldCollides(rx, ry, PLAYER_SIZE * 0.5f))
             return {rx, ry};
     }
-    return {ww / 2.0f, wh / 2.0f}; // ultimate fallback
+    // Ultimate fallback: try map center, then scan outward
+    Vec2 center = {ww / 2.0f, wh / 2.0f};
+    if (!map_.worldCollides(center.x, center.y, PLAYER_SIZE * 0.5f))
+        return center;
+    // Systematic scan: search tiles for any non-solid position
+    for (int ty = 1; ty < map_.height - 1; ty++) {
+        for (int tx = 1; tx < map_.width - 1; tx++) {
+            if (!map_.isSolid(tx, ty)) {
+                float wx = TileMap::toWorld(tx);
+                float wy = TileMap::toWorld(ty);
+                if (!map_.worldCollides(wx, wy, PLAYER_SIZE * 0.5f))
+                    return {wx, wy};
+            }
+        }
+    }
+    return center; // absolute last resort
 }
 
 void Game::spawnBomb() {
@@ -4131,7 +4148,16 @@ void Game::resolveCollisions() {
                 e.damageFlash = 1.0f;
                 camera_.addShake(2.2f);
                 if (sfxParry_) { int ch = Mix_PlayChannel(-1, sfxParry_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
-                if (e.hp <= 0) killEnemy(e);
+                if (e.hp <= 0) {
+                    killEnemy(e);
+                    // Broadcast parry kill over network so clients see the enemy die
+                    auto& net = NetworkManager::instance();
+                    if (net.isInGame() && net.isHost()) {
+                        uint32_t eIdx = (uint32_t)(&e - &enemies_[0]);
+                        net.sendEnemyKilled(eIdx, net.localPlayerId());
+                        enemyStatesNeedUpdate_ = true;
+                    }
+                }
             } else {
                 p.takeDamage(e.contactDamage);
                 camera_.addShake(1.8f);
@@ -4565,7 +4591,8 @@ void Game::render() {
                     renderSpriteEx(tex, e.pos, e.rotation + M_PI/2, drawScale, tint);
                 } else {
                     // Health-based tint
-                    float hpRatio = e.hp / e.maxHp;
+                    float hpRatio = (e.maxHp > 0.0f) ? (e.hp / e.maxHp) : 1.0f;
+                    hpRatio = std::max(0.0f, std::min(1.0f, hpRatio));
                     SDL_Color base = enemyBaseTint(e.type);
                     Uint8 r = base.r;
                     Uint8 g = (Uint8)(base.g * hpRatio);
@@ -4749,7 +4776,8 @@ void Game::render() {
                     SDL_Color tint = {255, (Uint8)(other + (Uint8)(flash * 20.0f / 12.0f)), (Uint8)(other + (Uint8)(flash * 20.0f / 12.0f)), 255};
                     renderSpriteEx(tex, e.pos, e.rotation + (float)M_PI/2, drawScale, tint);
                 } else {
-                    float hpRatio = e.hp / e.maxHp;
+                    float hpRatio = (e.maxHp > 0.0f) ? (e.hp / e.maxHp) : 1.0f;
+                    hpRatio = std::max(0.0f, std::min(1.0f, hpRatio));
                     SDL_Color base = enemyBaseTint(e.type);
                     Uint8 rr = base.r, gg = (Uint8)(base.g * hpRatio), bb = (Uint8)(base.b * hpRatio);
                     SDL_Color tint = {rr, gg, bb, 255};
@@ -5466,6 +5494,7 @@ void Game::renderDecals() {
 
 void Game::renderRoofOverlay() {
     // Draw transparent glass ceiling tiles over rooms (rendered after entities)
+    if (map_.ceiling.size() != (size_t)(map_.width * map_.height)) return; // safety: ceiling not sized
     int startX = (int)(camera_.pos.x / TILE_SIZE) - 1;
     int startY = (int)(camera_.pos.y / TILE_SIZE) - 1;
     int endX   = startX + SCREEN_W / TILE_SIZE + 3;

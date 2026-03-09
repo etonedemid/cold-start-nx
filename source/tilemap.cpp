@@ -370,6 +370,7 @@ uint8_t TileMap::get(int tx, int ty) const {
 }
 
 void TileMap::set(int tx, int ty, uint8_t t) {
+    if (!isInBounds(tx, ty)) return;
     tiles[ty * width + tx] = t;
 }
 
