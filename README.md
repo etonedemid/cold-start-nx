@@ -1,7 +1,7 @@
 
 <img width="848" height="204" alt="banner" src="https://github.com/user-attachments/assets/2a0af91e-a15e-462f-aa99-d2869a311675" />
 
-# COLD START  `v0.9.9`
+# COLD START  `v1.0.0`
 
 COLD START is a top-down action shooter built in C++ with SDL2 for PC and Nintendo Switch homebrew. It combines fast combat, local content editing, multiplayer support, and a lightweight modding pipeline aimed at rapid iteration.
 
@@ -294,6 +294,10 @@ When the host enables mods, lightweight mod data can be serialized and sent to j
 - First launch may create missing runtime content directories automatically
 
 ## Changelog
+
+### v1.0.0 (2026-03-09)
+- **Shooting enemies always face their target** — Shooter, Sniper, and Gunner enemies now correctly face the player they are targeting while in chase state; previously their facing direction was overwritten by movement velocity, causing them to look sideways while shooting
+- **Smoother enemy movement** — Shooter, Sniper, and Gunner enemies now use velocity interpolation (inertia) for all movement phases (approach, retreat, wander), matching the smoothness of melee enemies
 
 ### v0.9.9 (2026-03-08)
 - **Dedicated server host model rework** — dedicated server is no longer counted as a player slot
