@@ -142,7 +142,10 @@ bool Game::init() {
     }
     Mix_AllocateChannels(32);
 
-    window_ = SDL_CreateWindow("COLD START",
+    char windowTitle[64];
+    snprintf(windowTitle, sizeof(windowTitle), "COLD START v%s", GAME_VERSION);
+
+    window_ = SDL_CreateWindow(windowTitle,
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         SCREEN_W, SCREEN_H,
 #ifdef __SWITCH__
@@ -10548,7 +10551,7 @@ void Game::renderMultiplayerMenu() {
         if (serverListSelection_ >= maxVisible) startIdx = serverListSelection_ - maxVisible + 1;
 
         for (int i = startIdx; i < (int)savedServers_.size() && (i - startIdx) < maxVisible; i++) {
-            bool sel = (multiMenuSelection_ == 4 + i);
+            bool sel = (multiMenuSelection_ == 3 + i);
             auto& s = savedServers_[i];
 
             // Click detection for server rows
@@ -10763,8 +10766,16 @@ void Game::renderJoinMenu() {
     if (net.state() == NetState::Connecting) {
         ui_.drawTextCentered("Connecting...", py + 70, 16, UI::Color::Yellow);
     } else if (!connectStatus_.empty()) {
-        ui_.drawTextCentered(connectStatus_.c_str(), py + 70, 14, UI::Color::Red);
+        SDL_Color statusColor = UI::Color::Red;
+        if (connectStatus_.find("saved") != std::string::npos ||
+            connectStatus_.find("Saved") != std::string::npos) {
+            statusColor = UI::Color::Green;
+        }
+        ui_.drawTextCentered(connectStatus_.c_str(), py + 70, 14, statusColor);
     }
+
+    ui_.drawTextCentered("IP or hostname (example: 192.168.1.10 or play.example.com)",
+                         py + 86, 10, UI::Color::HintGray);
 
     int fieldY = py + 92;
     int fieldStep = 54;
@@ -10820,7 +10831,7 @@ void Game::renderJoinMenu() {
     };
 
     // ── Four input fields ──
-    drawField(0, "ADDRESS", joinAddress_, ipTyping_);
+    drawField(0, "IP / HOST", joinAddress_, ipTyping_);
 
     {
         std::string pStr = joinPortTyping_ ? joinPortStr_ : std::to_string(joinPort_);
