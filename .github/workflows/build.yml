@@ -203,6 +203,7 @@ jobs:
 
   android:
     name: Android
+    if: false  # temporarily disabled
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -240,7 +241,7 @@ jobs:
 
   release:
     name: Release
-    needs: [linux, linux-server, windows, switch, android]
+    needs: [linux, linux-server, windows, switch]
     runs-on: ubuntu-latest
     if: >-
       (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
