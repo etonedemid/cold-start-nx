@@ -102,6 +102,11 @@ for libname in libminiupnpc.so; do
 done
 
 # ── Launcher ────────────────────────────────────────────────────────────────
+# The dynamic linker must be executable; cp -L preserves the source mode but
+# some systems install ld-linux without the execute bit for non-root users.
+chmod +x "$DIST/libs/ld-linux"*.so* 2>/dev/null || true
+chmod +x "$DIST/cold_start"
+
 cat > "$DIST/run.sh" << 'EOF'
 #!/bin/sh
 cd "$(dirname "$0")"
