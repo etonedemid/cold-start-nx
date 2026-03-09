@@ -29,6 +29,7 @@ add_subdirectory(${SDL2_MIXER_SOURCE_DIR} SDL2_mixer EXCLUDE_FROM_ALL)
 set(GAME_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../../../source")
 
 file(GLOB GAME_SOURCES  ${GAME_SRC}/*.cpp)
+list(FILTER GAME_SOURCES EXCLUDE REGEX "server_main\\.cpp$")
 file(GLOB ENET_SOURCES  ${GAME_SRC}/enet/*.c)
 list(FILTER ENET_SOURCES EXCLUDE REGEX "win32\\.c$")
 
