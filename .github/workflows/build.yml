@@ -1,5 +1,5 @@
 # ─── COLD START — CI/CD Pipeline ─────────────────────────────────────────────
-# Builds for Linux, Windows, Nintendo Switch, and Android.
+# Builds for Linux, Windows, Nintendo Switch, Android, and a dedicated server.
 # Creates a GitHub Release when a version tag is pushed or workflow_dispatch.
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -59,6 +59,41 @@ jobs:
         with:
           name: cold_start-linux
           path: build-pc/dist/
+
+  # ── Linux Dedicated Server ─────────────────────────────────────────────────
+
+  linux-server:
+    name: Linux Dedicated Server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            libenet-dev \
+            libminiupnpc-dev
+
+      - name: Configure
+        run: cmake -B build-server -DCMAKE_BUILD_TYPE=Release -DSERVER_ONLY=ON
+
+      - name: Build
+        run: cmake --build build-server -j$(nproc)
+
+      - name: Package server bundle
+        run: |
+          mkdir -p server-dist
+          cp build-server/cold_start server-dist/
+          cp -r romfs server-dist/romfs
+          cp -r deploy server-dist/deploy
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cold_start-linux-server
+          path: server-dist/
 
   # ── Windows (MSYS2 MinGW64) ───────────────────────────────────────────────
 
@@ -164,16 +199,17 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10"
+          validate-wrappers: false
+
       - name: Download SDL2 sources
         run: |
           cd android
           chmod +x setup_sdl.sh
           ./setup_sdl.sh
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.10"
 
       - name: Build APK
         run: |
@@ -190,11 +226,12 @@ jobs:
 
   release:
     name: Release
-    needs: [linux, windows, switch, android]
+    needs: [linux, linux-server, windows, switch, android]
     runs-on: ubuntu-latest
     if: >-
       (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
       && needs.linux.result == 'success'
+      && needs.linux-server.result == 'success'
       && needs.switch.result == 'success'
     steps:
       - uses: actions/checkout@v4
@@ -228,6 +265,14 @@ jobs:
           zip -r "../../cold_start-linux-${VER}.zip" .
           cd ../..
 
+          # Linux server
+          if [ -d "artifacts/cold_start-linux-server" ]; then
+            cd artifacts/cold_start-linux-server
+            chmod +x cold_start
+            zip -r "../../cold_start-linux-server-${VER}.zip" .
+            cd ../..
+          fi
+
           # Windows
           if [ -d "artifacts/cold_start-windows" ]; then
             cd artifacts/cold_start-windows
@@ -254,6 +299,7 @@ jobs:
           fail_on_unmatched_files: false
           files: |
             cold_start-linux-${{ steps.version.outputs.tag }}.zip
+            cold_start-linux-server-${{ steps.version.outputs.tag }}.zip
             cold_start-windows-${{ steps.version.outputs.tag }}.zip
             cold-start-nx.nro
             cold_start-android-${{ steps.version.outputs.tag }}.apk

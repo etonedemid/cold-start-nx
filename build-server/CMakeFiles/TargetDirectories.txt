@@ -1,0 +1,3 @@
+/home/runner/work/cold-start-nx/cold-start-nx/build-server/CMakeFiles/cold_start.dir
+/home/runner/work/cold-start-nx/cold-start-nx/build-server/CMakeFiles/edit_cache.dir
+/home/runner/work/cold-start-nx/cold-start-nx/build-server/CMakeFiles/rebuild_cache.dir
