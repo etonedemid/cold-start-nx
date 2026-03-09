@@ -1,7 +1,7 @@
 
 <img width="848" height="204" alt="banner" src="https://github.com/user-attachments/assets/2a0af91e-a15e-462f-aa99-d2869a311675" />
 
-# COLD START  `v1.0.0`
+# COLD START  `v1.0.2`
 
 COLD START is a top-down action shooter built in C++ with SDL2 for PC and Nintendo Switch homebrew. It combines fast combat, local content editing, multiplayer support, and a lightweight modding pipeline aimed at rapid iteration.
 
@@ -151,11 +151,13 @@ nxlink -a <SWITCH_IP> -s cold_start.nro
 
 ## Release artifacts
 
-Current manual release artifacts for `v0.9.1`:
+Current release artifacts for `v1.0.2`:
 
-- `cold_start-0.9.1-linux.zip`
-- `cold_start-0.9.1-windows.zip`
-- `cold_start.nro`
+- `cold_start-linux-v1.0.2.zip` — Linux x86_64 (self-contained, SDL2 libs bundled)
+- `cold_start-linux-server-v1.0.2.zip` — Linux dedicated server (headless)
+- `cold_start-windows-v1.0.2.zip` — Windows x86_64 (MinGW, all DLLs bundled)
+- `cold-start-nx.nro` — Nintendo Switch homebrew
+- `cold_start-android-v1.0.2.apk` — Android (arm64-v8a / armeabi-v7a / x86_64)
 
 ## Controls
 
@@ -294,6 +296,24 @@ When the host enables mods, lightweight mod data can be serialized and sent to j
 - First launch may create missing runtime content directories automatically
 
 ## Changelog
+
+### v1.0.2 (2026-03-09)
+- **Parry kills sync over network** — parry-killing an enemy now broadcasts `sendEnemyKilled` from the host so all clients see the enemy die immediately instead of waiting for the next state sync
+- **Robust spawn position fallback** — `pickSpawnPos()` now does a full tile scan when the map centre is solid, guaranteeing a valid spawn even on fully custom layouts
+- **Enemy HP tint safety** — clamped `hpRatio` to `[0, 1]` and guarded against zero `maxHp` to prevent colour overflow artefacts on freshly-spawned enemies
+- **Audio shutdown fix** — `customMapMusic` is now freed and nulled during `shutdown()`; `Mix_HaltMusic()` is called unconditionally to prevent a dangling music channel on exit
+- **Ceiling render guard** — `renderRoofOverlay()` early-exits if the ceiling array is not sized to the map dimensions, preventing an out-of-bounds read on maps loaded mid-transition
+- **CSM security hardening** — map loader now validates dimensions (non-zero, ≤ 4096) and trigger count (≤ 10 000) before allocating, and checks all `fread` return values to reject truncated or crafted files
+- **Network protocol hardening** — join packet and lobby-sync parsers use explicit bounds-checked string readers; all string fields are null-terminated within their payload bounds, preventing OOB reads on malformed packets
+- **UPnP thread safety** — added mutex around shared UPnP URL/data state accessed from the async discovery thread
+- **Mod file sync read check** — short `fread` results during mod payload assembly are logged and skipped instead of silently including corrupt data
+- **Android build fix** — excluded `server_main.cpp` from the Android JNI `file(GLOB)` sweep, eliminating the duplicate `main()` linker error
+- **Windows CI DLL bundling fix** — replaced flat `objdump` import scan with a recursive `ldd`-based collector that walks the full transitive dependency tree, bundling previously missing libs such as `libbz2-1.dll`
+
+### v1.0.1 (2026-03-09)
+- **IP connect UI fix** — address input field now accepts the full range of valid characters including colons for host:port notation; input length limit raised to accommodate real-world server addresses
+- **Saved server highlight** — the last-connected server address is now pre-selected and highlighted in the join menu so reconnecting requires no re-typing
+- **Version metadata sync** — `APP_VERSION` in the Makefile, `versionName` in the Android build, and the in-game menu version label all reflect the correct release version
 
 ### v1.0.0 (2026-03-09)
 - **Shooting enemies always face their target** — Shooter, Sniper, and Gunner enemies now correctly face the player they are targeting while in chase state; previously their facing direction was overwritten by movement velocity, causing them to look sideways while shooting
