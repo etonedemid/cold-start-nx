@@ -25,7 +25,16 @@ android {
                     "-DANDROID_STL=c++_shared",
                     "-DSDL2IMAGE_VENDORED=ON",
                     "-DSDL2TTF_VENDORED=ON",
-                    "-DSDL2MIXER_VENDORED=ON"
+                    "-DSDL2MIXER_VENDORED=ON",
+                    // Disable formats that require external source trees
+                    // (ogg/vorbis need external/ogg, flac needs external/flac,
+                    //  opus needs external/opus, mpg123 needs external/mpg123)
+                    "-DSDL2MIXER_VORBIS=OFF",
+                    "-DSDL2MIXER_FLAC=OFF",
+                    "-DSDL2MIXER_OPUS=OFF",
+                    "-DSDL2MIXER_MP3_MPG123=OFF",
+                    // minimp3 is header-only and bundled inside SDL2_mixer source
+                    "-DSDL2MIXER_MP3_MINIMP3=ON"
                 )
             }
         }
