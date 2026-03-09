@@ -55,11 +55,11 @@ static void upnpMapPort(uint16_t port) {
         return;
     }
     char lanaddr[64] = {};
-#if defined(MINIUPNPC_API_VERSION) && MINIUPNPC_API_VERSION >= 17
-    int r = UPNP_GetValidIGD(devlist, &s_upnp.urls, &s_upnp.data, lanaddr, sizeof(lanaddr));
-#else
+#if defined(MINIUPNPC_API_VERSION) && MINIUPNPC_API_VERSION >= 18
     char wanaddr[64] = {};
     int r = UPNP_GetValidIGD(devlist, &s_upnp.urls, &s_upnp.data, lanaddr, sizeof(lanaddr), wanaddr, sizeof(wanaddr));
+#else
+    int r = UPNP_GetValidIGD(devlist, &s_upnp.urls, &s_upnp.data, lanaddr, sizeof(lanaddr));
 #endif
     freeUPNPDevlist(devlist);
     // r==1: valid connected IGD
