@@ -2923,8 +2923,9 @@ void Game::updateEnemies(float dt) {
             if (e.dashCdTimer <= 0) e.dashOnCd = false;
         }
 
-        // Rotation toward movement
-        if (e.vel.lengthSq() > 1.0f && !e.isDashing && !e.dashCharging) {
+        // Rotation toward movement (shooter enemies in chase face their target, set in enemyChase)
+        bool shooterChasing = isShooterEnemyType(e.type) && e.state == EnemyState::Chase;
+        if (!shooterChasing && e.vel.lengthSq() > 1.0f && !e.isDashing && !e.dashCharging) {
             e.rotation = atan2f(e.vel.y, e.vel.x);
         }
 
@@ -3035,6 +3036,8 @@ void Game::enemyWander(Enemy& e, float dt) {
     if (isMeleeEnemyType(e.type)) {
         float inertia = MELEE_INERTIA;
         e.vel = Vec2::lerp(e.vel, desired, dt * inertia);
+    } else if (isShooterEnemyType(e.type)) {
+        e.vel = Vec2::lerp(e.vel, desired, dt * SHOOTER_INERTIA);
     } else {
         e.vel = desired;
     }
@@ -3053,9 +3056,11 @@ void Game::enemyChase(Enemy& e, float dt) {
             Vec2 perp  = Vec2{-away.y, away.x}; // perpendicular
             float sideSign = (sinf(gameTime_ * 1.1f) > 0) ? 1.0f : -1.0f;
             Vec2 retreat = (away + perp * sideSign * 0.6f).normalized();
-            e.vel = steerToward(e.pos, e.pos + retreat * 200.0f, e.speed * 0.7f, dt);
+            Vec2 desired = steerToward(e.pos, e.pos + retreat * 200.0f, e.speed * 0.7f, dt);
+            e.vel = Vec2::lerp(e.vel, desired, dt * SHOOTER_INERTIA);
         } else if (dist > e.preferredMaxRange) {
-            e.vel = steerToward(e.pos, targetPos, e.speed, dt);
+            Vec2 desired = steerToward(e.pos, targetPos, e.speed, dt);
+            e.vel = Vec2::lerp(e.vel, desired, dt * SHOOTER_INERTIA);
         } else {
             // Orbit / strafe
             Vec2 perp = Vec2{-toPlayer.normalized().y, toPlayer.normalized().x};

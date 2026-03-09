@@ -3,7 +3,7 @@
 #include "vec2.h"
 
 // ── Version ──
-constexpr const char* GAME_VERSION = "0.9.9";
+constexpr const char* GAME_VERSION = "1.0.0";
 
 // Screen
 constexpr int SCREEN_W = 1280;
@@ -52,6 +52,7 @@ constexpr float ENEMY_DASH_DUR   = 0.2f;
 constexpr float ENEMY_DASH_CD    = 1.4f;
 constexpr int   ENEMY_DASH_DMG   = 2;
 constexpr float MELEE_INERTIA    = 14.0f; // velocity smoothing factor (higher = more responsive)
+constexpr float SHOOTER_INERTIA  = 8.0f;  // velocity smoothing for shooter enemies
 
 // Shooter enemy
 constexpr float SHOOTER_SPEED       = 140.0f;
