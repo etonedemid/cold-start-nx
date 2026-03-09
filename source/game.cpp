@@ -825,6 +825,7 @@ void Game::handleInput() {
 
         if (e.type == SDL_CONTROLLERBUTTONDOWN) {
             Uint8 btn = remapButton(e.cbutton.button);
+            lastGamepadInputId_ = e.cbutton.which;
             // ── Local join/leave handling in lobby screens ──
             if (state_ == GameState::LocalCoopLobby || state_ == GameState::Lobby) {
                 bool isMultiplayerLobby = (state_ == GameState::Lobby);
@@ -836,7 +837,12 @@ void Game::handleInput() {
                         { existingSlot = s; break; }
                 }
                 if (btn == SDL_CONTROLLER_BUTTON_A) {
+                    bool isLobbyPrimaryPad = (isMultiplayerLobby && iid == lobbyPrimaryPadId_);
                     if (existingSlot < 0) {
+                        if (isLobbyPrimaryPad) {
+                            // This pad opened host/join flow; treat A as ready/confirm, not local sub-player join
+                            continue;
+                        }
 #ifdef __SWITCH__
                         // On Switch, gamepads can join slot 0-3
                         int startSlot = 0;
@@ -9885,6 +9891,7 @@ void Game::hostGame() {
     auto& net = NetworkManager::instance();
     if (net.host(hostPort_, hostMaxPlayers_ - 1)) {
         net.setHostPassword(lobbyPassword_);
+        lobbyPrimaryPadId_ = usingGamepad_ ? lastGamepadInputId_ : -1;
         state_ = GameState::Lobby;
         menuSelection_ = 0;
         lobbyReady_ = false;
@@ -9969,6 +9976,7 @@ void Game::joinGame() {
     auto& net = NetworkManager::instance();
     connectStatus_.clear();
     if (net.join(joinAddress_, joinPort_, joinPassword_)) {
+        lobbyPrimaryPadId_ = usingGamepad_ ? lastGamepadInputId_ : -1;
         state_ = GameState::Lobby;
         menuSelection_ = 0;
         lobbyReady_ = false;

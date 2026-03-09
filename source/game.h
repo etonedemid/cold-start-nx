@@ -195,6 +195,8 @@ private:
     bool pauseInput_ = false;
     bool confirmInput_ = false;
     bool usingGamepad_ = false;  // true when last input was from a gamepad (shows soft KB on PC)
+    SDL_JoystickID lastGamepadInputId_ = -1;     // last gamepad that pressed a button in menus
+    SDL_JoystickID lobbyPrimaryPadId_ = -1;      // gamepad used to enter host/join flow; not auto-added as sub-player
     bool backInput_ = false;
     bool leftInput_ = false;
     bool rightInput_ = false;
