@@ -154,23 +154,27 @@ bool NetworkManager::host(uint16_t port, int maxClients) {
     }
 
     isHost_ = true;
-    localId_ = 0;
+    localId_ = dedicatedServer_ ? 255 : 0;
     nextPlayerId_ = 1;
     state_ = NetState::InLobby;
 
-    // Add local player
-    NetPlayer local;
-    local.id = 0;
-    local.username = username_;
-    local.ready = false;
-    local.localSubPlayers = 0;
-    local.peer = nullptr;
     players_.clear();
-    players_.push_back(local);
+    if (!dedicatedServer_) {
+        NetPlayer local;
+        local.id = 0;
+        local.username = username_;
+        local.ready = false;
+        local.localSubPlayers = 0;
+        local.peer = nullptr;
+        players_.push_back(local);
+        lobbyHostId_ = 0;
+    } else {
+        lobbyHostId_ = 255;
+    }
 
-    lobby_.hostName = username_;
-    lobby_.currentPlayers = 1;
-    lobby_.maxPlayers = maxClients + 1;
+    updateLobbyHostName();
+    lobby_.currentPlayers = (int)players_.size();
+    lobby_.maxPlayers = dedicatedServer_ ? maxClients : (maxClients + 1);
 
     printf("Network: Hosting on port %d (max %d clients)\n", port, maxClients);
     // Async UPnP port mapping so routers/firewalls automatically forward the port
@@ -252,6 +256,8 @@ void NetworkManager::disconnect() {
     pendingJoinPassword_.clear();
     state_ = NetState::Offline;
     isHost_ = false;
+    localId_ = 0;
+    lobbyHostId_ = 0;
     tick_ = 0;
     printf("Network: Disconnected\n");
 }
@@ -308,15 +314,20 @@ void NetworkManager::processEvent(ENetEvent& event) {
             players_.push_back(np);
             lobby_.currentPlayers = (int)players_.size();
 
+            if (lobbyHostId_ == 255) {
+                assignLobbyHost(newId, true);
+            }
+
             printf("Network: Player %d connected\n", newId);
 
             // Send lobby info to new player (serialized)
             {
                 std::vector<uint8_t> payload;
-                // [assignedId:1][hostNameLen:1][hostName][mapNameLen:1][mapName]
+                // [assignedId:1][lobbyHostId:1][hostNameLen:1][hostName][mapNameLen:1][mapName]
                 // [mapFileLen:1][mapFile][gamemodeNameLen:1][gamemodeName]
                 // [gamemodeIdLen:1][gamemodeId][maxPlayers:1][currentPlayers:1][inProgress:1][hostSubPlayers:1]
                 payload.push_back(newId); // assigned player ID
+                payload.push_back(lobbyHostId_);
                 payload.push_back((uint8_t)lobby_.hostName.size());
                 payload.insert(payload.end(), lobby_.hostName.begin(), lobby_.hostName.end());
                 payload.push_back((uint8_t)lobby_.mapName.size());
@@ -330,7 +341,9 @@ void NetworkManager::processEvent(ENetEvent& event) {
                 payload.push_back((uint8_t)lobby_.maxPlayers);
                 payload.push_back((uint8_t)lobby_.currentPlayers);
                 payload.push_back(lobby_.inProgress ? 1 : 0);
-                payload.push_back(players_.empty() ? 0 : players_[0].localSubPlayers);
+                uint8_t hostSubPlayers = 0;
+                if (auto* hostPlayer = findPlayer(lobbyHostId_)) hostSubPlayers = hostPlayer->localSubPlayers;
+                payload.push_back(hostSubPlayers);
                 auto pkt = buildPacket(NetPacketType::LobbyInfo, payload.data(), payload.size());
                 sendReliable(pkt, event.peer);
             }
@@ -351,7 +364,7 @@ void NetworkManager::processEvent(ENetEvent& event) {
             // Send info about all existing players to the new client
             // (so the new client knows about everyone already in the lobby)
             for (auto& p : players_) {
-                if (p.id != newId && p.id != 0) { // skip new player and host (host sent in LobbyInfo)
+                if (p.id != newId) {
                     std::vector<uint8_t> existPayload;
                     existPayload.push_back(p.id);
                     existPayload.push_back((uint8_t)p.username.size());
@@ -390,6 +403,15 @@ void NetworkManager::processEvent(ENetEvent& event) {
             [peerId](const NetPlayer& p) { return p.id == peerId; });
         players_.erase(it, players_.end());
         lobby_.currentPlayers = (int)players_.size();
+
+        if (isHost_ && peerId == lobbyHostId_) {
+            if (!players_.empty()) {
+                size_t idx = (size_t)(rand() % players_.size());
+                assignLobbyHost(players_[idx].id, true);
+            } else {
+                assignLobbyHost(255, true);
+            }
+        }
 
         if (onPlayerLeft) onPlayerLeft(peerId);
 
@@ -459,6 +481,7 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
 
             if (auto* p = findPlayer(peerId)) {
                 p->username = name;
+                updateLobbyHostName();
                 printf("Network: Player %d is '%s'\n", peerId, name.c_str());
                 // Broadcast updated player name to all clients
                 std::vector<uint8_t> joinPayload;
@@ -480,6 +503,7 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             // Deserialize lobby info from host
             size_t off = 0;
             localId_ = payload[off++];
+            lobbyHostId_ = (off < payloadLen) ? payload[off++] : 0;
             printf("Network: Assigned player ID %d\n", localId_);
 
             // Add ourselves to the player list
@@ -489,14 +513,8 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             local.username = username_;
             local.peer = nullptr;
             players_.push_back(local);
-
-            // Add host as player 0
-            NetPlayer hostP;
-            hostP.id = 0;
             uint8_t hostNameLen = payload[off++];
-            hostP.username = std::string((char*)payload + off, hostNameLen); off += hostNameLen;
-            hostP.peer = &from->host->peers[0]; // not used directly, just marks as remote
-            players_.insert(players_.begin(), hostP);
+            lobby_.hostName = std::string((char*)payload + off, hostNameLen); off += hostNameLen;
 
             uint8_t mapNameLen = payload[off++];
             lobby_.mapName = std::string((char*)payload + off, mapNameLen); off += mapNameLen;
@@ -509,9 +527,11 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             lobby_.maxPlayers = payload[off++];
             lobby_.currentPlayers = payload[off++];
             lobby_.inProgress = payload[off++] != 0;
-            if (off < payloadLen) hostP.localSubPlayers = payload[off++];
-            lobby_.hostName = hostP.username;
-            players_[0].localSubPlayers = hostP.localSubPlayers;
+            uint8_t hostSubPlayers = (off < payloadLen) ? payload[off++] : 0;
+
+            if (lobbyHostId_ == localId_) {
+                players_[0].localSubPlayers = hostSubPlayers;
+            }
 
             state_ = NetState::InLobby;
             printf("Network: Lobby info received (host=%s, gamemode=%s)\n",
@@ -549,7 +569,38 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
                 players_.push_back(np);
             }
             lobby_.currentPlayers = (int)players_.size();
+            updateLobbyHostName();
             if (onPlayerJoined) onPlayerJoined(pid, name);
+        }
+        break;
+    }
+
+    case NetPacketType::LobbyHostTransfer: {
+        if (isHost_ && payloadLen >= 1) {
+            uint8_t senderId = (uint8_t)(uintptr_t)from->data;
+            uint8_t targetId = payload[0];
+            if (senderId == lobbyHostId_ && findPlayer(targetId)) {
+                assignLobbyHost(targetId, true);
+            }
+        }
+        break;
+    }
+
+    case NetPacketType::LobbyHostChanged: {
+        if (payloadLen >= 1) {
+            lobbyHostId_ = payload[0];
+            updateLobbyHostName();
+            if (onLobbyHostChanged) onLobbyHostChanged(lobbyHostId_);
+        }
+        break;
+    }
+
+    case NetPacketType::LobbyStartRequest: {
+        if (isHost_) {
+            uint8_t senderId = (uint8_t)(uintptr_t)from->data;
+            if (senderId == lobbyHostId_ && onLobbyStartRequested) {
+                onLobbyStartRequested();
+            }
         }
         break;
     }
@@ -808,6 +859,14 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
     }
 
     case NetPacketType::GameEnd: {
+        if (isHost_) {
+            uint8_t senderId = (uint8_t)(uintptr_t)from->data;
+            if (senderId != lobbyHostId_) break;
+            auto pkt = buildPacket(NetPacketType::GameEnd, payload, payloadLen);
+            for (auto& p : players_) {
+                if (p.peer) sendReliable(pkt, p.peer);
+            }
+        }
         state_ = NetState::InLobby;
         uint8_t reason = (payloadLen >= 1) ? payload[0] : 0;
         if (onGameEnded) onGameEnded(reason);
@@ -1122,6 +1181,10 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
 
     case NetPacketType::ConfigSync: {
         if (payloadLen >= 26) {
+            if (isHost_) {
+                uint8_t senderId = (uint8_t)(uintptr_t)from->data;
+                if (senderId != lobbyHostId_) break;
+            }
             LobbySettings settings;
             uint8_t flags = payload[0];
             settings.friendlyFire   = (flags & 0x01) != 0;
@@ -1193,6 +1256,14 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
 
     case NetPacketType::TeamSelectStart: {
         if (payloadLen >= 1) {
+            if (isHost_) {
+                uint8_t senderId = (uint8_t)(uintptr_t)from->data;
+                if (senderId != lobbyHostId_) break;
+                auto pkt = buildPacket(NetPacketType::TeamSelectStart, payload, payloadLen);
+                for (auto& p : players_) {
+                    if (p.peer && p.peer != from) sendReliable(pkt, p.peer);
+                }
+            }
             int tc = payload[0];
             if (onTeamSelectStarted) onTeamSelectStarted(tc);
         }
@@ -1200,15 +1271,34 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
     }
 
     case NetPacketType::AdminKick: {
-        // Client receives kick — host handles disconnection directly
-        if (!isHost_ && payloadLen >= 1) {
-            if (onAdminKicked) onAdminKicked(payload[0]);
+        if (payloadLen >= 1) {
+            uint8_t targetId = payload[0];
+            if (isHost_) {
+                uint8_t senderId = (uint8_t)(uintptr_t)from->data;
+                if (senderId != lobbyHostId_ || targetId == lobbyHostId_) break;
+                if (auto* p = findPlayer(targetId)) {
+                    if (p->peer) {
+                        enet_peer_disconnect(p->peer, 0);
+                    }
+                }
+                auto pkt = buildPacket(NetPacketType::AdminKick, payload, payloadLen);
+                for (auto& p : players_) {
+                    if (p.peer) sendReliable(pkt, p.peer);
+                }
+                if (onAdminKicked) onAdminKicked(targetId);
+            } else {
+                if (onAdminKicked) onAdminKicked(targetId);
+            }
         }
         break;
     }
 
     case NetPacketType::AdminRespawn: {
         if (payloadLen >= 1) {
+            if (isHost_) {
+                uint8_t senderId = (uint8_t)(uintptr_t)from->data;
+                if (senderId != lobbyHostId_) break;
+            }
             uint8_t tid = payload[0];
             if (auto* p = findPlayer(tid)) {
                 p->alive = true;
@@ -1230,6 +1320,10 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
 
     case NetPacketType::AdminTeamMove: {
         if (payloadLen >= 2) {
+            if (isHost_) {
+                uint8_t senderId = (uint8_t)(uintptr_t)from->data;
+                if (senderId != lobbyHostId_) break;
+            }
             uint8_t tid = payload[0];
             int8_t newTeam = (int8_t)payload[1];
             if (auto* p = findPlayer(tid)) p->team = newTeam;
@@ -1433,6 +1527,32 @@ void NetworkManager::startGame(uint32_t mapSeed, int mapW, int mapH, const std::
     auto pkt = buildPacket(NetPacketType::GameStart, payload.data(), payload.size());
     sendReliable(pkt);
     if (onGameStarted) onGameStarted(mapSeed, mapW, mapH, customMapData);
+#endif
+}
+
+void NetworkManager::requestStartGame() {
+#if HAS_ENET
+    if (isHost_) {
+        if (onLobbyStartRequested) onLobbyStartRequested();
+        return;
+    }
+    uint8_t payload = 1;
+    auto pkt = buildPacket(NetPacketType::LobbyStartRequest, &payload, 1);
+    sendReliable(pkt);
+#endif
+}
+
+void NetworkManager::sendLobbyHostTransfer(uint8_t targetId) {
+#if HAS_ENET
+    if (isHost_) {
+        if (findPlayer(targetId)) {
+            assignLobbyHost(targetId, true);
+        }
+        return;
+    }
+    uint8_t payload[1] = { targetId };
+    auto pkt = buildPacket(NetPacketType::LobbyHostTransfer, payload, 1);
+    sendReliable(pkt);
 #endif
 }
 
@@ -1765,9 +1885,10 @@ void NetworkManager::sendAdminKick(uint8_t targetId) {
     uint8_t payload[1] = { targetId };
     auto pkt = buildPacket(NetPacketType::AdminKick, payload, 1);
     sendReliable(pkt);
-    // Disconnect the peer on host
-    if (auto* p = findPlayer(targetId)) {
-        if (p->peer) p->peer->data = nullptr; // flag for disconnect
+    if (isHost_) {
+        if (auto* p = findPlayer(targetId)) {
+            if (p->peer) enet_peer_disconnect(p->peer, 0);
+        }
         if (onAdminKicked) onAdminKicked(targetId);
     }
 #endif
@@ -1778,7 +1899,7 @@ void NetworkManager::sendAdminRespawn(uint8_t targetId) {
     uint8_t payload[1] = { targetId };
     auto pkt = buildPacket(NetPacketType::AdminRespawn, payload, 1);
     sendReliable(pkt);
-    if (onAdminRespawned) onAdminRespawned(targetId);
+    if (isHost_ && onAdminRespawned) onAdminRespawned(targetId);
 #endif
 }
 
@@ -1787,8 +1908,10 @@ void NetworkManager::sendAdminTeamMove(uint8_t targetId, int8_t newTeam) {
     uint8_t payload[2] = { targetId, (uint8_t)newTeam };
     auto pkt = buildPacket(NetPacketType::AdminTeamMove, payload, 2);
     sendReliable(pkt);
-    if (auto* p = findPlayer(targetId)) p->team = newTeam;
-    if (onAdminTeamMoved) onAdminTeamMoved(targetId, newTeam);
+    if (isHost_) {
+        if (auto* p = findPlayer(targetId)) p->team = newTeam;
+        if (onAdminTeamMoved) onAdminTeamMoved(targetId, newTeam);
+    }
 #endif
 }
 
@@ -1809,8 +1932,10 @@ void NetworkManager::sendGameEnd(uint8_t reason) {
 #if HAS_ENET
     auto pkt = buildPacket(NetPacketType::GameEnd, &reason, 1);
     sendReliable(pkt);
-    state_ = NetState::InLobby;
-    if (onGameEnded) onGameEnded(reason);
+    if (isHost_) {
+        state_ = NetState::InLobby;
+        if (onGameEnded) onGameEnded(reason);
+    }
 #endif
 }
 
@@ -1902,12 +2027,36 @@ uint32_t NetworkManager::getPlayerPing(uint8_t playerId) const {
         }
     }
     // If we're a client and asking about the host, use our own peer RTT
-    if (!isHost_ && playerId == 0 && enetHost_ && enetHost_->peerCount > 0
+    if (!isHost_ && playerId == lobbyHostId_ && enetHost_ && enetHost_->peerCount > 0
         && enetHost_->peers[0].state == ENET_PEER_STATE_CONNECTED) {
         return enetHost_->peers[0].roundTripTime;
     }
 #endif
     return 0;
+}
+
+void NetworkManager::updateLobbyHostName() {
+    auto* hp = findPlayer(lobbyHostId_);
+    lobby_.hostName = hp ? hp->username : std::string();
+}
+
+void NetworkManager::broadcastLobbyHostChanged() {
+#if HAS_ENET
+    uint8_t payload[1] = { lobbyHostId_ };
+    auto pkt = buildPacket(NetPacketType::LobbyHostChanged, payload, 1);
+    for (auto& p : players_) {
+        if (p.peer) sendReliable(pkt, p.peer);
+    }
+#endif
+}
+
+void NetworkManager::assignLobbyHost(uint8_t newHostId, bool broadcast) {
+    lobbyHostId_ = newHostId;
+    updateLobbyHostName();
+    if (broadcast) {
+        broadcastLobbyHostChanged();
+    }
+    if (onLobbyHostChanged) onLobbyHostChanged(lobbyHostId_);
 }
 
 // ── Serialization helpers ──

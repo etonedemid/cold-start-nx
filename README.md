@@ -1,7 +1,7 @@
 
 <img width="848" height="204" alt="banner" src="https://github.com/user-attachments/assets/2a0af91e-a15e-462f-aa99-d2869a311675" />
 
-# COLD START  `v0.9.8`
+# COLD START  `v0.9.9`
 
 COLD START is a top-down action shooter built in C++ with SDL2 for PC and Nintendo Switch homebrew. It combines fast combat, local content editing, multiplayer support, and a lightweight modding pipeline aimed at rapid iteration.
 
@@ -294,6 +294,11 @@ When the host enables mods, lightweight mod data can be serialized and sent to j
 - First launch may create missing runtime content directories automatically
 
 ## Changelog
+
+### v0.9.9 (2026-03-08)
+- **Dedicated server host model rework** — dedicated server is no longer counted as a player slot
+- **Lobby host ownership on dedicated** — first client to join becomes lobby host; if lobby host disconnects, a new host is assigned from connected players
+- **Lobby host transfer** — lobby host can transfer host permissions to another player directly in lobby; admin and start-game actions now follow lobby-host permissions
 
 ### v0.9.8 (2026-03-08)
 - **Dedicated server mode** — added `--dedicated` headless runtime with CLI flags (`--port`, `--max-players`, `--password`, `--name`) for cloud hosting

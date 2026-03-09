@@ -90,6 +90,9 @@ enum class NetPacketType : uint8_t {
     HitRequest      = 0x59,  // client→host: "bullet X hit me for Y damage" (PvP validation)
     PlayerHpSync    = 0x5A,  // host→all: authoritative HP update for a player
     SubPlayerState  = 0x5B,  // local splitscreen sub-player positions (unreliable, frequent)
+    LobbyHostTransfer = 0x5C, // lobby-host transfer request (host player -> server)
+    LobbyHostChanged  = 0x5D, // server -> all: current lobby host id
+    LobbyStartRequest = 0x5E, // lobby host -> server: request game start
 };
 
 // ── Network channels ──
@@ -119,7 +122,7 @@ struct SubPlayerInfo {
 
 // ── Player info on network ──
 struct NetPlayer {
-    uint8_t     id = 0;            // 0 = host, 1-254 = clients
+    uint8_t     id = 0;
     std::string username = "Player";
     Vec2        pos;
     float       rotation = 0;
@@ -217,6 +220,10 @@ public:
     // State queries
     NetState state() const { return state_; }
     bool isHost() const { return isHost_; }
+    bool isLobbyHost() const { return state_ != NetState::Offline && localId_ == lobbyHostId_; }
+    uint8_t lobbyHostId() const { return lobbyHostId_; }
+    void setDedicatedServer(bool dedicated) { dedicatedServer_ = dedicated; }
+    bool isDedicatedServer() const { return dedicatedServer_; }
     bool isOnline() const { return state_ != NetState::Offline; }
     bool isInGame() const { return state_ == NetState::InGame; }
     uint8_t localPlayerId() const { return localId_; }
@@ -241,6 +248,8 @@ public:
     void setGamemode(const std::string& gamemodeId);
     void setMap(const std::string& mapFile, const std::string& mapName);
     void startGame(uint32_t mapSeed, int mapW, int mapH, const std::vector<uint8_t>& customMapData = {});
+    void requestStartGame();
+    void sendLobbyHostTransfer(uint8_t targetId);
 
     // Chat
     void sendChat(const std::string& message);
@@ -315,6 +324,8 @@ public:
     std::function<void(int waveNum)> onWaveStarted;
     std::function<void(const std::string& sender, const std::string& text)> onChatMessage;
     std::function<void(uint32_t mapSeed, int mapW, int mapH, const std::vector<uint8_t>& customMapData)> onGameStarted;
+    std::function<void()> onLobbyStartRequested;
+    std::function<void(uint8_t newHostId)> onLobbyHostChanged;
     // (onGameEnded declared above — intentional duplicate removed)
     std::function<void(const std::vector<uint8_t>& modData)> onModSyncReceived;
     std::function<void(const std::string& filename)> onFileSyncComplete;
@@ -330,6 +341,8 @@ private:
     std::string username_ = "Player";
     uint8_t     localId_ = 0;
     uint8_t     nextPlayerId_ = 1;
+    uint8_t     lobbyHostId_ = 0;
+    bool        dedicatedServer_ = false;
     uint32_t    tick_ = 0;
     std::string hostPassword_;          // password required to join (host side, empty=open)
     std::string pendingJoinPassword_;   // password to send in Connect packet (client side)
@@ -352,4 +365,7 @@ private:
     std::vector<uint8_t> serializePlayerState(const NetPlayer& p);
     void deserializePlayerState(const uint8_t* data, size_t len, NetPlayer& out);
     std::vector<uint8_t> buildPacket(NetPacketType type, const void* payload, size_t len);
+    void updateLobbyHostName();
+    void assignLobbyHost(uint8_t newHostId, bool broadcast);
+    void broadcastLobbyHostChanged();
 };
