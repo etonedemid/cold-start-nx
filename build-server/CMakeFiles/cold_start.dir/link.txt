@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/cold_start.dir/link.d CMakeFiles/cold_start.dir/source/server_main.cpp.o CMakeFiles/cold_start.dir/source/network.cpp.o CMakeFiles/cold_start.dir/source/gamemode.cpp.o CMakeFiles/cold_start.dir/source/mapformat.cpp.o CMakeFiles/cold_start.dir/source/mappack.cpp.o -o cold_start  -lenet -lminiupnpc
