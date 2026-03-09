@@ -38,7 +38,13 @@ int main(int argc, char* argv[]) {
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
-            port = (uint16_t)std::max(1, std::min(65535, atoi(argv[++i])));
+            char* end = nullptr;
+            long v = strtol(argv[++i], &end, 10);
+            if (end == argv[i] || v < 1 || v > 65535) {
+                fprintf(stderr, "Invalid port: %s (must be 1-65535)\n", argv[i]);
+                return 1;
+            }
+            port = (uint16_t)v;
         } else if (strcmp(argv[i], "--max-players") == 0 && i + 1 < argc) {
             maxPlayers = std::max(2, std::min(128, atoi(argv[++i])));
         } else if (strcmp(argv[i], "--password") == 0 && i + 1 < argc) {
