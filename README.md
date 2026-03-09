@@ -307,8 +307,9 @@ When the host enables mods, lightweight mod data can be serialized and sent to j
 - **Network protocol hardening** — join packet and lobby-sync parsers use explicit bounds-checked string readers; all string fields are null-terminated within their payload bounds, preventing OOB reads on malformed packets
 - **UPnP thread safety** — added mutex around shared UPnP URL/data state accessed from the async discovery thread
 - **Mod file sync read check** — short `fread` results during mod payload assembly are logged and skipped instead of silently including corrupt data
-- **Android build fix** — excluded `server_main.cpp` from the Android JNI `file(GLOB)` sweep, eliminating the duplicate `main()` linker error
-- **Windows CI DLL bundling fix** — replaced flat `objdump` import scan with a recursive `ldd`-based collector that walks the full transitive dependency tree, bundling previously missing libs such as `libbz2-1.dll`
+- **Android build fix** — excluded `server_main.cpp` from the Android JNI `file(GLOB)` sweep, eliminating the duplicate `main()` linker error; disabled SDL2_mixer vendored codecs that require absent external source trees (ogg/flac/opus/mpg123), using header-only minimp3 instead
+- **Windows CI DLL bundling fix** — replaced broken recursive `ldd` function with an iterative `objdump` worklist that correctly walks the full transitive dependency tree, bundling previously missing libs such as `libbz2-1.dll`
+- **Linux bundle: miniupnpc always included** — bundle script now uses `ldconfig -p` fallback to locate and copy `libminiupnpc.so` even when it is absent from `ldd` output due to ldconfig cache state
 
 ### v1.0.1 (2026-03-09)
 - **IP connect UI fix** — address input field now accepts the full range of valid characters including colons for host:port notation; input length limit raised to accommodate real-world server addresses
