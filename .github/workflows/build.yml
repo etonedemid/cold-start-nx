@@ -169,8 +169,7 @@ jobs:
 
       - name: Install SDL2 portlibs
         run: |
-          dkp-pacman -Syu --noconfirm
-          dkp-pacman -S --noconfirm \
+          dkp-pacman -S --noconfirm --needed \
             switch-sdl2 \
             switch-sdl2_image \
             switch-sdl2_ttf \
