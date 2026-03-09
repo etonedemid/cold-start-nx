@@ -1,7 +1,7 @@
 
 <img width="848" height="204" alt="banner" src="https://github.com/user-attachments/assets/2a0af91e-a15e-462f-aa99-d2869a311675" />
 
-# COLD START  `v1.0.2`
+# COLD START  `v1.0.3`
 
 COLD START is a top-down action shooter built in C++ with SDL2 for PC and Nintendo Switch homebrew. It combines fast combat, local content editing, multiplayer support, and a lightweight modding pipeline aimed at rapid iteration.
 
@@ -296,6 +296,11 @@ When the host enables mods, lightweight mod data can be serialized and sent to j
 - First launch may create missing runtime content directories automatically
 
 ## Changelog
+
+### v1.0.3 (2026-03-09)
+- **Version string sync** — in-game version label (`GAME_VERSION`), Switch `APP_VERSION`, and Android `versionName` now all match the release tag
+- **Linux bundle: loader execute permission** — `ld-linux-x86-64.so.2` and the game binary are now explicitly `chmod +x` after copying into `libs/`, fixing "Permission denied" when running `run.sh` on systems where the source linker lacks the execute bit
+- **Android CI disabled** — temporarily skipped while vendored codec dependency issues are resolved
 
 ### v1.0.2 (2026-03-09)
 - **Parry kills sync over network** — parry-killing an enemy now broadcasts `sendEnemyKilled` from the host so all clients see the enemy die immediately instead of waiting for the next state sync
