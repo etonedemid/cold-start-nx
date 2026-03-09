@@ -73,6 +73,13 @@ bool CustomMap::loadFromFile(const std::string& path) {
     creator = std::string(hdr.creator);
     gameMode = hdr.reserved[0];  // 0=Arena, 1=Sandbox
 
+    // Validate dimensions to prevent excessive allocation from crafted files
+    if (width == 0 || height == 0 || width > 4096 || height > 4096) {
+        printf("CSM: invalid dimensions %dx%d\n", width, height);
+        fclose(f);
+        return false;
+    }
+
     int area = width * height;
     tiles.resize(area);
     ceiling.resize(area);
@@ -81,16 +88,20 @@ bool CustomMap::loadFromFile(const std::string& path) {
     if (fread(ceiling.data(), 1, area, f) != (size_t)area) { fclose(f); return false; }
 
     uint16_t trigCount = 0;
-    fread(&trigCount, sizeof(uint16_t), 1, f);
+    if (fread(&trigCount, sizeof(uint16_t), 1, f) != 1) { fclose(f); return false; }
+    if (trigCount > 10000) { printf("CSM: excessive trigger count %d\n", trigCount); fclose(f); return false; }
     triggers.resize(trigCount);
-    if (trigCount > 0)
-        fread(triggers.data(), sizeof(MapTrigger), trigCount, f);
+    if (trigCount > 0) {
+        if (fread(triggers.data(), sizeof(MapTrigger), trigCount, f) != trigCount) { fclose(f); return false; }
+    }
 
     uint16_t spawnCount = 0;
-    fread(&spawnCount, sizeof(uint16_t), 1, f);
+    if (fread(&spawnCount, sizeof(uint16_t), 1, f) != 1) { fclose(f); return false; }
+    if (spawnCount > 10000) { printf("CSM: excessive spawn count %d\n", spawnCount); fclose(f); return false; }
     enemySpawns.resize(spawnCount);
-    if (spawnCount > 0)
-        fread(enemySpawns.data(), sizeof(EnemySpawn), spawnCount, f);
+    if (spawnCount > 0) {
+        if (fread(enemySpawns.data(), sizeof(EnemySpawn), spawnCount, f) != spawnCount) { fclose(f); return false; }
+    }
 
     // Read custom tile texture paths (optional — older maps simply won't have this)
     for (int i = 0; i < 8; i++) customTilePaths[i].clear();

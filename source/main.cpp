@@ -77,6 +77,7 @@ int main(int argc, char* argv[]) {
     }
     if (!game.init()) {
         printf("Failed to initialize game!\n");
+        game.shutdown();
 #ifdef __SWITCH__
         socketExit();
 #endif
