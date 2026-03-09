@@ -128,29 +128,40 @@ jobs:
 
       - name: Bundle MinGW DLLs
         run: |
-          # Recursively copy all non-system MinGW DLLs the exe depends on,
-          # including transitive deps (e.g. libbz2-1.dll pulled in by codecs).
-          SYSTEM="^(KERNEL32|USER32|GDI32|ADVAPI32|SHELL32|WINMM|IMM32|\
-                  OLE32|OLEAUT32|RPCRT4|SETUPAPI|VERSION|USP10|WS2_32|\
-                  DINPUT8|COMDLG32|SHLWAPI|CFGMGR32|NTDLL|MSVCRT|\
-                  API-MS-WIN|D3D|BCRYPT|VCRUNTIME|MSVCP)$"
+          # Iterative worklist using objdump so we handle transitive deps
+          # without shell-function recursion or pipefail issues.
+          SYSTEM="KERNEL32 USER32 GDI32 ADVAPI32 SHELL32 WINMM IMM32 \
+                  OLE32 OLEAUT32 RPCRT4 SETUPAPI VERSION USP10 WS2_32 \
+                  DINPUT8 COMDLG32 SHLWAPI CFGMGR32 NTDLL MSVCRT \
+                  BCRYPT VCRUNTIME MSVCP API-MS-WIN D3D"
 
-          copy_deps() {
-            ldd "$1" 2>/dev/null | grep '/mingw64/bin/' | awk '{print $3}' | while read -r src; do
-              base=$(basename "$src")
-              dst="build-win/$base"
-              if [ ! -f "$dst" ]; then
-                upper=$(echo "$base" | tr '[:lower:]' '[:upper:]' | sed 's/\.DLL$//')
-                if ! echo "$upper" | grep -qE "$SYSTEM"; then
-                  cp "$src" "$dst"
-                  echo "  Bundled $base"
-                  copy_deps "$dst"
-                fi
-              fi
+          is_system() {
+            upper=$(echo "$1" | tr '[:lower:]' '[:upper:]' | sed 's/\.DLL$//')
+            for s in $SYSTEM; do
+              case "$upper" in ${s}*) return 0 ;; esac
             done
+            return 1
           }
 
-          copy_deps build-win/cold_start.exe
+          # Seed worklist with the exe
+          worklist="build-win/cold_start.exe"
+          while [ -n "$worklist" ]; do
+            next_worklist=""
+            for item in $worklist; do
+              for dll in $(objdump -p "$item" 2>/dev/null | awk '/DLL Name:/{print $3}'); do
+                if ! is_system "$dll"; then
+                  src="/mingw64/bin/$dll"
+                  dst="build-win/$dll"
+                  if [ -f "$src" ] && [ ! -f "$dst" ]; then
+                    cp "$src" "$dst"
+                    echo "  Bundled $dll"
+                    next_worklist="$next_worklist $dst"
+                  fi
+                fi
+              done
+            done
+            worklist="$next_worklist"
+          done
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
