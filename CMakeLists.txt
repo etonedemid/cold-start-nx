@@ -2,6 +2,7 @@
 #
 # Targets:
 #   Linux:   cmake -B build-pc && cmake --build build-pc -j$(nproc)
+#   Server:  cmake -B build-server -DSERVER_ONLY=ON && cmake --build build-server -j$(nproc)
 #   Windows: cmake -B build-win -DCMAKE_TOOLCHAIN_FILE=toolchain-windows.cmake
 #            cmake --build build-win -j$(nproc)
 #   MSYS2:   cmake -B build-win -G Ninja && cmake --build build-win
@@ -17,10 +18,29 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# ── Options ──────────────────────────────────────────────────────────────────
+
+option(SERVER_ONLY "Build headless dedicated server without SDL (Linux only)" OFF)
+
 # ── Source files ─────────────────────────────────────────────────────────────
 
-file(GLOB SOURCES source/*.cpp)
-file(GLOB HEADERS source/*.h)
+if(SERVER_ONLY)
+    # Headless dedicated server — only the networking + minimal game logic
+    set(SOURCES
+        source/server_main.cpp
+        source/network.cpp
+        source/gamemode.cpp
+        source/mapformat.cpp
+        source/mappack.cpp
+    )
+    file(GLOB HEADERS source/network.h source/gamemode.h source/mapformat.h
+                      source/mappack.h source/vec2.h source/constants.h)
+else()
+    file(GLOB SOURCES source/*.cpp)
+    # Exclude the server-only entry point from regular builds
+    list(FILTER SOURCES EXCLUDE REGEX "server_main\\.cpp$")
+    file(GLOB HEADERS source/*.h)
+endif()
 
 add_executable(cold_start ${SOURCES} ${HEADERS})
 target_include_directories(cold_start PRIVATE source)
@@ -80,18 +100,24 @@ if(WIN32)
 
 else()
     find_package(PkgConfig REQUIRED)
-    pkg_check_modules(SDL2       REQUIRED sdl2)
-    pkg_check_modules(SDL2_IMAGE REQUIRED SDL2_image)
-    pkg_check_modules(SDL2_TTF   REQUIRED SDL2_ttf)
-    pkg_check_modules(SDL2_MIXER REQUIRED SDL2_mixer)
 
-    target_include_directories(cold_start PRIVATE
-        ${SDL2_INCLUDE_DIRS} ${SDL2_IMAGE_INCLUDE_DIRS}
-        ${SDL2_TTF_INCLUDE_DIRS} ${SDL2_MIXER_INCLUDE_DIRS})
+    if(NOT SERVER_ONLY)
+        pkg_check_modules(SDL2       REQUIRED sdl2)
+        pkg_check_modules(SDL2_IMAGE REQUIRED SDL2_image)
+        pkg_check_modules(SDL2_TTF   REQUIRED SDL2_ttf)
+        pkg_check_modules(SDL2_MIXER REQUIRED SDL2_mixer)
 
-    target_link_libraries(cold_start
-        ${SDL2_LIBRARIES} ${SDL2_IMAGE_LIBRARIES}
-        ${SDL2_TTF_LIBRARIES} ${SDL2_MIXER_LIBRARIES})
+        target_include_directories(cold_start PRIVATE
+            ${SDL2_INCLUDE_DIRS} ${SDL2_IMAGE_INCLUDE_DIRS}
+            ${SDL2_TTF_INCLUDE_DIRS} ${SDL2_MIXER_INCLUDE_DIRS})
+
+        target_link_libraries(cold_start
+            ${SDL2_LIBRARIES} ${SDL2_IMAGE_LIBRARIES}
+            ${SDL2_TTF_LIBRARIES} ${SDL2_MIXER_LIBRARIES})
+    else()
+        target_compile_definitions(cold_start PRIVATE DEDICATED_SERVER=1)
+        message(STATUS "SERVER_ONLY build — SDL omitted")
+    endif()
 
     # ENet: try system package, fall back to bundled sources
     pkg_check_modules(ENET libenet)
@@ -125,13 +151,15 @@ endif()
 
 # ── Post-build: mirror romfs into build directory ────────────────────────────
 
-add_custom_command(TARGET cold_start POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_SOURCE_DIR}/romfs $<TARGET_FILE_DIR:cold_start>/romfs)
+if(NOT SERVER_ONLY)
+    add_custom_command(TARGET cold_start POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_SOURCE_DIR}/romfs $<TARGET_FILE_DIR:cold_start>/romfs)
+endif()
 
 # ── dist target: self-contained Linux bundle ─────────────────────────────────
 
-if(UNIX AND NOT APPLE)
+if(UNIX AND NOT APPLE AND NOT SERVER_ONLY)
     configure_file(
         ${CMAKE_SOURCE_DIR}/bundle.sh.in
         ${CMAKE_BINARY_DIR}/bundle.sh @ONLY)
