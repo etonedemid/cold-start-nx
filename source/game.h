@@ -170,6 +170,9 @@ struct ModSaveDialogState {
 
 class Game {
 public:
+    void configureDedicatedServer(uint16_t port, int maxPlayers,
+                                 const std::string& password,
+                                 const std::string& serverName);
     bool init();
     void run();
     void shutdown();
@@ -209,6 +212,12 @@ private:
     bool hostPasswordTyping_ = false;    // editing lobby password in HostSetup
     int  hostPasswordCharIdx_ = 0;       // char picker index for host password
     int  lobbySubPlayersSent_ = -1;      // last sent local sub-player count (for lobby sync)
+    bool dedicatedMode_ = false;
+    bool dedicatedBootstrapped_ = false;
+    uint16_t dedicatedPort_ = 7777;
+    int dedicatedMaxPlayers_ = 16;
+    std::string dedicatedPassword_;
+    std::string dedicatedServerName_ = "DedicatedServer";
 
     // ── World ──
     Player              player_;
