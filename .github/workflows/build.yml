@@ -128,25 +128,29 @@ jobs:
 
       - name: Bundle MinGW DLLs
         run: |
-          # Copy non-system DLLs that the exe depends on
-          SYSTEM="KERNEL32 USER32 GDI32 ADVAPI32 SHELL32 WINMM IMM32 \
-                  OLE32 OLEAUT32 RPCRT4 SETUPAPI VERSION USP10 WS2_32 \
-                  DINPUT8 COMDLG32 SHLWAPI CFGMGR32 NTDLL MSVCRT \
-                  API-MS-WIN D3D BCRYPT"
-          for dll in $(objdump -p build-win/cold_start.exe | awk '/DLL Name:/{print $3}'); do
-            upper=$(echo "$dll" | tr '[:lower:]' '[:upper:]')
-            needed=true
-            for sys in $SYSTEM; do
-              if echo "$upper" | grep -q "^$sys"; then needed=false; break; fi
-            done
-            if $needed; then
-              src="/mingw64/bin/$dll"
-              if [ -f "$src" ]; then
-                cp "$src" build-win/
-                echo "  Bundled $dll"
+          # Recursively copy all non-system MinGW DLLs the exe depends on,
+          # including transitive deps (e.g. libbz2-1.dll pulled in by codecs).
+          SYSTEM="^(KERNEL32|USER32|GDI32|ADVAPI32|SHELL32|WINMM|IMM32|\
+                  OLE32|OLEAUT32|RPCRT4|SETUPAPI|VERSION|USP10|WS2_32|\
+                  DINPUT8|COMDLG32|SHLWAPI|CFGMGR32|NTDLL|MSVCRT|\
+                  API-MS-WIN|D3D|BCRYPT|VCRUNTIME|MSVCP)$"
+
+          copy_deps() {
+            ldd "$1" 2>/dev/null | grep '/mingw64/bin/' | awk '{print $3}' | while read -r src; do
+              base=$(basename "$src")
+              dst="build-win/$base"
+              if [ ! -f "$dst" ]; then
+                upper=$(echo "$base" | tr '[:lower:]' '[:upper:]' | sed 's/\.DLL$//')
+                if ! echo "$upper" | grep -qE "$SYSTEM"; then
+                  cp "$src" "$dst"
+                  echo "  Bundled $base"
+                  copy_deps "$dst"
+                fi
               fi
-            fi
-          done
+            done
+          }
+
+          copy_deps build-win/cold_start.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -231,6 +235,7 @@ jobs:
       (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
       && needs.linux.result == 'success'
       && needs.linux-server.result == 'success'
+      && needs.windows.result == 'success'
       && needs.switch.result == 'success'
     steps:
       - uses: actions/checkout@v4
@@ -273,11 +278,9 @@ jobs:
           fi
 
           # Windows
-          if [ -d "artifacts/cold_start-windows" ]; then
-            cd artifacts/cold_start-windows
-            zip -r "../../cold_start-windows-${VER}.zip" .
-            cd ../..
-          fi
+          cd artifacts/cold_start-windows
+          zip -r "../../cold_start-windows-${VER}.zip" .
+          cd ../..
 
           # Switch
           cp artifacts/cold_start-switch/cold_start.nro "cold-start-nx.nro"
@@ -287,14 +290,29 @@ jobs:
             cp artifacts/cold_start-android/*.apk "cold_start-android-${VER}.apk" 2>/dev/null || true
           fi
 
+      - name: Extract changelog for this release
+        id: changelog
+        run: |
+          VER="${{ steps.version.outputs.tag }}"
+          # Strip leading 'v' to match README heading (e.g. v1.0.2 → 1.0.2)
+          VER_NUM="${VER#v}"
+          # Extract the section between this version heading and the next one
+          body=$(awk "/^### v${VER_NUM}[[:space:]]/{found=1; next}
+                      found && /^### v/{exit}
+                      found{print}" README.md)
+          if [ -z "$body" ]; then
+            body="See [README.md](README.md#changelog) for the full changelog."
+          fi
+          # Write to a file to avoid shell quoting issues
+          printf '%s\n' "$body" > release_notes.md
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           make_latest: true
           name: COLD START ${{ steps.version.outputs.tag }}
-          body: |
-            See [README.md](README.md#changelog) for the full changelog.
+          body_path: release_notes.md
           fail_on_unmatched_files: false
           files: |
             cold_start-linux-${{ steps.version.outputs.tag }}.zip
