@@ -55,8 +55,12 @@ static void upnpMapPort(uint16_t port) {
         return;
     }
     char lanaddr[64] = {};
+#if defined(MINIUPNPC_API_VERSION) && MINIUPNPC_API_VERSION >= 17
+    int r = UPNP_GetValidIGD(devlist, &s_upnp.urls, &s_upnp.data, lanaddr, sizeof(lanaddr));
+#else
     char wanaddr[64] = {};
     int r = UPNP_GetValidIGD(devlist, &s_upnp.urls, &s_upnp.data, lanaddr, sizeof(lanaddr), wanaddr, sizeof(wanaddr));
+#endif
     freeUPNPDevlist(devlist);
     // r==1: valid connected IGD
     // r==2: IGD found but reports not connected — many routers still accept mappings
