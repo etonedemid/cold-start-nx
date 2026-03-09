@@ -1,0 +1,18 @@
+[Unit]
+Description=COLD START Dedicated Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=coldstart
+Group=coldstart
+WorkingDirectory=/opt/cold_start
+ExecStart=/opt/cold_start/cold_start --dedicated --port 7777 --max-players 16 --name do-cold-start
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
