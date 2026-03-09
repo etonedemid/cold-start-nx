@@ -11,6 +11,8 @@
 #include <csignal>
 #include <string>
 
+#if !defined(__SWITCH__)
+
 #ifdef _WIN32
 #include <windows.h>
 static void serverSleep(int ms) { Sleep(ms); }
@@ -103,3 +105,5 @@ int main(int argc, char* argv[]) {
     net.shutdown();
     return 0;
 }
+
+#endif

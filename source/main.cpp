@@ -48,9 +48,15 @@ int main(int argc, char* argv[]) {
 
     if (dedicated) {
 #if !defined(__SWITCH__)
+    #if defined(_WIN32)
+        _putenv_s("SDL_VIDEODRIVER", "dummy");
+        _putenv_s("SDL_AUDIODRIVER", "dummy");
+        _putenv_s("SDL_RENDER_DRIVER", "software");
+    #else
         setenv("SDL_VIDEODRIVER", "dummy", 1);
         setenv("SDL_AUDIODRIVER", "dummy", 1);
         setenv("SDL_RENDER_DRIVER", "software", 1);
+    #endif
 #endif
     }
 
