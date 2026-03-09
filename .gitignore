@@ -2,6 +2,7 @@
 build/
 build-pc/
 build-win/
+build-server/
 dist/
 
 # ─── Release archives ───────────────────────────────────────────────────────
