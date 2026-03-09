@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <fstream>
 #include <thread>
+#include <mutex>
 
 // Networking: ENet for multiplayer
 // On Switch: use bundled ENet + libnx BSD sockets (source/enet/)
@@ -42,6 +43,7 @@ struct UpnpState {
     IGDdatas  data;
     uint16_t  port  = 0;
     bool      mapped = false;
+    std::mutex mtx;
 };
 static UpnpState s_upnp;
 
@@ -55,11 +57,13 @@ static void upnpMapPort(uint16_t port) {
         return;
     }
     char lanaddr[64] = {};
+    UPNPUrls tmpUrls;
+    IGDdatas tmpData;
 #if defined(MINIUPNPC_API_VERSION) && MINIUPNPC_API_VERSION >= 18
     char wanaddr[64] = {};
-    int r = UPNP_GetValidIGD(devlist, &s_upnp.urls, &s_upnp.data, lanaddr, sizeof(lanaddr), wanaddr, sizeof(wanaddr));
+    int r = UPNP_GetValidIGD(devlist, &tmpUrls, &tmpData, lanaddr, sizeof(lanaddr), wanaddr, sizeof(wanaddr));
 #else
-    int r = UPNP_GetValidIGD(devlist, &s_upnp.urls, &s_upnp.data, lanaddr, sizeof(lanaddr));
+    int r = UPNP_GetValidIGD(devlist, &tmpUrls, &tmpData, lanaddr, sizeof(lanaddr));
 #endif
     freeUPNPDevlist(devlist);
     // r==1: valid connected IGD
@@ -74,19 +78,23 @@ static void upnpMapPort(uint16_t port) {
         printf("UPnP: IGD found but reports not connected — attempting mapping anyway\n");
     }
     int res = UPNP_AddPortMapping(
-        s_upnp.urls.controlURL, s_upnp.data.first.servicetype,
+        tmpUrls.controlURL, tmpData.first.servicetype,
         portStr, portStr, lanaddr, "COLD START", "UDP", nullptr, "86400");
     if (res == UPNPCOMMAND_SUCCESS) {
+        std::lock_guard<std::mutex> lock(s_upnp.mtx);
+        s_upnp.urls   = tmpUrls;
+        s_upnp.data   = tmpData;
         s_upnp.mapped = true;
         s_upnp.port   = port;
         printf("UPnP: mapped UDP port %s\n", portStr);
     } else {
-        FreeUPNPUrls(&s_upnp.urls);
+        FreeUPNPUrls(&tmpUrls);
         printf("UPnP: mapping failed (err=%d: %s)\n", res, strupnperror(res));
     }
 }
 
 static void upnpUnmap() {
+    std::lock_guard<std::mutex> lock(s_upnp.mtx);
     if (!s_upnp.mapped) return;
     char portStr[8];
     snprintf(portStr, sizeof(portStr), "%u", s_upnp.port);
@@ -454,7 +462,11 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             uint8_t peerId = (uint8_t)(uintptr_t)from->data;
 
             // Version check — reject if mismatched
-            std::string version(buf);
+            // Guard against unterminated payload: ensure null within bounds
+            const char* payloadEnd = buf + payloadLen;
+            const char* verEnd = (const char*)memchr(buf, '\0', payloadLen);
+            if (!verEnd) { enet_peer_disconnect(from, 0); break; } // malformed
+            std::string version(buf, verEnd);
             size_t versionEnd = version.size() + 1;
             if (version != GAME_VERSION) {
                 printf("Network: Player %d rejected (version mismatch: client='%s' host='%s')\n",
@@ -467,11 +479,20 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             }
 
             std::string name;
-            if (versionEnd < payloadLen) name = std::string(buf + versionEnd);
+            if (versionEnd < payloadLen) {
+                const char* nameStart = buf + versionEnd;
+                const char* nameNul = (const char*)memchr(nameStart, '\0', payloadLen - versionEnd);
+                if (nameNul) name = std::string(nameStart, nameNul);
+                else         name = std::string(nameStart, payloadEnd);
+            }
             size_t nameEnd = versionEnd + name.size() + 1;
             std::string pw;
-            if (nameEnd < payloadLen)
-                pw = std::string(buf + nameEnd);
+            if (nameEnd < payloadLen) {
+                const char* pwStart = buf + nameEnd;
+                const char* pwNul = (const char*)memchr(pwStart, '\0', payloadLen - nameEnd);
+                if (pwNul) pw = std::string(pwStart, pwNul);
+                else       pw = std::string(pwStart, payloadEnd);
+            }
 
             // Password check — reject if wrong
             if (!hostPassword_.empty() && pw != hostPassword_) {
@@ -505,9 +526,22 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
     case NetPacketType::LobbyInfo: {
         if (!isHost_ && payloadLen > 5) {
             // Deserialize lobby info from host
+            // Helper lambda: safe read of length-prefixed string
+            auto readStr = [&](size_t& off, std::string& out) -> bool {
+                if (off >= payloadLen) return false;
+                uint8_t slen = payload[off++];
+                if (off + slen > payloadLen) { out.clear(); off = payloadLen; return false; }
+                out = std::string((char*)payload + off, slen);
+                off += slen;
+                return true;
+            };
+            auto readU8 = [&](size_t& off) -> uint8_t {
+                return (off < payloadLen) ? payload[off++] : (uint8_t)0;
+            };
+
             size_t off = 0;
-            localId_ = payload[off++];
-            lobbyHostId_ = (off < payloadLen) ? payload[off++] : 0;
+            localId_ = readU8(off);
+            lobbyHostId_ = readU8(off);
             printf("Network: Assigned player ID %d\n", localId_);
 
             // Add ourselves to the player list
@@ -517,21 +551,15 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             local.username = username_;
             local.peer = nullptr;
             players_.push_back(local);
-            uint8_t hostNameLen = payload[off++];
-            lobby_.hostName = std::string((char*)payload + off, hostNameLen); off += hostNameLen;
-
-            uint8_t mapNameLen = payload[off++];
-            lobby_.mapName = std::string((char*)payload + off, mapNameLen); off += mapNameLen;
-            uint8_t mapFileLen = payload[off++];
-            lobby_.mapFile = std::string((char*)payload + off, mapFileLen); off += mapFileLen;
-            uint8_t gmNameLen = payload[off++];
-            lobby_.gamemodeName = std::string((char*)payload + off, gmNameLen); off += gmNameLen;
-            uint8_t gmIdLen = payload[off++];
-            lobby_.gamemodeId = std::string((char*)payload + off, gmIdLen); off += gmIdLen;
-            lobby_.maxPlayers = payload[off++];
-            lobby_.currentPlayers = payload[off++];
-            lobby_.inProgress = payload[off++] != 0;
-            uint8_t hostSubPlayers = (off < payloadLen) ? payload[off++] : 0;
+            readStr(off, lobby_.hostName);
+            readStr(off, lobby_.mapName);
+            readStr(off, lobby_.mapFile);
+            readStr(off, lobby_.gamemodeName);
+            readStr(off, lobby_.gamemodeId);
+            lobby_.maxPlayers = readU8(off);
+            lobby_.currentPlayers = readU8(off);
+            lobby_.inProgress = readU8(off) != 0;
+            uint8_t hostSubPlayers = readU8(off);
 
             if (lobbyHostId_ == localId_) {
                 players_[0].localSubPlayers = hostSubPlayers;
@@ -548,12 +576,13 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
         if (payloadLen >= 2) {
             uint8_t pid = payload[0];
             uint8_t nameLen = payload[1];
-            std::string name = (payloadLen > 2 + nameLen) ?
-                std::string((char*)payload + 2, nameLen) :
-                std::string((char*)payload + 2, payloadLen - 2);
+            // Clamp nameLen to available payload to prevent OOB read
+            size_t availNameLen = (payloadLen > 2) ? (payloadLen - 2) : 0;
+            size_t safeNameLen = (nameLen <= availNameLen) ? nameLen : availNameLen;
+            std::string name((char*)payload + 2, safeNameLen);
             uint8_t localSubPlayers = 0;
-            if (payloadLen > 2 + nameLen) {
-                localSubPlayers = payload[2 + nameLen];
+            if (payloadLen > 2 + safeNameLen) {
+                localSubPlayers = payload[2 + safeNameLen];
             }
             // Don't duplicate
             bool exists = false;

@@ -537,9 +537,14 @@ std::vector<uint8_t> ModManager::serializeEnabledMods() const {
                         FILE* f = fopen(full.c_str(), "rb");
                         if (f) {
                             mf.data.resize(st.st_size);
-                            fread(mf.data.data(), 1, st.st_size, f);
+                            size_t nread = fread(mf.data.data(), 1, st.st_size, f);
                             fclose(f);
-                            files.push_back(std::move(mf));
+                            if (nread == (size_t)st.st_size) {
+                                files.push_back(std::move(mf));
+                            } else {
+                                printf("Mod sync: short read for %s (%zu/%ld)\n",
+                                       full.c_str(), nread, (long)st.st_size);
+                            }
                         }
                     }
                 }
