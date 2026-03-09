@@ -112,6 +112,16 @@ bool sweptCircleOverlap(Vec2 curPos, Vec2 vel, float backtrackSec, Vec2 center, 
 //  Init / Shutdown
 // ═════════════════════════════════════════════════════════════════════════════
 
+void Game::configureDedicatedServer(uint16_t port, int maxPlayers,
+                                    const std::string& password,
+                                    const std::string& serverName) {
+    dedicatedMode_ = true;
+    dedicatedPort_ = port;
+    dedicatedMaxPlayers_ = std::max(2, std::min(128, maxPlayers));
+    dedicatedPassword_ = password;
+    dedicatedServerName_ = serverName.empty() ? "DedicatedServer" : serverName;
+}
+
 bool Game::init() {
     srand((unsigned)time(nullptr));
 
@@ -612,6 +622,20 @@ void Game::run() {
     Uint64 freq = SDL_GetPerformanceFrequency();
 
     while (running_) {
+        if (dedicatedMode_ && !dedicatedBootstrapped_) {
+            dedicatedBootstrapped_ = true;
+            hostPort_ = dedicatedPort_;
+            hostMaxPlayers_ = dedicatedMaxPlayers_;
+            lobbyPassword_ = dedicatedPassword_;
+            config_.username = dedicatedServerName_;
+            NetworkManager::instance().setUsername(config_.username);
+            currentRules_ = createCoopArenaRules(hostMaxPlayers_);
+            NetworkManager::instance().setGamemode("coop_arena");
+            printf("Dedicated server: starting on UDP %d (maxPlayers=%d)\n",
+                   hostPort_, hostMaxPlayers_);
+            hostGame();
+        }
+
         Uint64 now = SDL_GetPerformanceCounter();
         dt_ = (float)(now - lastTime) / (float)freq;
         lastTime = now;
@@ -767,7 +791,11 @@ void Game::run() {
             }
         }
 
-        render();
+        if (!dedicatedMode_) {
+            render();
+        } else {
+            SDL_Delay(5);
+        }
     }
 }
 
@@ -1881,6 +1909,10 @@ void Game::handleInput() {
     }
     else if (state_ == GameState::Lobby) {
         auto& net = NetworkManager::instance();
+
+        if (dedicatedMode_ && net.isHost() && net.playerCount() > 1) {
+            startMultiplayerGame();
+        }
 
 #ifndef __SWITCH__
         // On PC, auto-join keyboard+mouse as P1
