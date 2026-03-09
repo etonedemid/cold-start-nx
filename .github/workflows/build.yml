@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version (e.g. v0.9.8)"
+        description: "Release version (e.g. v0.9.9)"
         required: true
         type: string
 
