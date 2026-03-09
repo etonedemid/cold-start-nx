@@ -297,6 +297,9 @@ When the host enables mods, lightweight mod data can be serialized and sent to j
 
 ## Changelog
 
+### v1.0.4 (2026-03-10)
+- **Linux bundle: stop bundling glibc** — `ld-linux-x86-64.so.2`, `libc.so.6`, and `libm.so.6` are no longer copied into `libs/`; `run.sh` now uses `LD_LIBRARY_PATH` instead of invoking the bundled loader directly. Bundling a CI-built glibc (Ubuntu 24.04 / glibc 2.39) alongside a newer system glibc (Arch, glibc 2.40+) caused an immediate SIGSEGV on launch due to incompatible `GLIBC_PRIVATE` symbols between the two versions
+
 ### v1.0.3 (2026-03-09)
 - **Version string sync** — in-game version label (`GAME_VERSION`), Switch `APP_VERSION`, and Android `versionName` now all match the release tag
 - **Linux bundle: loader execute permission** — `ld-linux-x86-64.so.2` and the game binary are now explicitly `chmod +x` after copying into `libs/`, fixing "Permission denied" when running `run.sh` on systems where the source linker lacks the execute bit
