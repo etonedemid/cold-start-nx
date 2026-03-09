@@ -1910,10 +1910,6 @@ void Game::handleInput() {
     else if (state_ == GameState::Lobby) {
         auto& net = NetworkManager::instance();
 
-        if (dedicatedMode_ && net.isHost() && net.playerCount() > 1) {
-            startMultiplayerGame();
-        }
-
 #ifndef __SWITCH__
         // On PC, auto-join keyboard+mouse as P1
         if (!coopSlots_[0].joined) {
@@ -1928,6 +1924,8 @@ void Game::handleInput() {
             net.setLocalSubPlayers((uint8_t)localSubPlayers);
             lobbySubPlayersSent_ = localSubPlayers;
         }
+
+        bool canManageLobby = net.isLobbyHost();
 
         // Check if the connection was lost or timed out
         if (!net.isHost()) {
@@ -1949,7 +1947,7 @@ void Game::handleInput() {
         }
 
         // ── Lobby kick mode (host only: TAB/Y toggles, LEFT/RIGHT selects, A kicks) ─────
-        if (net.isHost() && tabInput_) {
+        if (canManageLobby && tabInput_) {
             lobbyKickCursor_ = (lobbyKickCursor_ < 0) ? 0 : -1;
         }
         if (lobbyKickCursor_ >= 0) {
@@ -1968,18 +1966,15 @@ void Game::handleInput() {
             if (confirmInput_ && pCount > 0) {
                 // A button = kick
                 uint8_t tid = net.players()[lobbyKickCursor_].id;
-                if (tid != net.localPlayerId())
+                if (tid != net.lobbyHostId())
                     net.sendAdminKick(tid);
                 lobbyKickCursor_ = -1;
                 confirmInput_ = false;
             }
             if (bombInput_ && pCount > 0) {
-                // X button = ban (add to session ban list) + kick
+                // X button = transfer lobby host permissions
                 uint8_t tid = net.players()[lobbyKickCursor_].id;
-                if (tid != net.localPlayerId()) {
-                    bannedPlayerIds_.insert(tid);
-                    net.sendAdminKick(tid);
-                }
+                if (tid != net.lobbyHostId()) net.sendLobbyHostTransfer(tid);
                 lobbyKickCursor_ = -1;
                 bombInput_ = false;
             }
@@ -1998,7 +1993,7 @@ void Game::handleInput() {
             state_ = GameState::MultiplayerMenu; multiMenuSelection_ = 0; menuSelection_ = 0;
         }
         // Compute setting count here so we can check preset indices before the start-game confirm
-        if (net.isHost()) {
+        if (canManageLobby) {
             int _SC = 13;
             if (lobbySettings_.livesPerPlayer == 0) _SC = 12;
             _SC++; // CrateInterval or WaveCount
@@ -2023,8 +2018,9 @@ void Game::handleInput() {
             }
         }
         if (confirmInput_ && lobbyKickCursor_ < 0) {
-            if (net.isHost()) {
-                startMultiplayerGame();
+            if (canManageLobby) {
+                if (net.isHost()) startMultiplayerGame();
+                else net.requestStartGame();
             } else {
                 // Only allow ready-up once actually connected to lobby
                 if (net.state() == NetState::InLobby) {
@@ -2034,7 +2030,7 @@ void Game::handleInput() {
             }
         }
         // Host can adjust lobby settings with UP/DOWN/LEFT/RIGHT
-        if (net.isHost()) {
+        if (canManageLobby) {
             // Settings row list:
             //   0=Gamemode, 1=FriendlyFire, 2=Upgrades, 3=Map, 4=MapWidth, 5=MapHeight,
             //   6=EnemyHP, 7=EnemySpeed, 8=SpawnRate, 9=PlayerHP,
@@ -2179,7 +2175,7 @@ void Game::handleInput() {
     else if (state_ == GameState::MultiplayerPaused) {
         auto& net2 = NetworkManager::instance();
         bool hasTeams    = currentRules_.teamCount >= 2;
-        bool isHostPlayer = net2.isHost();
+        bool isHostPlayer = net2.isLobbyHost();
 
         // ── Admin overlay ──────────────────────────────────────────────
         if (adminMenuOpen_) {
@@ -8978,6 +8974,7 @@ void Game::applyModOverrides() {
 void Game::initMultiplayer() {
     auto& net = NetworkManager::instance();
     net.init();
+    net.setDedicatedServer(dedicatedMode_);
     net.setUsername(config_.username);
     setupNetworkCallbacks();
     printf("Multiplayer initialized\n");
@@ -9020,6 +9017,20 @@ void Game::setupNetworkCallbacks() {
                 state_ = GameState::Scoreboard;
                 menuSelection_ = 0;
             }
+        }
+    };
+
+    net.onLobbyHostChanged = [this](uint8_t newHostId) {
+        printf("[NET] Lobby host changed to id=%d\n", newHostId);
+        auto& net2 = NetworkManager::instance();
+        if (newHostId == net2.localPlayerId()) {
+            lobbyReady_ = false;
+        }
+    };
+
+    net.onLobbyStartRequested = [this]() {
+        if (state_ == GameState::Lobby) {
+            startMultiplayerGame();
         }
     };
 
@@ -9921,7 +9932,8 @@ void Game::updateMultiplayer(float dt) {
 
 void Game::hostGame() {
     auto& net = NetworkManager::instance();
-    if (net.host(hostPort_, hostMaxPlayers_ - 1)) {
+    int maxClients = dedicatedMode_ ? hostMaxPlayers_ : (hostMaxPlayers_ - 1);
+    if (net.host(hostPort_, maxClients)) {
         net.setHostPassword(lobbyPassword_);
         lobbyPrimaryPadId_ = usingGamepad_ ? lastGamepadInputId_ : -1;
         state_ = GameState::Lobby;
@@ -10913,7 +10925,7 @@ void Game::renderLobby() {
     //  Settings panel (right side) — host can adjust, clients read-only
     // ══════════════════════════════════════════════════════════
     {
-        bool isHostPlayer = net.isHost();
+        bool isHostPlayer = net.isLobbyHost();
         int panelX = SCREEN_W / 2 + 20;
         int panelY = SCREEN_H / 10 + 60;
         int panelW = SCREEN_W / 2 - 40;
@@ -11153,14 +11165,15 @@ void Game::renderLobby() {
     int listX = 60;
     int listY = SCREEN_H / 10 + 60;
     drawText("PLAYERS", listX, listY, 16, gray);
-    bool isHostInKickMode = net.isHost() && (lobbyKickCursor_ >= 0);
-    if (net.isHost()) {
+    bool canManageLobby = net.isLobbyHost();
+    bool isHostInKickMode = canManageLobby && (lobbyKickCursor_ >= 0);
+    if (canManageLobby) {
         SDL_Color kickHint = isHostInKickMode
             ? SDL_Color{255, 80, 80, 220}
             : SDL_Color{80, 80, 90, 200};
         const char* kickLabel = isHostInKickMode
-            ? "\xe2\x9c\x96 KICK MODE  [A] Kick  [X] Ban  [B] Cancel"
-            : "[Y/TAB] Kick/Ban player";
+            ? "\xe2\x9c\x96 HOST ACTIONS  [A] Kick  [X] Transfer Host  [B] Cancel"
+            : "[Y/TAB] Kick / Transfer Host";
         drawText(kickLabel, listX + 100, listY + 2, 12, kickHint);
     }
     SDL_SetRenderDrawColor(renderer_, 60, 60, 70, 100);
@@ -11176,7 +11189,7 @@ void Game::renderLobby() {
     int py = listY + 32;
     for (size_t i = 0; i < players.size(); i++) {
         bool isLocal = (players[i].id == net.localPlayerId());
-        bool isHostP = (players[i].id == 0);
+        bool isHostP = (players[i].id == net.lobbyHostId());
         bool isKickTarget = isHostInKickMode && ((int)i == lobbyKickCursor_);
 
         // Row background — local player teal, kick target red
@@ -11259,9 +11272,9 @@ void Game::renderLobby() {
 
     // ── Bottom buttons ──
     int btnY = SCREEN_H - 100;
-    if (net.isHost()) {
+    if (canManageLobby) {
         bool allReady = true;
-        for (auto& p : players) { if (!p.ready && p.id != 0) allReady = false; }
+        for (auto& p : players) { if (!p.ready && p.id != net.lobbyHostId()) allReady = false; }
         SDL_Color startC = allReady ? green : dimGrn;
         if (ui_.menuItem(50, "START GAME", SCREEN_W / 2, btnY, 300, 36,
                          startC, true, 22, 26)) {
@@ -11280,10 +11293,10 @@ void Game::renderLobby() {
     }
     { UI::HintPair hints[] = { {UI::Action::Back, "Leave"}, {UI::Action::Navigate, "Navigate/Adjust"} };
       ui_.drawHintBar(hints, 2, SCREEN_H - 40); }
-    if (net.isHost()) {
+    if (canManageLobby) {
         const char* kickHintStr = isHostInKickMode
-            ? "[Y/TAB] Exit kick mode    [A] Kick    [X] Ban    [B] Cancel"
-            : "[Y/TAB] Kick/Ban player mode";
+            ? "[Y/TAB] Exit action mode    [A] Kick    [X] Transfer Host    [B] Cancel"
+            : "[Y/TAB] Kick / Transfer Host mode";
         drawTextCentered(kickHintStr, SCREEN_H - 22, 12,
                          isHostInKickMode ? SDL_Color{255, 120, 80, 220} : SDL_Color{80, 80, 90, 180});
     }
@@ -11404,7 +11417,7 @@ void Game::renderMultiplayerHUD() {
 void Game::renderMultiplayerPause() {
     auto& net2 = NetworkManager::instance();
     bool hasTeams     = currentRules_.teamCount >= 2;
-    bool isHostPlayer = net2.isHost();
+    bool isHostPlayer = net2.isLobbyHost();
 
     // Darken background
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
