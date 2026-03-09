@@ -114,6 +114,8 @@ cd "$(dirname "$0")"
 # Use bundled dynamic linker if present (glibc portability)
 LOADER=$(ls ./libs/ld-linux*.so* 2>/dev/null | head -1)
 if [ -n "$LOADER" ] && [ -f "$LOADER" ]; then
+    # Ensure the loader is executable (cp may lose the bit on some systems)
+    chmod +x "$LOADER" 2>/dev/null || true
     exec "$LOADER" --library-path ./libs ./cold_start "$@"
 else
     LD_LIBRARY_PATH=./libs:${LD_LIBRARY_PATH}
