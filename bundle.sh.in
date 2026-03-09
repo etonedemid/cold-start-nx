@@ -15,16 +15,32 @@ mkdir -p "$DIST/libs"
 
 # Copy executable and assets
 cp "$SRC_EXE" "$DIST/cold_start"
+chmod +x "$DIST/cold_start"
 cp -r "$ROMFS_SRC/." "$DIST/romfs/"
 
 # ── Shared library bundling ─────────────────────────────────────────────────
-# Recursively copy all required .so files (except C++ runtime)
+# Bundle all non-system .so files. We deliberately EXCLUDE glibc (libc.so.6,
+# libpthread, libm, libdl, ld-linux, libgcc_s, libstdc++) because:
+#   - glibc is ABI‑forward-compatible: any distro with glibc >= the build
+#     version runs the binary fine with its own glibc.
+#   - Mixing a bundled ld-linux with the system's libc (or vice-versa) causes
+#     SIGSEGV or symbol-lookup failures since they must come from the same build.
+
+is_glibc() {
+    case "$1" in
+        */ld-linux*|*/ld-musl*) return 0 ;;
+        */libc.so*|*/libc-[0-9]*) return 0 ;;
+        */libpthread*|*/libdl*|*/librt.so*) return 0 ;;
+        */libm.so*|*/libm-[0-9]*) return 0 ;;
+        */libgcc_s*|*/libstdc++*) return 0 ;;
+        */libgomp*|*/libasan*) return 0 ;;
+    esac
+    return 1
+}
 
 copy_deps() {
     ldd "$1" 2>/dev/null | grep -oE '/[^ ]+\.so[^ ]*' | while read -r lib; do
-        case "$lib" in
-            */libgcc_s*|*/libstdc++*) continue ;;
-        esac
+        is_glibc "$lib" && continue
         base="$(basename "$lib")"
         if [ ! -f "$DIST/libs/$base" ]; then
             cp -Lv "$lib" "$DIST/libs/$base" 2>/dev/null || true
@@ -53,6 +69,7 @@ for sdl3lib in /usr/lib/libSDL3.so* /usr/lib/libSDL3_*.so*; do
     [ -f "$sdl3lib" ] || continue
     base="$(basename "$sdl3lib")"
     [ -f "$DIST/libs/$base" ] && continue
+    is_glibc "$sdl3lib" && continue
     cp -Lv "$sdl3lib" "$DIST/libs/$base" 2>/dev/null || true
 done
 
@@ -73,13 +90,9 @@ for d in \
 done
 
 # ── Explicit fallback for libs ldd shows as "not found" ─────────────────────
-# ldd only prints absolute paths for resolved libs; libs not yet in ldconfig
-# cache (e.g. freshly installed miniupnpc) appear as "not found" and are
-# skipped by the grep above.  Search ldconfig + common prefixes explicitly.
 for libname in libminiupnpc.so; do
     base=$(ldconfig -p 2>/dev/null | awk -v n="$libname" '$1 ~ n {print $NF; exit}')
     if [ -z "$base" ]; then
-        # Fallback: scan well-known multiarch dirs
         for d in \
             /usr/lib/x86_64-linux-gnu \
             /usr/lib/aarch64-linux-gnu \
@@ -90,11 +103,10 @@ for libname in libminiupnpc.so; do
         done
     fi
     if [ -n "$base" ] && [ -f "$base" ]; then
-        # Copy all versioned symlinks / real files for this lib
         dir=$(dirname "$base")
         stem=$(echo "$base" | sed 's/\.so.*//')
         for f in "$dir"/$(basename "$stem").so*; do
-            [ -f "$f" ] || continue
+            [ -f "$f" ] || is_glibc "$f" && continue
             dest="$DIST/libs/$(basename "$f")"
             [ -f "$dest" ] || cp -Lv "$f" "$dest" 2>/dev/null || true
         done
@@ -102,26 +114,12 @@ for libname in libminiupnpc.so; do
 done
 
 # ── Launcher ────────────────────────────────────────────────────────────────
-# The dynamic linker must be executable; cp -L preserves the source mode but
-# some systems install ld-linux without the execute bit for non-root users.
-chmod +x "$DIST/libs/ld-linux"*.so* 2>/dev/null || true
-chmod +x "$DIST/cold_start"
-
 cat > "$DIST/run.sh" << 'EOF'
 #!/bin/sh
 cd "$(dirname "$0")"
-
-# Use bundled dynamic linker if present (glibc portability)
-LOADER=$(ls ./libs/ld-linux*.so* 2>/dev/null | head -1)
-if [ -n "$LOADER" ] && [ -f "$LOADER" ]; then
-    # Ensure the loader is executable (cp may lose the bit on some systems)
-    chmod +x "$LOADER" 2>/dev/null || true
-    exec "$LOADER" --library-path ./libs ./cold_start "$@"
-else
-    LD_LIBRARY_PATH=./libs:${LD_LIBRARY_PATH}
-    export LD_LIBRARY_PATH
-    exec ./cold_start "$@"
-fi
+LD_LIBRARY_PATH="$(pwd)/libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH
+exec ./cold_start "$@"
 EOF
 chmod +x "$DIST/run.sh"
 
