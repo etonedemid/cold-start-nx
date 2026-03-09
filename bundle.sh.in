@@ -72,6 +72,35 @@ for d in \
     fi
 done
 
+# ── Explicit fallback for libs ldd shows as "not found" ─────────────────────
+# ldd only prints absolute paths for resolved libs; libs not yet in ldconfig
+# cache (e.g. freshly installed miniupnpc) appear as "not found" and are
+# skipped by the grep above.  Search ldconfig + common prefixes explicitly.
+for libname in libminiupnpc.so; do
+    base=$(ldconfig -p 2>/dev/null | awk -v n="$libname" '$1 ~ n {print $NF; exit}')
+    if [ -z "$base" ]; then
+        # Fallback: scan well-known multiarch dirs
+        for d in \
+            /usr/lib/x86_64-linux-gnu \
+            /usr/lib/aarch64-linux-gnu \
+            /usr/lib \
+            /usr/local/lib; do
+            found=$(ls "$d/${libname}"* 2>/dev/null | head -1)
+            [ -n "$found" ] && base="$found" && break
+        done
+    fi
+    if [ -n "$base" ] && [ -f "$base" ]; then
+        # Copy all versioned symlinks / real files for this lib
+        dir=$(dirname "$base")
+        stem=$(echo "$base" | sed 's/\.so.*//')
+        for f in "$dir"/$(basename "$stem").so*; do
+            [ -f "$f" ] || continue
+            dest="$DIST/libs/$(basename "$f")"
+            [ -f "$dest" ] || cp -Lv "$f" "$dest" 2>/dev/null || true
+        done
+    fi
+done
+
 # ── Launcher ────────────────────────────────────────────────────────────────
 cat > "$DIST/run.sh" << 'EOF'
 #!/bin/sh
