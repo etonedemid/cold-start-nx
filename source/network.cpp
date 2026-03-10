@@ -237,6 +237,12 @@ void NetworkManager::disconnect() {
 #if HAS_ENET
     if (!enetHost_) return;
 
+    // Send app-level Disconnect notification so the peer can react immediately
+    // rather than waiting for ENet keepalive timeout.
+    auto disconnPkt = buildPacket(NetPacketType::Disconnect, nullptr, 0);
+    sendUnreliable(disconnPkt);
+    enet_host_flush(enetHost_);
+
     // Disconnect all peers
     if (isHost_) {
         for (auto& p : players_) {
@@ -412,21 +418,26 @@ void NetworkManager::processEvent(ENetEvent& event) {
         uint8_t peerId = (uint8_t)(uintptr_t)event.peer->data;
         printf("Network: Player %d disconnected\n", peerId);
 
+        // If app-level Disconnect packet already handled this player, skip to
+        // avoid double-calling onPlayerLeft.
         auto it = std::remove_if(players_.begin(), players_.end(),
             [peerId](const NetPlayer& p) { return p.id == peerId; });
+        bool wasPresent = (it != players_.end());
         players_.erase(it, players_.end());
         lobby_.currentPlayers = (int)players_.size();
 
-        if (isHost_ && peerId == lobbyHostId_) {
-            if (!players_.empty()) {
-                size_t idx = (size_t)(rand() % players_.size());
-                assignLobbyHost(players_[idx].id, true);
-            } else {
-                assignLobbyHost(255, true);
+        if (wasPresent) {
+            if (isHost_ && peerId == lobbyHostId_) {
+                if (!players_.empty()) {
+                    size_t idx = (size_t)(rand() % players_.size());
+                    assignLobbyHost(players_[idx].id, true);
+                } else {
+                    assignLobbyHost(255, true);
+                }
             }
-        }
 
-        if (onPlayerLeft) onPlayerLeft(peerId);
+            if (onPlayerLeft) onPlayerLeft(peerId);
+        }
 
         if (!isHost_ && state_ != NetState::Offline) {
             // Lost connection to host
@@ -521,6 +532,36 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
                 }
             }
         }
+        break;
+    }
+
+    case NetPacketType::Disconnect: {
+        // Client is leaving cleanly — process immediately rather than waiting
+        // for ENet keepalive timeout. Only the host (dedicated server) handles this.
+        if (!isHost_) break;
+        uint8_t peerId = (uint8_t)(uintptr_t)from->data;
+        printf("Network: Player %d sent disconnect notification\n", peerId);
+
+        // Check player still exists (guard against duplicate with ENET_EVENT_TYPE_DISCONNECT)
+        auto existing = std::find_if(players_.begin(), players_.end(),
+            [peerId](const NetPlayer& p) { return p.id == peerId; });
+        if (existing == players_.end()) break;
+
+        players_.erase(std::remove_if(players_.begin(), players_.end(),
+            [peerId](const NetPlayer& p) { return p.id == peerId; }), players_.end());
+        lobby_.currentPlayers = (int)players_.size();
+
+        if (peerId == lobbyHostId_) {
+            if (!players_.empty()) {
+                size_t idx = (size_t)(rand() % players_.size());
+                assignLobbyHost(players_[idx].id, true);
+            } else {
+                assignLobbyHost(255, true);
+            }
+        }
+
+        if (onPlayerLeft) onPlayerLeft(peerId);
+        enet_peer_disconnect(from, 0);
         break;
     }
 
