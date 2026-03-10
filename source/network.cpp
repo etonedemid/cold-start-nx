@@ -356,6 +356,7 @@ void NetworkManager::processEvent(ENetEvent& event) {
                 uint8_t hostSubPlayers = 0;
                 if (auto* hostPlayer = findPlayer(lobbyHostId_)) hostSubPlayers = hostPlayer->localSubPlayers;
                 payload.push_back(hostSubPlayers);
+                payload.push_back(dedicatedServer_ ? 1 : 0); // tell clients server is headless
                 auto pkt = buildPacket(NetPacketType::LobbyInfo, payload.data(), payload.size());
                 sendReliable(pkt, event.peer);
             }
@@ -560,6 +561,7 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             lobby_.currentPlayers = readU8(off);
             lobby_.inProgress = readU8(off) != 0;
             uint8_t hostSubPlayers = readU8(off);
+            serverIsDedicated_ = (readU8(off) != 0); // 0 if missing (old server)
 
             if (lobbyHostId_ == localId_) {
                 players_[0].localSubPlayers = hostSubPlayers;
@@ -1035,6 +1037,13 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             memcpy(&pos.y, payload + 4, 4);
             uint8_t upType = payload[8];
             if (onCrateSpawned) onCrateSpawned(pos, upType);
+            // Host relays to all other clients
+            if (isHost_) {
+                auto pkt = buildPacket(NetPacketType::CrateSpawn, payload, payloadLen);
+                for (auto& p : players_) {
+                    if (p.peer && p.peer != from) sendReliable(pkt, p.peer);
+                }
+            }
         }
         break;
     }
@@ -1391,7 +1400,14 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
     }
 
     case NetPacketType::EnemyState: {
-        // Only clients receive this (host is authoritative)
+        // Clients receive this (host is authoritative).
+        // Dedicated server: relay enemy states sent by the lobby-host client to all other clients.
+        if (isHost_ && dedicatedServer_ && payloadLen >= 4) {
+            auto pkt = buildPacket(NetPacketType::EnemyState, payload, payloadLen);
+            for (auto& p : players_) {
+                if (p.peer && p.peer != from) sendUnreliable(pkt, p.peer);
+            }
+        }
         if (!isHost_ && payloadLen >= 4) {
             int count;
             memcpy(&count, payload, 4);

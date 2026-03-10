@@ -3816,11 +3816,17 @@ void Game::spawnBomb() {
 // ═════════════════════════════════════════════════════════════════════════════
 
 void Game::updateSpawning(float dt) {
-    // In multiplayer the host is authoritative — clients receive enemy spawns via state packets
+    // In multiplayer the host is authoritative — clients receive enemy spawns via state packets.
+    // Exception: when connected to a headless dedicated server the server has no game simulation;
+    // the lobby-host client takes on the simulation role in that case.
+    auto& net0 = NetworkManager::instance();
     {
-        auto& net = NetworkManager::instance();
-        if (net.isOnline() && !net.isHost()) return;
+        const bool simulationDelegate = net0.isConnectedToDedicated() && net0.isLobbyHost();
+        if (net0.isOnline() && !net0.isHost() && !simulationDelegate) return;
     }
+    // True when this instance should send network events (wave start, game end).
+    // Offline single-player never sends; ENet host always does; dedicated-server lobby-host does too.
+    const bool sendNetEvents = net0.isHost() || (net0.isConnectedToDedicated() && net0.isLobbyHost());
     // In sandbox mode or PvP mode skip all wave spawning
     bool pvpActive = (lobbySettings_.isPvp || currentRules_.pvpEnabled);
     if (sandboxMode_ || pvpActive) return;
@@ -3853,8 +3859,8 @@ void Game::updateSpawning(float dt) {
                     if (e.alive) { allDead = false; break; }
                 }
                 if (allDead) {
-                    auto& net = NetworkManager::instance();
-                    if (net.isHost()) {
+                    if (sendNetEvents) {
+                        auto& net = NetworkManager::instance();
                         net.sendGameEnd((uint8_t)MatchEndReason::WavesCleared);
                     }
                     return;
@@ -3876,11 +3882,9 @@ void Game::updateSpawning(float dt) {
                 for (auto& e : enemies_) {
                     if (e.alive) { allDead = false; break; }
                 }
-                if (allDead) {
+                if (allDead && sendNetEvents) {
                     auto& net = NetworkManager::instance();
-                    if (net.isHost()) {
-                        net.sendGameEnd((uint8_t)MatchEndReason::WavesCleared);
-                    }
+                    net.sendGameEnd((uint8_t)MatchEndReason::WavesCleared);
                 }
                 return;
             }
@@ -3893,9 +3897,11 @@ void Game::updateSpawning(float dt) {
             waveActive_ = true;
             waveSpawnTimer_ = 0;
 
-            // ── Sync wave start to clients (host only) ──
-            auto& net = NetworkManager::instance();
-            if (net.isHost()) net.sendWaveStart(waveNumber_);
+            // ── Sync wave start to clients ──
+            if (sendNetEvents) {
+                auto& net = NetworkManager::instance();
+                net.sendWaveStart(waveNumber_);
+            }
 
             // ── Visual polish: wave announcement banner ──
             waveAnnounceTimer_ = 2.5f;
@@ -9838,8 +9844,10 @@ void Game::updateMultiplayer(float dt) {
             }
         }
 
-        // Host sends enemy states at 20 Hz, or immediately when an enemy dies
-        if (net.isHost()) {
+        // Host sends enemy states at 20 Hz, or immediately when an enemy dies.
+        // On a dedicated server the lobby-host client is the simulation authority.
+        const bool simAuthority = net.isHost() || (net.isConnectedToDedicated() && net.isLobbyHost());
+        if (simAuthority) {
             enemySendTimer_ -= dt;
             if (enemySendTimer_ <= 0 || enemyStatesNeedUpdate_) {
                 enemySendTimer_ = 1.0f / 20.0f;
