@@ -9822,7 +9822,7 @@ void Game::updateMultiplayer(float dt) {
     if (net.isInGame()) {
         netStateSendTimer_ -= dt;
         if (netStateSendTimer_ <= 0) {
-            netStateSendTimer_ = 1.0f / 60.0f; // 60 Hz
+            netStateSendTimer_ = 1.0f / 20.0f; // 20 Hz — interpolation handles smooth display
 
             NetPlayer state;
             state.id = net.localPlayerId();

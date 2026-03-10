@@ -772,7 +772,7 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             if (isHost_) {
                 auto pkt = buildPacket(NetPacketType::BulletSpawn, payload, payloadLen);
                 for (auto& p : players_) {
-                    if (p.peer && p.peer != from) sendReliable(pkt, p.peer);
+                    if (p.peer && p.peer != from) sendUnreliable(pkt, p.peer);
                 }
             }
         }
@@ -788,7 +788,7 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             if (isHost_) {
                 auto pkt = buildPacket(NetPacketType::BulletHit, payload, payloadLen);
                 for (auto& p : players_) {
-                    if (p.peer && p.peer != from) sendReliable(pkt, p.peer);
+                    if (p.peer && p.peer != from) sendUnreliable(pkt, p.peer);
                 }
             }
         }
@@ -1680,14 +1680,14 @@ void NetworkManager::sendBulletSpawn(Vec2 pos, float angle, uint8_t playerId, ui
     payload[12] = playerId;
     memcpy(payload + 13, &netId, 4);
     auto pkt = buildPacket(NetPacketType::BulletSpawn, payload, 17);
-    sendReliable(pkt);
+    sendUnreliable(pkt);
 #endif
 }
 
 void NetworkManager::sendBulletHit(uint32_t bulletNetId) {
 #if HAS_ENET
     auto pkt = buildPacket(NetPacketType::BulletHit, &bulletNetId, 4);
-    sendReliable(pkt);
+    sendUnreliable(pkt);
 #endif
 }
 
