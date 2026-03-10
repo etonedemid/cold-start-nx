@@ -226,6 +226,10 @@ public:
     bool isDedicatedServer() const { return dedicatedServer_; }
     bool isOnline() const { return state_ != NetState::Offline; }
     bool isInGame() const { return state_ == NetState::InGame; }
+    // True on a client that is connected to a headless dedicated server (not a peer-hosted game).
+    // Used to let the lobby-host client run wave spawning and enemy simulation in the absence of
+    // server-side game logic.
+    bool isConnectedToDedicated() const { return serverIsDedicated_; }
     uint8_t localPlayerId() const { return localId_; }
 
     // Ping / latency
@@ -343,6 +347,7 @@ private:
     uint8_t     nextPlayerId_ = 1;
     uint8_t     lobbyHostId_ = 0;
     bool        dedicatedServer_ = false;
+    bool        serverIsDedicated_ = false; // set on clients when server is headless
     uint32_t    tick_ = 0;
     std::string hostPassword_;          // password required to join (host side, empty=open)
     std::string pendingJoinPassword_;   // password to send in Connect packet (client side)
