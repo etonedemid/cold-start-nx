@@ -3537,14 +3537,22 @@ void Game::updateExplosions(float dt) {
 
         // Deal damage to all enemies in radius (once)
         if (!ex.dealtDmg) {
-            bool isAuthoritative = !NetworkManager::instance().isOnline() || NetworkManager::instance().isHost();
+            auto& netAuth = NetworkManager::instance();
+            bool isAuthoritative = !netAuth.isOnline() || netAuth.isHost() || (netAuth.isConnectedToDedicated() && netAuth.isLobbyHost());
             for (auto& e : enemies_) {
                 if (!e.alive) continue;
                 if (Vec2::dist(ex.pos, e.pos) < ex.radius) {
                     if (isAuthoritative) {
                         e.hp -= ex.damage;
                         e.damageFlash = 1.0f;
-                        if (e.hp <= 0) killEnemy(e);
+                        if (e.hp <= 0) {
+                            uint32_t eIdx = (uint32_t)(&e - &enemies_[0]);
+                            killEnemy(e);
+                            if (netAuth.isInGame()) {
+                                netAuth.sendEnemyKilled(eIdx, ex.ownerId);
+                                enemyStatesNeedUpdate_ = true;
+                            }
+                        }
                     } else {
                         e.damageFlash = 1.0f; // visual-only on clients
                     }
@@ -4088,8 +4096,8 @@ void Game::resolveCollisions() {
                         net.sendBulletHit(b.netId);
                     }
                 }
-                // State changes are HOST-ONLY to keep enemy HP authoritative
-                if (!net.isOnline() || net.isHost()) {
+                // State changes are authoritative on: offline, P2P host, or dedicated-server lobby-host
+                if (!net.isOnline() || net.isHost() || (net.isConnectedToDedicated() && net.isLobbyHost())) {
                     e.hp -= b.damage;
                     if (upgrades_.hasStunRounds) e.stunTimer = std::max(e.stunTimer, 0.75f);
                     // Aggro — target the player who shot this bullet
@@ -4163,7 +4171,8 @@ void Game::resolveCollisions() {
                     killEnemy(e);
                     // Broadcast parry kill over network so clients see the enemy die
                     auto& net = NetworkManager::instance();
-                    if (net.isInGame() && net.isHost()) {
+                    const bool simAuth = net.isHost() || (net.isConnectedToDedicated() && net.isLobbyHost());
+                    if (net.isInGame() && simAuth) {
                         uint32_t eIdx = (uint32_t)(&e - &enemies_[0]);
                         net.sendEnemyKilled(eIdx, net.localPlayerId());
                         enemyStatesNeedUpdate_ = true;
