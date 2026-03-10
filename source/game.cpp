@@ -2065,11 +2065,13 @@ void Game::handleInput() {
                         lobbySettings_.pvpEnabled   = lobbySettings_.isPvp || lobbySettings_.friendlyFire;
                         currentRules_.pvpEnabled    = lobbySettings_.pvpEnabled;
                         break;
-                    case 1: // Friendly fire
-                        lobbySettings_.friendlyFire = !lobbySettings_.friendlyFire;
-                        lobbySettings_.pvpEnabled   = lobbySettings_.isPvp || lobbySettings_.friendlyFire;
-                        currentRules_.friendlyFire  = lobbySettings_.friendlyFire;
-                        currentRules_.pvpEnabled    = lobbySettings_.pvpEnabled;
+                    case 1: // PvP/Friendly fire — disabled when PvP-no-teams (always-on)
+                        if (!(lobbySettings_.isPvp && lobbySettings_.teamCount == 0)) {
+                            lobbySettings_.friendlyFire = !lobbySettings_.friendlyFire;
+                            lobbySettings_.pvpEnabled   = lobbySettings_.isPvp || lobbySettings_.friendlyFire;
+                            currentRules_.friendlyFire  = lobbySettings_.friendlyFire;
+                            currentRules_.pvpEnabled    = lobbySettings_.pvpEnabled;
+                        }
                         break;
                     case 2: // Upgrades shared
                         lobbySettings_.upgradesShared = !lobbySettings_.upgradesShared;
@@ -3557,8 +3559,8 @@ void Game::updateExplosions(float dt) {
                     NetPlayer* exOwner = netEx.findPlayer(ex.ownerId);
                     if (exOwner && exOwner->team == localTeam_) teamFire = true;
                 }
-                if (!selfFire && !teamFire && netEx.isHost()) {
-                    // Host applies authoritative PvP explosion damage (not blocked by invulnerability)
+                if (!selfFire && !teamFire && (netEx.isHost() || netEx.isConnectedToDedicated())) {
+                    // P2P host or dedicated-server client: process own explosion damage locally
                     int newHp = std::max(0, player_.hp - 3);
                     player_.hp = newHp;
                     NetPlayer* localNetP = netEx.localPlayer();
@@ -3570,12 +3572,11 @@ void Game::updateExplosions(float dt) {
                         netEx.sendPlayerHpSync(localId, player_.hp, player_.maxHp, 255);
                     }
                 }
-                // Clients do not apply damage locally — they wait for PlayerHpSync from host
             }
-            // In PvP, host also applies explosion damage to remote players
+            // In PvP, host (or dedicated-server lobby-host) also applies explosion damage to remote players
             if ((lobbySettings_.isPvp || currentRules_.pvpEnabled)) {
                 auto& netEx2 = NetworkManager::instance();
-                if (netEx2.isHost()) {
+                if (netEx2.isHost() || (netEx2.isConnectedToDedicated() && netEx2.isLobbyHost())) {
                     // Determine the owner's team for friendly-fire checks
                     int8_t exOwnerTeam = -1;
                     if (ex.ownerId == netEx2.localPlayerId()) {
@@ -3827,8 +3828,9 @@ void Game::updateSpawning(float dt) {
     // True when this instance should send network events (wave start, game end).
     // Offline single-player never sends; ENet host always does; dedicated-server lobby-host does too.
     const bool sendNetEvents = net0.isHost() || (net0.isConnectedToDedicated() && net0.isLobbyHost());
-    // In sandbox mode or PvP mode skip all wave spawning
-    bool pvpActive = (lobbySettings_.isPvp || currentRules_.pvpEnabled);
+    // In sandbox mode or pure PvP mode skip all wave spawning.
+    // Note: pvpActive here means "PvP arena gamemode" only — friendly fire in PvE does NOT skip waves.
+    bool pvpActive = lobbySettings_.isPvp;
     if (sandboxMode_ || pvpActive) return;
     // Wave-based spawning system
     if (waveActive_) {
@@ -4278,8 +4280,9 @@ void Game::resolveCollisions() {
                 bool sweptHit = sweptCircleOverlap(b.pos, b.vel, 1.0f / 30.0f, p.pos, hitRadius);
                 if (pointHit || sweptHit) {
                     b.alive = false;
-                    if (net.isHost()) {
-                        // Host processes damage directly and broadcasts to all
+                    if (net.isHost() || net.isConnectedToDedicated()) {
+                        // P2P host OR dedicated-server client: each client processes its own incoming damage
+                        // and broadcasts the result (dedicated server relays to all peers).
                         NetPlayer* localNetP = net.localPlayer();
                         int newHp = std::max(0, player_.hp - b.damage);
                         player_.hp = newHp;
@@ -4295,7 +4298,7 @@ void Game::resolveCollisions() {
                             net.sendPlayerHpSync(net.localPlayerId(), player_.hp, player_.maxHp, b.ownerId);
                         }
                     } else {
-                        // Client: report hit to host for validation — host will send back HP/death
+                        // P2P non-host: report hit to host for validation — host will send back HP/death
                         net.sendHitRequest(b.netId, b.damage, b.ownerId);
                         // Optimistic visual feedback only (no HP deducted yet)
                         camera_.addShake(1.5f);
@@ -11041,9 +11044,22 @@ void Game::renderLobby() {
             drawSettingRow(0, "Gamemode:", val);
         }
 
-        // 1: Friendly fire (only in PvP with teams)
+        // 1: PvP toggle — shown in PvE mode as "PvP" (player damage), in PvP team mode as "Friendly Fire",
+        //    greyed-out (implicit ON) in PvP no-teams mode.
         {
-            if (lobbySettings_.isPvp && lobbySettings_.teamCount > 0) {
+            bool pvpNoTeams = lobbySettings_.isPvp && lobbySettings_.teamCount == 0;
+            if (pvpNoTeams) {
+                // Greyed out — PvP is always-on in this mode
+                char buf2[128]; snprintf(buf2, sizeof(buf2), "PvP:  ON");
+                drawText(buf2, panelX + 4, rowY, 14, SDL_Color{55, 55, 65, 255});
+                rowY += rowStep;
+            } else if (!lobbySettings_.isPvp) {
+                // PvE mode — show an explicit PvP (friendly fire) toggle
+                const char* val = lobbySettings_.friendlyFire ? "ON" : "OFF";
+                drawSettingRow(1, "PvP:", val,
+                    lobbySettings_.friendlyFire ? red : (SDL_Color){80,200,120,255});
+            } else {
+                // PvP team mode — show as "Friendly Fire"
                 const char* val = lobbySettings_.friendlyFire ? "ON" : "OFF";
                 drawSettingRow(1, "Friendly Fire:", val,
                     lobbySettings_.friendlyFire ? red : (SDL_Color){80,200,120,255});
