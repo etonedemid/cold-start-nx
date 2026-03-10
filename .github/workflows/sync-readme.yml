@@ -1,0 +1,51 @@
+# ─── sync-readme.yml ─────────────────────────────────────────────────────────
+# Keeps the version badge in README.md in sync with source/constants.h.
+# Runs on every push to main (not tags, not PRs).
+# If the README already has the correct version the step is a no-op.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Sync README version
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    name: Update README version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Use a token so the commit can trigger subsequent workflows
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version from constants.h
+        id: ver
+        run: |
+          ver=$(grep -oP '(?<=GAME_VERSION = ")[^"]+' source/constants.h)
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "Detected version: $ver"
+
+      - name: Update README header
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          # Replace: # COLD START  `vX.Y.Z`  (any existing version)
+          sed -i -E "s/^(# COLD START[[:space:]]+)\`v[^'\`]+\`/\1\`v${VER}\`/" README.md
+          echo "README after update:"
+          grep "^# COLD START" README.md
+
+      - name: Commit if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet README.md; then
+            echo "README already up to date — nothing to commit"
+          else
+            git add README.md
+            git commit -m "docs: sync README version to v${{ steps.ver.outputs.version }} [skip ci]"
+            git push
+          fi
