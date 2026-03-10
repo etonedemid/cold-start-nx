@@ -1,7 +1,7 @@
 
 <img width="848" height="204" alt="banner" src="https://github.com/user-attachments/assets/2a0af91e-a15e-462f-aa99-d2869a311675" />
 
-# COLD START  `v1.0.5`
+# COLD START  `v1.0.6`
 
 COLD START is a top-down action shooter built in C++ with SDL2 for PC and Nintendo Switch homebrew. It combines fast combat, local content editing, multiplayer support, and a lightweight modding pipeline aimed at rapid iteration.
 
@@ -296,6 +296,9 @@ When the host enables mods, lightweight mod data can be serialized and sent to j
 - First launch may create missing runtime content directories automatically
 
 ## Changelog
+
+### v1.0.6 (2026-03-10)
+- **Network: instant disconnect notification** — clients now send an app-level `Disconnect` packet before tearing down the ENet connection; the server handles it immediately in `handlePacket()` rather than waiting for keepalive timeout. `ENET_EVENT_TYPE_DISCONNECT` is guarded against double-calling `onPlayerLeft` when both events arrive
 
 ### v1.0.5 (2026-03-10)
 - **Dedicated server: game start now works** — the headless server now registers `onLobbyStartRequested`; pressing Start as lobby host broadcasts `GameStart` to all clients (previously the packet was silently discarded)
