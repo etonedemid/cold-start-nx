@@ -9566,7 +9566,11 @@ void Game::setupNetworkCallbacks() {
                 startCustomMapMultiplayer(tmpPath);
             } else {
                 mapSrand(mapSeed);             // same seed as host → same map
-                startGame();                // generates map, resets player & camera
+                {
+                    bool savedIsPvp = lobbySettings_.isPvp; // startGame() resets this to false
+                    startGame();                // generates map, resets player & camera
+                    lobbySettings_.isPvp = savedIsPvp;      // restore so updateSpawning blocks PvP waves
+                }
                 player_.pos = pickSpawnPos(); // team corner or random, not map centre
             }
         }
@@ -10213,7 +10217,11 @@ void Game::startMultiplayerGame() {
     mapSrand(mapSeed);
 
     // Start the game — use generated map
-    startGame();
+    {
+        bool savedIsPvp = lobbySettings_.isPvp; // startGame() resets this to false
+        startGame();
+        lobbySettings_.isPvp = savedIsPvp;      // restore so updateSpawning blocks PvP waves
+    }
     player_.pos = pickSpawnPos(); // team corner or random, not map centre
     if (lobbySettings_.isPvp) player_.invulnDuration = 0.0f;
     state_ = GameState::MultiplayerGame;
@@ -10271,7 +10279,8 @@ void Game::updateCrates(float dt) {
     // In multiplayer, only the host spawns crates — clients receive them via network
     auto& net = NetworkManager::instance();
     bool isMultiplayer = net.isOnline();
-    bool shouldSpawn = !sandboxMode_ && (!isMultiplayer || net.isHost());
+    bool isSimDelegate = net.isConnectedToDedicated() && net.isLobbyHost(); // lobby-host on dedicated server
+    bool shouldSpawn = !sandboxMode_ && (!isMultiplayer || net.isHost() || isSimDelegate);
 
     if (shouldSpawn) {
         crateSpawnTimer_ -= dt;
@@ -10394,7 +10403,7 @@ void Game::spawnCrate(Vec2 pos) {
 
     // Notify network
     auto& net = NetworkManager::instance();
-    if (net.isHost() && net.isInGame()) {
+    if ((net.isHost() || (net.isConnectedToDedicated() && net.isLobbyHost())) && net.isInGame()) {
         net.sendCrateSpawn(pos, (uint8_t)crate.contents);
     }
 }
