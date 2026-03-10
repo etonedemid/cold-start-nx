@@ -2844,8 +2844,11 @@ void Player::die() {
 void Game::updateEnemies(float dt) {
     auto& net = NetworkManager::instance();
 
-    // Clients: smoothly interpolate enemy positions from last host snapshot
-    if (net.isOnline() && !net.isHost()) {
+    // Clients: smoothly interpolate enemy positions from last host snapshot.
+    // Exception: the lobby-host client on a dedicated server IS the simulation authority
+    // and must run full AI, not the interpolation path.
+    const bool simDelegate = net.isConnectedToDedicated() && net.isLobbyHost();
+    if (net.isOnline() && !net.isHost() && !simDelegate) {
         for (auto& e : enemies_) {
             if (!e.alive) continue;
             float lerpRate = (e.netIsDashing) ? 25.0f : 14.0f;
