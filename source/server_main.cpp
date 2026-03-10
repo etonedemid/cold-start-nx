@@ -9,6 +9,7 @@
 #include <cstring>
 #include <algorithm>
 #include <csignal>
+#include <ctime>
 #include <string>
 
 #if !defined(__SWITCH__)
@@ -90,6 +91,22 @@ int main(int argc, char* argv[]) {
     };
     net.onChatMessage = [](const std::string& sender, const std::string& text) {
         printf("[chat] %s: %s\n", sender.c_str(), text.c_str());
+    };
+
+    // Track lobby settings so we can use the correct map size when starting
+    LobbySettings serverSettings;
+    net.onConfigSyncReceived = [&serverSettings](const LobbySettings& s) {
+        serverSettings = s;
+        printf("[cfg] Map %dx%d  enemyHp=%.1fx  spawnRate=%.1fx\n",
+               s.mapWidth, s.mapHeight, s.enemyHpScale, s.spawnRateScale);
+    };
+
+    // Start the game when the lobby host requests it
+    net.onLobbyStartRequested = [&net, &serverSettings]() {
+        uint32_t seed = (uint32_t)time(nullptr);
+        printf("[start] Lobby host requested game start — seed=%u  map=%dx%d\n",
+               seed, serverSettings.mapWidth, serverSettings.mapHeight);
+        net.startGame(seed, serverSettings.mapWidth, serverSettings.mapHeight, {});
     };
 
     printf("Server running on UDP port %u. Press Ctrl+C to stop.\n", port);
