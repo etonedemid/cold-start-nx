@@ -297,6 +297,11 @@ When the host enables mods, lightweight mod data can be serialized and sent to j
 
 ## Changelog
 
+### v1.0.5 (2026-03-10)
+- **Dedicated server: game start now works** — the headless server now registers `onLobbyStartRequested`; pressing Start as lobby host broadcasts `GameStart` to all clients (previously the packet was silently discarded)
+- **Dedicated server: waves now spawn** — the lobby-host client acts as the simulation authority when connected to a headless server; `updateSpawning()` and enemy-state broadcasting now run on the lobby-host instead of requiring `net.isHost()`. The server relays `EnemyState` and `CrateSpawn` packets to all other clients
+- **CI: README version auto-sync** — a new `sync-readme.yml` workflow patches the `# COLD START \`vX.Y.Z\`` header in README.md on every push to main, keeping it in sync with `GAME_VERSION` in `source/constants.h`
+
 ### v1.0.4 (2026-03-10)
 - **Linux bundle: stop bundling glibc** — `ld-linux-x86-64.so.2`, `libc.so.6`, and `libm.so.6` are no longer copied into `libs/`; `run.sh` now uses `LD_LIBRARY_PATH` instead of invoking the bundled loader directly. Bundling a CI-built glibc (Ubuntu 24.04 / glibc 2.39) alongside a newer system glibc (Arch, glibc 2.40+) caused an immediate SIGSEGV on launch due to incompatible `GLIBC_PRIVATE` symbols between the two versions
 
