@@ -558,7 +558,8 @@ void Game::loadAssets() {
     sfxDeath_    = a.sfx("death.mp3");
     sfxExplosion_= a.sfx("explosion.mp3");
     sfxParry_    = a.sfx("parry.mp3");
-    sfxSwoosh_   = a.sfx("swoosh.wav");
+    sfxSwoosh_   = a.sfx("swing.mp3");
+    sfxBreak_    = a.sfx("break.mp3");
     sfxBeep_     = a.sfx("beep.mp3");
     sfxPress_        = a.sfx("press.mp3");
     sfxEnemyExplode_ = a.sfx("enemyexplode.mp3");
@@ -2833,6 +2834,43 @@ void Game::updatePlayer(float dt) {
                     }
                 }
             }
+            // Melee breaks upgrade crates
+            for (auto& c : crates_) {
+                if (!c.alive) continue;
+                Vec2  toCrate = {c.pos.x - p.pos.x, c.pos.y - p.pos.y};
+                float dist = toCrate.length();
+                if (dist > MELEE_RANGE + 20.0f) continue;
+                float ang  = atan2f(toCrate.y, toCrate.x);
+                float diff = ang - p.rotation;
+                while (diff >  (float)M_PI) diff -= 2.0f * (float)M_PI;
+                while (diff < -(float)M_PI) diff += 2.0f * (float)M_PI;
+                if (fabsf(diff) > MELEE_ARC) continue;
+                c.takeDamage(99.0f); // one-shot
+                if (!c.alive) {
+                    Pickup pu;
+                    pu.pos = c.pos;
+                    pu.type = c.contents;
+                    pickups_.push_back(pu);
+                    for (int i = 0; i < 14; i++) {
+                        BoxFragment f;
+                        f.pos = c.pos;
+                        float angle = (float)(rand() % 360) * (float)M_PI / 180.0f;
+                        float spd = 130.0f + (float)(rand() % 250);
+                        f.vel = {cosf(angle) * spd, sinf(angle) * spd};
+                        f.size = 3.0f + (float)(rand() % 7);
+                        f.lifetime = 0.45f + (float)(rand() % 30) / 100.0f;
+                        f.age = 0; f.alive = true;
+                        f.rotation = (float)(rand() % 360);
+                        f.rotSpeed = (float)(rand() % 600 - 300);
+                        f.color = {(Uint8)(140 + rand() % 60), (Uint8)(90 + rand() % 50), (Uint8)(40 + rand() % 20), 255};
+                        boxFragments_.push_back(f);
+                    }
+                    camera_.addShake(2.5f);
+                    screenFlashTimer_ = 0.05f;
+                    screenFlashR_ = 255; screenFlashG_ = 200; screenFlashB_ = 50;
+                    if (sfxBreak_) { int ch = Mix_PlayChannel(-1, sfxBreak_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                }
+            }
             // PvP / local co-op: hit other players
             bool pvpActive = lobbySettings_.isPvp || currentRules_.pvpEnabled;
             auto doPvpMeleeHit = [&](Player& target, uint8_t targetId) {
@@ -4651,8 +4689,10 @@ void Game::destroyBox(int tx, int ty) {
         f.color = {(Uint8)r, (Uint8)(140 + rand() % 60), (Uint8)(20 + rand() % 30), 255};
         boxFragments_.push_back(f);
     }
-    screenFlashTimer_ = 0.06f;
-    screenFlashR_ = 200; screenFlashG_ = 160; screenFlashB_ = 60;
+    screenFlashTimer_ = 0.08f;
+    screenFlashR_ = 220; screenFlashG_ = 170; screenFlashB_ = 60;
+    camera_.addShake(2.5f);
+    if (sfxBreak_) { int ch = Mix_PlayChannel(-1, sfxBreak_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
 }
 
 void Game::updateBoxFragments(float dt) {
@@ -10525,9 +10565,10 @@ void Game::updateCrates(float dt) {
                         f.color = {(Uint8)(140 + rand() % 60), (Uint8)(90 + rand() % 50), (Uint8)(40 + rand() % 20), 255};
                         boxFragments_.push_back(f);
                     }
-                    camera_.addShake(1.5f);
-                    screenFlashTimer_ = 0.04f;
+                    camera_.addShake(2.5f);
+                    screenFlashTimer_ = 0.06f;
                     screenFlashR_ = 255; screenFlashG_ = 200; screenFlashB_ = 50;
+                    if (sfxBreak_) { int ch = Mix_PlayChannel(-1, sfxBreak_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
                 }
                 break;
             }
