@@ -28,6 +28,8 @@ struct Entity {
     Tag   tag       = TAG_NONE;
     bool  alive     = true;
     bool  piercing   = false;   // bullet passes through enemies
+    bool  explosive  = false;   // bullet makes a small explosion on impact
+    bool  chainLightning = false; // bullet zaps nearby enemies on hit
     int   damage    = 1;
     int   bounces   = 0;        // ricochet bounce count
     uint32_t netId  = 0;        // network ID for remote bullet tracking (0 = not networked)
