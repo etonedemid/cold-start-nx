@@ -25,6 +25,9 @@ static const UpgradeInfo s_upgradeTable[] = {
     { "Juggernaut",      "+2 max HP, slower, wider axe",    {120, 220, 140, 255}, false },  // Juggernaut
     { "Stun Rounds",     "Hits briefly stun, axe pulse stuns", {140, 180, 255, 255}, false },  // StunRounds
     { "Scavenger",       "Kills refund 1 ammo",             {255, 240, 120, 255}, false },  // Scavenger
+    { "Explosive Tips",  "Bullets pop in a small blast",    {255, 170, 80, 255},  false },  // ExplosiveTips
+    { "Chain Lightning", "Bullets zap nearby enemies",      {110, 240, 255, 255}, false },  // ChainLightning
+    { "Rail Slugs",      "Faster, bigger, harder shots",    {220, 220, 220, 255}, false },  // RailSlugs
     { "Sharpened Edge",  "+range, +arc, +axe damage",       {220, 220, 255, 255}, false },  // SharpenedEdge
     { "Bloodlust",       "Melee kills empower next swing",  {255, 70,  90,  255}, false },  // Bloodlust
     { "Shock Edge",      "Melee hit emits a stun pulse",    {100, 255, 255, 255}, false },  // ShockEdge
@@ -71,6 +74,9 @@ void PlayerUpgrades::apply(UpgradeType type) {
     case UpgradeType::Juggernaut:   meleeRangeBonus += 12.0f; meleeArcBonus += 0.12f; break; // other part handled in game logic
     case UpgradeType::StunRounds:   hasStunRounds = true; break;
     case UpgradeType::Scavenger:    hasScavenger = true; break;
+    case UpgradeType::ExplosiveTips: hasExplosiveTips = true; break;
+    case UpgradeType::ChainLightning: hasChainLightning = true; break;
+    case UpgradeType::RailSlugs:    bulletSpeedMulti *= 1.30f; bulletSizeBonus += 2.5f; damageMulti += 0.35f; break;
     case UpgradeType::SharpenedEdge: meleeRangeBonus += 24.0f; meleeArcBonus += 0.16f; meleeDamageBonus += 1; break;
     case UpgradeType::Bloodlust:    hasBloodlust = true; meleeCooldownMulti *= 0.94f; break;
     case UpgradeType::ShockEdge:    hasShockEdge = true; break;
@@ -102,6 +108,9 @@ UpgradeType rollRandomUpgrade() {
         { UpgradeType::Juggernaut,    5 },
         { UpgradeType::StunRounds,    6 },
         { UpgradeType::Scavenger,     8 },
+        { UpgradeType::ExplosiveTips, 5 },
+        { UpgradeType::ChainLightning, 5 },
+        { UpgradeType::RailSlugs,     5 },
         { UpgradeType::SharpenedEdge, 6 },
         { UpgradeType::Bloodlust,     5 },
         { UpgradeType::ShockEdge,     5 },
@@ -311,6 +320,32 @@ void drawPickupPixelArt(SDL_Renderer* r, int cx, int cy, int size, UpgradeType t
             SDL_RenderDrawLine(r, ix - 2, iy + 4, ix + 1, iy + 1);
             SDL_RenderDrawLine(r, ix + 4, iy - 2, ix + 1, iy + 1);
             break;
+        case UpgradeType::ExplosiveTips: {
+            SDL_SetRenderDrawColor(r, 255, 255, 255, 230);
+            SDL_Rect core = { ix, iy, 3, 3 };
+            SDL_RenderFillRect(r, &core);
+            SDL_RenderDrawLine(r, ix + 1, iy - 3, ix + 1, iy - 1);
+            SDL_RenderDrawLine(r, ix + 1, iy + 4, ix + 1, iy + 6);
+            SDL_RenderDrawLine(r, ix - 3, iy + 1, ix - 1, iy + 1);
+            SDL_RenderDrawLine(r, ix + 4, iy + 1, ix + 6, iy + 1);
+            break;
+        }
+        case UpgradeType::ChainLightning:
+            SDL_SetRenderDrawColor(r, 255, 255, 255, 230);
+            SDL_RenderDrawLine(r, ix - 2, iy - 1, ix, iy - 3);
+            SDL_RenderDrawLine(r, ix, iy - 3, ix + 1, iy - 1);
+            SDL_RenderDrawLine(r, ix + 1, iy - 1, ix - 1, iy + 1);
+            SDL_RenderDrawLine(r, ix - 1, iy + 1, ix + 3, iy + 4);
+            break;
+        case UpgradeType::RailSlugs: {
+            SDL_SetRenderDrawColor(r, 255, 255, 255, 230);
+            SDL_Rect slug = { ix - 2, iy - 1, 7, 3 };
+            SDL_RenderFillRect(r, &slug);
+            SDL_RenderDrawLine(r, ix + 5, iy - 1, ix + 5, iy + 1);
+            SDL_RenderDrawLine(r, ix - 3, iy - 3, ix - 1, iy - 1);
+            SDL_RenderDrawLine(r, ix - 3, iy + 3, ix - 1, iy + 1);
+            break;
+        }
         case UpgradeType::SharpenedEdge:
             SDL_SetRenderDrawColor(r, 255, 255, 255, 230);
             SDL_RenderDrawLine(r, ix - 2, iy + 3, ix + 4, iy - 3);
