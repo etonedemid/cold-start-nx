@@ -364,6 +364,7 @@ private:
     Mix_Chunk* sfxExplosion_= nullptr;
     Mix_Chunk* sfxParry_    = nullptr;
     Mix_Chunk* sfxSwoosh_   = nullptr;
+    Mix_Chunk* sfxBreak_    = nullptr;
     Mix_Chunk* sfxBeep_     = nullptr;
     Mix_Chunk* sfxPress_    = nullptr;
     Mix_Music* bgMusic_        = nullptr;
