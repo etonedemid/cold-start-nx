@@ -351,6 +351,7 @@ private:
     SDL_Texture* gravelGrass3Tex_ = nullptr;
     SDL_Texture* glassTileTex_   = nullptr;
     SDL_Texture* vignetteTex_    = nullptr;
+    SDL_Texture* sceneTarget_    = nullptr;
     // Custom tile textures loaded from map-embedded paths (TILE_CUSTOM_0..7)
     SDL_Texture* customTileTextures_[8] = {nullptr};
 
@@ -377,6 +378,7 @@ private:
     void handleInput();
     void update();
     void render();
+    void renderPostFXComposite(bool gameplayView);
 
     // Update sub-systems
     void updatePlayer(float dt);
@@ -400,6 +402,7 @@ private:
     void spawnBullet(Vec2 pos, float angle);
     void spawnEnemyBullet(Vec2 pos, Vec2 target, float angleOffset = 0.0f);
     void spawnExplosion(Vec2 pos, uint8_t ownerId = 255);
+    void spawnBulletExplosion(Vec2 pos, int damage, uint8_t ownerId = 255, int skipEnemyIdx = -1, bool applyDamage = true);
     void spawnPlayerDeathEffect(Vec2 pos);
     void spawnBomb();
     Vec2 pickSpawnPos();  // team-corner or random spawn (multiplayer)
