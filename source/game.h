@@ -125,8 +125,9 @@ struct CoopSlot {
     Vec2  aimInput   = {};
     bool  fireInput  = false;
     bool  bombInput  = false;
-    bool  parryInput = false;
-    bool  meleeInput = false;
+    bool  parryInput  = false;
+    bool  meleeInput  = false;
+    int   weaponSwitchInput = 0; // +1 = next, -1 = prev
     bool  pauseInput = false;
 };
 
@@ -197,6 +198,7 @@ private:
     bool bombLaunchHeld_ = false;  // debounce for trigger
     bool parryInput_ = false;
     bool meleeInput_ = false;
+    int  weaponSwitchDelta_ = 0;  // +1 scroll-up/RB, -1 scroll-down; applied once per frame
     bool pauseInput_ = false;
     bool confirmInput_ = false;
     bool usingGamepad_ = false;  // true when last input was from a gamepad (shows soft KB on PC)
