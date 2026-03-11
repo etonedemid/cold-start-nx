@@ -29,6 +29,9 @@ enum class UpgradeType : uint8_t {
     Juggernaut,     // more max HP, less speed
     StunRounds,     // bullets briefly stun enemies
     Scavenger,      // kills refund ammo
+    SharpenedEdge,  // longer, wider axe swings
+    Bloodlust,      // melee kills empower next swing
+    ShockEdge,      // melee impacts emit a stun pulse
     // Negative (cursed) — rare
     SlowDown,       // -movement speed
     GlassCannon,    // +damage but -HP
@@ -88,8 +91,14 @@ struct PlayerUpgrades {
     bool  hasTripleShot   = false;
     bool  hasStunRounds   = false;
     bool  hasScavenger    = false;
+    bool  hasBloodlust    = false;
+    bool  hasShockEdge    = false;
     int   killsPerBomb    = KILLS_PER_BOMB;
     float bombDashSpeedMulti = 1.0f;
+    float meleeRangeBonus = 0.0f;
+    float meleeArcBonus   = 0.0f;
+    float meleeCooldownMulti = 1.0f;
+    int   meleeDamageBonus = 0;
 
     void reset() { *this = PlayerUpgrades{}; }
     void apply(UpgradeType type);

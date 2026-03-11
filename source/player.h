@@ -51,6 +51,7 @@ struct Player {
     bool  meleeHit         = false;  // damage already applied this swing
     bool  meleeSwingReverse = false; // true = next swing plays frames 9→3 (returning)
     bool  hadMeleeSwing    = false;  // hold melee idle pose after first swing
+    bool  meleeBloodlustProc = false;
     float meleeTimer       = 0.0f;
     float meleeCooldown    = 0.0f;
 
