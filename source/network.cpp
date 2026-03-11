@@ -1046,6 +1046,20 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
         break;
     }
 
+    case NetPacketType::MeleeHitRequest: {
+        // payload: targetId(1)  — sent by a client to host
+        if (isHost_ && payloadLen >= 1) {
+            uint8_t targetId = payload[0];
+            uint8_t attackerId = 255;
+            for (auto& p : players_) {
+                if (p.peer == from) { attackerId = p.id; break; }
+            }
+            if (onMeleeHitRequest && attackerId != 255)
+                onMeleeHitRequest(attackerId, targetId);
+        }
+        break;
+    }
+
     case NetPacketType::PlayerHpSync: {
         // payload: playerId(1) + hp(4) + maxHp(4) + killerId(1)
         if (payloadLen >= 10) {
@@ -1868,6 +1882,14 @@ void NetworkManager::sendHitRequest(uint32_t bulletNetId, int damage, uint8_t ow
     payload[4] = (uint8_t)(int8_t)std::min(damage, 127);
     payload[5] = ownerId;
     auto pkt = buildPacket(NetPacketType::HitRequest, payload, 6);
+    sendReliable(pkt);
+#endif
+}
+
+void NetworkManager::sendMeleeHitRequest(uint8_t targetId) {
+#if HAS_ENET
+    uint8_t payload[1] = { targetId };
+    auto pkt = buildPacket(NetPacketType::MeleeHitRequest, payload, 1);
     sendReliable(pkt);
 #endif
 }
