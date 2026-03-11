@@ -2899,6 +2899,42 @@ void Game::updatePlayer(float dt) {
                     doPvpMeleeHit(coopSlots_[ci].player, (uint8_t)ci);
                 }
             }
+            // Online PvP: send melee hit request to host for each remote player in range
+            if (net.isInGame() && pvpActive) {
+                uint8_t localId = net.localPlayerId();
+                for (auto& rp : net.players()) {
+                    if (rp.id == localId || !rp.alive) continue;
+                    Vec2  toTarget = {rp.targetPos.x - p.pos.x, rp.targetPos.y - p.pos.y};
+                    float dist = toTarget.length();
+                    if (dist > MELEE_RANGE + PLAYER_SIZE) continue;
+                    float ang  = atan2f(toTarget.y, toTarget.x);
+                    float diff = ang - p.rotation;
+                    while (diff >  (float)M_PI) diff -= 2.0f * (float)M_PI;
+                    while (diff < -(float)M_PI) diff += 2.0f * (float)M_PI;
+                    if (fabsf(diff) > MELEE_ARC) continue;
+                    // Friendly-fire check (don't hit teammates)
+                    if (localTeam_ >= 0) {
+                        NetPlayer* rpFull = net.findPlayer(rp.id);
+                        if (rpFull && rpFull->team == localTeam_) continue;
+                    }
+                    if (net.isHost()) {
+                        // P2P host: apply damage directly
+                        NetPlayer* rpM = net.findPlayer(rp.id);
+                        if (rpM) {
+                            rpM->hp -= MELEE_PLAYER_DAMAGE;
+                            if (rpM->hp <= 0) {
+                                rpM->hp = 0; rpM->alive = false;
+                                net.sendPlayerDied(rp.id, localId);
+                            } else {
+                                net.sendPlayerHpSync(rp.id, rpM->hp, rpM->maxHp, localId);
+                            }
+                        }
+                    } else {
+                        // Client: ask host to validate + apply
+                        net.sendMeleeHitRequest(rp.id);
+                    }
+                }
+            }
         }
 
         if (p.meleeTimer >= MELEE_DURATION) {
@@ -4336,6 +4372,7 @@ void Game::resolveCollisions() {
                     if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
                     camera_.addShake(4.0f);
                     auto& net = NetworkManager::instance();
+                    if (!net.isInGame()) spawnPlayerDeathEffect(p.pos);
                     if (net.isInGame()) net.sendPlayerDied(net.localPlayerId(), 0);
                 }
             }
@@ -4373,8 +4410,9 @@ void Game::resolveCollisions() {
                 if (p.dead) {
                     if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
                     camera_.addShake(4.0f);
-                    auto& net = NetworkManager::instance();
-                    if (net.isInGame()) net.sendPlayerDied(net.localPlayerId(), 0);
+                    auto& net2 = NetworkManager::instance();
+                    if (!net2.isInGame()) spawnPlayerDeathEffect(p.pos);
+                    if (net2.isInGame()) net2.sendPlayerDied(net2.localPlayerId(), 0);
                 }
             }
         }
@@ -4693,6 +4731,89 @@ void Game::destroyBox(int tx, int ty) {
     screenFlashR_ = 220; screenFlashG_ = 170; screenFlashB_ = 60;
     camera_.addShake(2.5f);
     if (sfxBreak_) { int ch = Mix_PlayChannel(-1, sfxBreak_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+}
+
+void Game::spawnPlayerDeathEffect(Vec2 pos) {
+    auto& net = NetworkManager::instance();
+    const bool isOnline = net.isOnline();
+
+    // Camera shake — big in singleplayer, moderate in multiplayer
+    camera_.addShake(isOnline ? 5.0f : 12.0f);
+    screenFlashTimer_ = isOnline ? 0.08f : 0.22f;
+    screenFlashR_ = 255; screenFlashG_ = 55; screenFlashB_ = 20;
+
+    // Explosion sound in singleplayer (multiplayer uses sfxDeath_ at callsite)
+    if (!isOnline && sfxExplosion_) {
+        int ch = Mix_PlayChannel(-1, sfxExplosion_, 0);
+        if (ch >= 0) Mix_Volume(ch, config_.sfxVolume);
+    }
+
+    // Fire/gore burst
+#ifdef __SWITCH__
+    int numFire = isOnline ? 12 : 24;
+#else
+    int numFire = isOnline ? 20 : 52;
+#endif
+    for (int i = 0; i < numFire; i++) {
+        BoxFragment f;
+        f.pos = {pos.x + (float)(rand() % 20 - 10), pos.y + (float)(rand() % 20 - 10)};
+        float angle = (float)(rand() % 360) * (float)M_PI / 180.0f;
+        float spd = 160.0f + (float)(rand() % 450);
+        f.vel = {cosf(angle) * spd, sinf(angle) * spd};
+        f.rotation = (float)(rand() % 360);
+        f.rotSpeed = (float)(rand() % 800 - 400);
+        f.size = 4.0f + (float)(rand() % 10);
+        f.lifetime = 0.45f + (float)(rand() % 50) / 100.0f;
+        f.age = 0; f.alive = true;
+        int r = 190 + rand() % 65, g = 35 + rand() % 120, b = rand() % 50;
+        f.color = {(Uint8)r, (Uint8)g, (Uint8)b, 255};
+        boxFragments_.push_back(f);
+    }
+    // Smoke
+#ifdef __SWITCH__
+    int numSmoke = isOnline ? 3 : 8;
+#else
+    int numSmoke = isOnline ? 6 : 18;
+#endif
+    for (int i = 0; i < numSmoke; i++) {
+        BoxFragment f;
+        f.pos = {pos.x + (float)(rand() % 30 - 15), pos.y + (float)(rand() % 30 - 15)};
+        float angle = (float)(rand() % 360) * (float)M_PI / 180.0f;
+        float spd = 30.0f + (float)(rand() % 80);
+        f.vel = {cosf(angle) * spd, sinf(angle) * spd};
+        f.rotation = 0; f.rotSpeed = 0;
+        f.size = 10.0f + (float)(rand() % 14);
+        f.lifetime = 0.65f + (float)(rand() % 40) / 100.0f;
+        f.age = 0; f.alive = true;
+        int v = 25 + rand() % 40;
+        f.color = {(Uint8)v, (Uint8)v, (Uint8)v, 200};
+        boxFragments_.push_back(f);
+    }
+    // Scorch marks — many in singleplayer, few in multiplayer
+    {
+        BloodDecal scorch;
+        scorch.pos = pos;
+        scorch.rotation = (float)(rand() % 360) * (float)M_PI / 180.0f;
+        scorch.scale = isOnline ? 1.2f : 2.2f;
+        scorch.type = DecalType::Scorch;
+        blood_.push_back(scorch);
+#ifdef __SWITCH__
+        int numScorch = isOnline ? 1 : 5;
+#else
+        int numScorch = isOnline ? 3 : 14;
+#endif
+        for (int i = 0; i < numScorch; i++) {
+            BloodDecal s;
+            float dist = 20.0f + (float)(rand() % (isOnline ? 60 : 130));
+            float ang  = (float)(rand() % 360) * (float)M_PI / 180.0f;
+            s.pos = {pos.x + cosf(ang) * dist, pos.y + sinf(ang) * dist};
+            s.rotation = (float)(rand() % 360) * (float)M_PI / 180.0f;
+            s.scale = isOnline ? (0.3f + (float)(rand() % 40) / 100.0f)
+                               : (0.55f + (float)(rand() % 110) / 100.0f);
+            s.type = DecalType::Scorch;
+            blood_.push_back(s);
+        }
+    }
 }
 
 void Game::updateBoxFragments(float dt) {
@@ -9486,6 +9607,12 @@ void Game::setupNetworkCallbacks() {
         NetPlayer* victim = net.findPlayer(playerId);
         if (victim) victim->alive = false;
 
+        // ── Death explosion + scorch ──────────────────────────────────────
+        {
+            Vec2 dpos = victim ? victim->pos : player_.pos;
+            spawnPlayerDeathEffect(dpos);
+        }
+
         // ── Team-colored death burst ──────────────────────────────────────
         if (currentRules_.teamCount >= 2) {
             Vec2 dpos = victim ? victim->pos : player_.pos;
@@ -9624,6 +9751,25 @@ void Game::setupNetworkCallbacks() {
         }
         (void)bulletFound;
         return true;
+    };
+
+    // PvP melee: host applies authoritative damage for a client melee hit
+    net.onMeleeHitRequest = [this](uint8_t attackerId, uint8_t targetId) {
+        auto& net = NetworkManager::instance();
+        NetPlayer* target = net.findPlayer(targetId);
+        if (!target || !target->alive) return;
+        // Friendly-fire guard
+        if (attackerId != 255 && target->team >= 0) {
+            NetPlayer* attacker = net.findPlayer(attackerId);
+            if (attacker && attacker->team == target->team) return;
+        }
+        target->hp -= MELEE_PLAYER_DAMAGE;
+        if (target->hp <= 0) {
+            target->hp = 0; target->alive = false;
+            net.sendPlayerDied(targetId, attackerId);
+        } else {
+            net.sendPlayerHpSync(targetId, target->hp, target->maxHp, attackerId);
+        }
     };
 
     // Receive authoritative HP from host — update local player if it's ours
