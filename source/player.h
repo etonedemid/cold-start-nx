@@ -43,6 +43,14 @@ struct Player {
     bool  hasFiredOnce = false;
     float shootAnimTimer = 0;
 
+    // Melee (axe swing)
+    bool  isMeleeSwinging  = false;  // axe swing in progress
+    bool  meleeHit         = false;  // damage already applied this swing
+    bool  meleeSwingReverse = false; // true = next swing plays frames 9→3 (returning)
+    bool  hadMeleeSwing    = false;  // hold melee idle pose after first swing
+    float meleeTimer       = 0.0f;
+    float meleeCooldown    = 0.0f;
+
     // Bombs
     int   killCounter  = 0;
     int   bombCount    = 0;

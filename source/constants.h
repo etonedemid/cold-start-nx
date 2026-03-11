@@ -114,6 +114,15 @@ constexpr float PARRY_DASH_SPEED    = 700.0f;
 constexpr float PARRY_DASH_DURATION = 0.13f;
 constexpr float PARRY_DMG      = 4.0f;
 
+// Melee (player axe swing)
+constexpr float MELEE_DURATION      = 0.30f;  // swing animation duration
+constexpr float MELEE_COOLDOWN_TIME = 0.45f;  // cooldown before next swing
+constexpr float MELEE_RANGE         = 90.0f;  // reach from player centre
+constexpr float MELEE_ARC           = 1.65f;  // half-arc in radians (~95 deg)
+constexpr int   MELEE_PLAYER_DAMAGE = 3;      // damage to players (PvP / co-op)
+constexpr int   MELEE_ANIM_FIRST    = 3;      // first body frame (sprite 0004)
+constexpr int   MELEE_ANIM_LAST     = 9;      // last  body frame (sprite 0010)
+
 // Spawning — wave system
 constexpr float WAVE_PAUSE_BASE     = 10.0f; // pause between waves (scales down over time)
 constexpr int   WAVE_SIZE_BASE      = 2;     // enemies per wave at start

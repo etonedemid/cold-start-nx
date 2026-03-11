@@ -813,6 +813,7 @@ void Game::handleInput() {
     bombInput_ = false;
     bombLaunchInput_ = false;
     parryInput_ = false;
+    meleeInput_ = false;
     pauseInput_ = false;
     confirmInput_ = false;
     backInput_ = false;
@@ -980,6 +981,7 @@ void Game::handleInput() {
                 case SDL_CONTROLLER_BUTTON_A:        confirmInput_ = true; if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); } break;
                 case SDL_CONTROLLER_BUTTON_B:        backInput_ = true; break;
                 case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: parryInput_ = true; break;
+                case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: meleeInput_ = true; break;
                 case SDL_CONTROLLER_BUTTON_X:        bombInput_ = true; break;
                 case SDL_CONTROLLER_BUTTON_Y:        tabInput_ = true; break;
                 case SDL_CONTROLLER_BUTTON_DPAD_UP:  menuSelection_--; if (sfxBeep_) { int ch = Mix_PlayChannel(-1, sfxBeep_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); } break;
@@ -995,6 +997,7 @@ void Game::handleInput() {
                 case SDLK_RETURN: confirmInput_ = true; break;
                 case SDLK_BACKSPACE: backInput_ = true; break;
                 case SDLK_SPACE:  parryInput_ = true; break;
+                case SDLK_e:     meleeInput_ = true; break;
                 case SDLK_q:     bombInput_ = true; break;
                 case SDLK_TAB:   tabInput_ = true; break;
                 case SDLK_UP:    menuSelection_--; break;
@@ -2647,14 +2650,30 @@ void Game::updatePlayer(float dt) {
         p.legRotation = atan2f(p.vel.y, p.vel.x);
     }
 
-    // ── Body animation: shooting anim ──
-    p.shootAnimTimer -= dt;
-    if (p.shootAnimTimer > 0) {
-        p.animFrame = 2; // Sprite-0003 (shooting/recoil)
-    } else if (p.hasFiredOnce) {
-        p.animFrame = 1; // Sprite-0002 (gun ready, default after first shot)
+    // ── Body animation: melee takes priority, then shooting anim ──
+    if (p.isMeleeSwinging) {
+        // Axe swing: sprites 0004–0010 (frames 3–9)
+        float prog = std::min(1.0f, p.meleeTimer / MELEE_DURATION);
+        int range  = MELEE_ANIM_LAST - MELEE_ANIM_FIRST;             // 6
+        int offset = std::min(range, (int)(prog * (range + 1)));      // 0..6
+        p.animFrame = p.meleeSwingReverse
+                      ? (MELEE_ANIM_LAST  - offset)   // reverse: 9→3
+                      : (MELEE_ANIM_FIRST + offset);  // forward: 3→9
+    } else if (p.hadMeleeSwing) {
+        // Hold end-of-swing pose between swings (meleeSwingReverse was toggled
+        // when swing completed, so: next=reverse → last was forward → idle at LAST=9;
+        //                            next=forward → last was reverse → idle at FIRST=3)
+        p.animFrame = p.meleeSwingReverse ? MELEE_ANIM_LAST : MELEE_ANIM_FIRST;
     } else {
-        p.animFrame = 0; // Sprite-0001 (idle, never fired)
+        // Normal shooting animation
+        p.shootAnimTimer -= dt;
+        if (p.shootAnimTimer > 0) {
+            p.animFrame = 2; // Sprite-0003 (shooting/recoil)
+        } else if (p.hasFiredOnce) {
+            p.animFrame = 1; // Sprite-0002 (gun ready, default after first shot)
+        } else {
+            p.animFrame = 0; // Sprite-0001 (idle, never fired)
+        }
     }
 
     // Leg anim (faster at higher movement speed)
@@ -2726,6 +2745,84 @@ void Game::updatePlayer(float dt) {
         if (p.parryCdTimer <= 0) p.canParry = true;
     }
     } // !spectatorMode_
+
+    // ── Melee (axe swing) ──
+    if (p.meleeCooldown > 0) p.meleeCooldown -= dt;
+    if (!spectatorMode_) {
+        if (meleeInput_ && !p.isMeleeSwinging && p.meleeCooldown <= 0) {
+            p.isMeleeSwinging = true;
+            p.meleeTimer      = 0.0f;
+            p.meleeHit        = false;
+            p.hadMeleeSwing   = true;
+            if (sfxSwoosh_) { int ch = Mix_PlayChannel(-1, sfxSwoosh_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+        }
+    }
+    if (p.isMeleeSwinging) {
+        p.meleeTimer += dt;
+
+        // Apply damage at the midpoint of the swing
+        if (!p.meleeHit && p.meleeTimer >= MELEE_DURATION * 0.5f) {
+            p.meleeHit = true;
+            auto& net = NetworkManager::instance();
+            const bool simAuth = !net.isOnline() || net.isHost() || (net.isConnectedToDedicated() && net.isLobbyHost());
+            // Hit enemies in a cone in front of the player
+            for (auto& e : enemies_) {
+                if (!e.alive) continue;
+                Vec2  toEnemy = {e.pos.x - p.pos.x, e.pos.y - p.pos.y};
+                float dist    = toEnemy.length();
+                if (dist > MELEE_RANGE + e.size) continue;
+                float ang  = atan2f(toEnemy.y, toEnemy.x);
+                float diff = ang - p.rotation;
+                while (diff >  (float)M_PI) diff -= 2.0f * (float)M_PI;
+                while (diff < -(float)M_PI) diff += 2.0f * (float)M_PI;
+                if (fabsf(diff) > MELEE_ARC) continue;
+                e.damageFlash = 1.0f;
+                if (simAuth) {
+                    e.hp = -9999.0f;
+                    killEnemy(e);
+                    if (net.isInGame()) {
+                        uint32_t eIdx = (uint32_t)(&e - &enemies_[0]);
+                        net.sendEnemyKilled(eIdx, net.localPlayerId());
+                        enemyStatesNeedUpdate_ = true;
+                    }
+                }
+            }
+            // PvP / local co-op: hit other players
+            bool pvpActive = lobbySettings_.isPvp || currentRules_.pvpEnabled;
+            auto doPvpMeleeHit = [&](Player& target, uint8_t targetId) {
+                if (target.dead || target.invulnerable) return;
+                Vec2  toTarget = {target.pos.x - p.pos.x, target.pos.y - p.pos.y};
+                float dist = toTarget.length();
+                if (dist > MELEE_RANGE + PLAYER_SIZE) return;
+                float ang  = atan2f(toTarget.y, toTarget.x);
+                float diff = ang - p.rotation;
+                while (diff >  (float)M_PI) diff -= 2.0f * (float)M_PI;
+                while (diff < -(float)M_PI) diff += 2.0f * (float)M_PI;
+                if (fabsf(diff) > MELEE_ARC) return;
+                target.takeDamage(MELEE_PLAYER_DAMAGE);
+                camera_.addShake(1.8f);
+                if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                if (target.dead) {
+                    if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
+                    camera_.addShake(4.0f);
+                    if (net.isInGame()) net.sendPlayerDied(targetId, 0);
+                }
+            };
+            if ((state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) || pvpActive) {
+                for (int ci = 0; ci < 4; ci++) {
+                    if (!coopSlots_[ci].joined) continue;
+                    if (&coopSlots_[ci].player == &player_) continue; // don't hit self
+                    doPvpMeleeHit(coopSlots_[ci].player, (uint8_t)ci);
+                }
+            }
+        }
+
+        if (p.meleeTimer >= MELEE_DURATION) {
+            p.isMeleeSwinging   = false;
+            p.meleeSwingReverse = !p.meleeSwingReverse; // alternate next swing direction
+            p.meleeCooldown     = MELEE_COOLDOWN_TIME;
+        }
+    }
 
     // ── Bombs ──
     if (!spectatorMode_) {
@@ -4014,9 +4111,16 @@ void Game::resolveCollisions() {
     // the killer also sends EnemyKilled so the host/others stay in sync.
     for (auto& b : bullets_) {
         if (!b.alive) continue;
-        for (auto& e : enemies_) {
+        for (size_t ei = 0; ei < enemies_.size(); ++ei) {
+            auto& e = enemies_[ei];
             if (!e.alive) continue;
             if (circleOverlap(b.pos, b.size, e.pos, e.size * 0.7f)) {
+                // Piercing: skip enemies already struck by this bullet
+                if (b.piercing) {
+                    if (std::find(b.hitEnemies.begin(), b.hitEnemies.end(), (uint32_t)ei) != b.hitEnemies.end())
+                        continue;
+                    b.hitEnemies.push_back((uint32_t)ei);
+                }
                 // Visual feedback on all peers
                 e.damageFlash = 1.0f;
                 // Blood splatter — visual only, runs on all peers
@@ -4122,7 +4226,7 @@ void Game::resolveCollisions() {
                         }
                     }
                 }
-                break;
+                if (!b.piercing) break;
             }
         }
     }
@@ -8071,6 +8175,7 @@ void Game::handleLocalCoopInput() {
         coopSlots_[i].fireInput  = (rt > 0.25f);
         coopSlots_[i].bombInput  = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_X);
         coopSlots_[i].parryInput = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_LEFTSHOULDER);
+        coopSlots_[i].meleeInput = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER);
         coopSlots_[i].pauseInput = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_START);
         if (coopSlots_[i].pauseInput && state_ == GameState::LocalCoopGame) {
             state_ = GameState::LocalCoopPaused;
@@ -8085,6 +8190,7 @@ void Game::handleLocalCoopInput() {
     coopSlots_[0].fireInput  = fireInput_;
     coopSlots_[0].bombInput  = bombInput_;
     coopSlots_[0].parryInput = parryInput_;
+    coopSlots_[0].meleeInput = meleeInput_;
 
     const float dead = 0.18f;
     // Slots 1-3 = gamepads: read from their assigned controller by joystick instance ID
@@ -8104,6 +8210,7 @@ void Game::handleLocalCoopInput() {
         coopSlots_[i].fireInput  = (rt > 0.25f);
         coopSlots_[i].bombInput  = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_X);
         coopSlots_[i].parryInput = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_LEFTSHOULDER);
+        coopSlots_[i].meleeInput = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER);
         coopSlots_[i].pauseInput = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_START);
         if (coopSlots_[i].pauseInput && state_ == GameState::LocalCoopGame) {
             state_ = GameState::LocalCoopPaused;
@@ -8120,7 +8227,7 @@ void Game::updateLocalCoopPlayers(float dt) {
         Player         savedPlayer  = player_;
         PlayerUpgrades savedUpg     = upgrades_;
         Vec2  savedMove = moveInput_, savedAim = aimInput_;
-        bool  savedFire = fireInput_, savedBomb = bombInput_, savedParry = parryInput_;
+        bool  savedFire = fireInput_, savedBomb = bombInput_, savedParry = parryInput_, savedMelee = meleeInput_;
 
         player_    = coopSlots_[i].player;
         upgrades_  = coopSlots_[i].upgrades;
@@ -8129,6 +8236,7 @@ void Game::updateLocalCoopPlayers(float dt) {
         fireInput_ = coopSlots_[i].fireInput;
         bombInput_ = coopSlots_[i].bombInput;
         parryInput_= coopSlots_[i].parryInput;
+        meleeInput_= coopSlots_[i].meleeInput;
 
         updatePlayer(dt);
 
@@ -8149,7 +8257,7 @@ void Game::updateLocalCoopPlayers(float dt) {
 
         player_    = savedPlayer;  upgrades_  = savedUpg;
         moveInput_ = savedMove;    aimInput_  = savedAim;
-        fireInput_ = savedFire;    bombInput_ = savedBomb;  parryInput_ = savedParry;
+        fireInput_ = savedFire;    bombInput_ = savedBomb;  parryInput_ = savedParry;  meleeInput_ = savedMelee;
     }
     // Sync primary state to first joined slot
     for (int i = 0; i < 4; i++) {
