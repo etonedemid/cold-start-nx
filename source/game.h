@@ -400,6 +400,7 @@ private:
     void spawnBullet(Vec2 pos, float angle);
     void spawnEnemyBullet(Vec2 pos, Vec2 target, float angleOffset = 0.0f);
     void spawnExplosion(Vec2 pos, uint8_t ownerId = 255);
+    void spawnPlayerDeathEffect(Vec2 pos);
     void spawnBomb();
     Vec2 pickSpawnPos();  // team-corner or random spawn (multiplayer)
     void spawnEnemy(Vec2 pos, EnemyType type);
