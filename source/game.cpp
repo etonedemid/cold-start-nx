@@ -814,6 +814,7 @@ void Game::handleInput() {
     bombLaunchInput_ = false;
     parryInput_ = false;
     meleeInput_ = false;
+    weaponSwitchDelta_ = 0;
     pauseInput_ = false;
     confirmInput_ = false;
     backInput_ = false;
@@ -981,7 +982,7 @@ void Game::handleInput() {
                 case SDL_CONTROLLER_BUTTON_A:        confirmInput_ = true; if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); } break;
                 case SDL_CONTROLLER_BUTTON_B:        backInput_ = true; break;
                 case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: parryInput_ = true; break;
-                case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: meleeInput_ = true; break;
+                case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: weaponSwitchDelta_ += 1; break;
                 case SDL_CONTROLLER_BUTTON_X:        bombInput_ = true; break;
                 case SDL_CONTROLLER_BUTTON_Y:        tabInput_ = true; break;
                 case SDL_CONTROLLER_BUTTON_DPAD_UP:  menuSelection_--; if (sfxBeep_) { int ch = Mix_PlayChannel(-1, sfxBeep_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); } break;
@@ -998,6 +999,8 @@ void Game::handleInput() {
                 case SDLK_BACKSPACE: backInput_ = true; break;
                 case SDLK_SPACE:  parryInput_ = true; break;
                 case SDLK_e:     meleeInput_ = true; break;
+                case SDLK_1:     player_.activeWeapon = 0; break;
+                case SDLK_2:     player_.activeWeapon = 1; break;
                 case SDLK_q:     bombInput_ = true; break;
                 case SDLK_TAB:   tabInput_ = true; break;
                 case SDLK_UP:    menuSelection_--; break;
@@ -1009,6 +1012,10 @@ void Game::handleInput() {
                     SDL_SetWindowFullscreen(window_, config_.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
                     break;
             }
+        }
+
+        if (e.type == SDL_MOUSEWHEEL) {
+            weaponSwitchDelta_ += (e.wheel.y > 0) ? 1 : (e.wheel.y < 0 ? -1 : 0);
         }
 
         // Mouse movement switches to mouse/keyboard mode
@@ -2606,6 +2613,13 @@ void Game::updatePlayer(float dt) {
         return;
     }
 
+    // ── Weapon switch ──
+    constexpr int NUM_WEAPONS = 2;
+    if (weaponSwitchDelta_ != 0) {
+        p.activeWeapon = ((p.activeWeapon + weaponSwitchDelta_) % NUM_WEAPONS + NUM_WEAPONS) % NUM_WEAPONS;
+        weaponSwitchDelta_ = 0;
+    }
+
     // ── Movement ──
     Vec2 targetVel = {0, 0};
     p.moving = moveInput_.lengthSq() > 0.01f;
@@ -2664,6 +2678,9 @@ void Game::updatePlayer(float dt) {
         // when swing completed, so: next=reverse → last was forward → idle at LAST=9;
         //                            next=forward → last was reverse → idle at FIRST=3)
         p.animFrame = p.meleeSwingReverse ? MELEE_ANIM_LAST : MELEE_ANIM_FIRST;
+    } else if (p.activeWeapon == 1) {
+        // Axe equipped but never swung yet — hold the axe-ready pose (sprite 0004)
+        p.animFrame = MELEE_ANIM_FIRST;
     } else {
         // Normal shooting animation
         p.shootAnimTimer -= dt;
@@ -2697,7 +2714,7 @@ void Game::updatePlayer(float dt) {
 
     // ── Shooting ──
     p.fireCooldown -= dt;
-    if (!spectatorMode_) {
+    if (!spectatorMode_ && p.activeWeapon == 0) {  // gun slot only
     if (p.reloading) {
         p.reloadTimer -= dt;
         if (p.reloadTimer <= 0) {
@@ -2727,7 +2744,7 @@ void Game::updatePlayer(float dt) {
         p.reloadTimer = p.reloadTime;
         if (sfxReload_) { int ch = Mix_PlayChannel(-1, sfxReload_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
     }
-    } // !spectatorMode_
+    } // gun slot only (!spectatorMode_ && activeWeapon==0)
 
     // ── Parry ──
     if (!spectatorMode_) {
@@ -2749,7 +2766,9 @@ void Game::updatePlayer(float dt) {
     // ── Melee (axe swing) ──
     if (p.meleeCooldown > 0) p.meleeCooldown -= dt;
     if (!spectatorMode_) {
-        if (meleeInput_ && !p.isMeleeSwinging && p.meleeCooldown <= 0) {
+        // Trigger: dedicated E key OR fire trigger when axe is equipped
+        bool doMelee = meleeInput_ || (p.activeWeapon == 1 && fireInput_);
+        if (doMelee && !p.isMeleeSwinging && p.meleeCooldown <= 0) {
             p.isMeleeSwinging = true;
             p.meleeTimer      = 0.0f;
             p.meleeHit        = false;
@@ -5858,15 +5877,27 @@ void Game::renderUI() {
         drawText(hpStr, 20, 20, 24, hpColor);
     }
 
-    // Ammo display
+    // Weapon indicator (y=52)
     {
+        const char* wpnNames[] = { "GUN", "AXE" };
+        int nw = 2;
+        for (int i = 0; i < nw; i++) {
+            bool active = (i == player_.activeWeapon);
+            SDL_Color c = active ? SDL_Color{255, 220, 60, 255} : SDL_Color{120, 120, 120, 180};
+            int fw = active ? 20 : 16;
+            drawText(wpnNames[i], 20 + i * 60, 52, fw, c);
+        }
+    }
+
+    // Ammo display — shown below weapon label when gun is active (y=76)
+    if (player_.activeWeapon == 0) {
         char ammoStr[32];
         if (player_.reloading) {
             snprintf(ammoStr, sizeof(ammoStr), "RELOAD");
         } else {
             snprintf(ammoStr, sizeof(ammoStr), "%d/%d", player_.ammo, player_.maxAmmo);
         }
-        drawText(ammoStr, 20, 52, 20, white);
+        drawText(ammoStr, 20, 76, 18, white);
     }
 
     // Bomb count: orbiting (ready-to-launch) + reserve
@@ -5877,7 +5908,7 @@ void Game::renderUI() {
         if (totalBombs > 0) {
             char bombStr[32];
             snprintf(bombStr, sizeof(bombStr), "BOMBS: %d", totalBombs);
-            drawText(bombStr, 20, 80, 16, {255, 180, 50, 255});
+            drawText(bombStr, 20, 100, 16, {255, 180, 50, 255});
         }
     }
 
@@ -8175,7 +8206,8 @@ void Game::handleLocalCoopInput() {
         coopSlots_[i].fireInput  = (rt > 0.25f);
         coopSlots_[i].bombInput  = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_X);
         coopSlots_[i].parryInput = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_LEFTSHOULDER);
-        coopSlots_[i].meleeInput = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER);
+        coopSlots_[i].meleeInput = false;  // no dedicated quick-melee on gamepad; use axe slot
+        coopSlots_[i].weaponSwitchInput = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) ? 1 : 0;
         coopSlots_[i].pauseInput = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_START);
         if (coopSlots_[i].pauseInput && state_ == GameState::LocalCoopGame) {
             state_ = GameState::LocalCoopPaused;
@@ -8191,6 +8223,7 @@ void Game::handleLocalCoopInput() {
     coopSlots_[0].bombInput  = bombInput_;
     coopSlots_[0].parryInput = parryInput_;
     coopSlots_[0].meleeInput = meleeInput_;
+    coopSlots_[0].weaponSwitchInput = weaponSwitchDelta_;
 
     const float dead = 0.18f;
     // Slots 1-3 = gamepads: read from their assigned controller by joystick instance ID
@@ -8210,7 +8243,8 @@ void Game::handleLocalCoopInput() {
         coopSlots_[i].fireInput  = (rt > 0.25f);
         coopSlots_[i].bombInput  = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_X);
         coopSlots_[i].parryInput = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_LEFTSHOULDER);
-        coopSlots_[i].meleeInput = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER);
+        coopSlots_[i].meleeInput = false;  // no dedicated quick-melee on gamepad; use axe slot
+        coopSlots_[i].weaponSwitchInput = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) ? 1 : 0;
         coopSlots_[i].pauseInput = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_START);
         if (coopSlots_[i].pauseInput && state_ == GameState::LocalCoopGame) {
             state_ = GameState::LocalCoopPaused;
@@ -8228,6 +8262,7 @@ void Game::updateLocalCoopPlayers(float dt) {
         PlayerUpgrades savedUpg     = upgrades_;
         Vec2  savedMove = moveInput_, savedAim = aimInput_;
         bool  savedFire = fireInput_, savedBomb = bombInput_, savedParry = parryInput_, savedMelee = meleeInput_;
+        int   savedWeaponSwitch = weaponSwitchDelta_;
 
         player_    = coopSlots_[i].player;
         upgrades_  = coopSlots_[i].upgrades;
@@ -8237,6 +8272,7 @@ void Game::updateLocalCoopPlayers(float dt) {
         bombInput_ = coopSlots_[i].bombInput;
         parryInput_= coopSlots_[i].parryInput;
         meleeInput_= coopSlots_[i].meleeInput;
+        weaponSwitchDelta_ = coopSlots_[i].weaponSwitchInput;
 
         updatePlayer(dt);
 
@@ -8258,6 +8294,7 @@ void Game::updateLocalCoopPlayers(float dt) {
         player_    = savedPlayer;  upgrades_  = savedUpg;
         moveInput_ = savedMove;    aimInput_  = savedAim;
         fireInput_ = savedFire;    bombInput_ = savedBomb;  parryInput_ = savedParry;  meleeInput_ = savedMelee;
+        weaponSwitchDelta_ = savedWeaponSwitch;
     }
     // Sync primary state to first joined slot
     for (int i = 0; i < 4; i++) {
