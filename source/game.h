@@ -126,6 +126,7 @@ struct CoopSlot {
     bool  fireInput  = false;
     bool  bombInput  = false;
     bool  parryInput = false;
+    bool  meleeInput = false;
     bool  pauseInput = false;
 };
 
@@ -195,6 +196,7 @@ private:
     bool bombLaunchInput_ = false;
     bool bombLaunchHeld_ = false;  // debounce for trigger
     bool parryInput_ = false;
+    bool meleeInput_ = false;
     bool pauseInput_ = false;
     bool confirmInput_ = false;
     bool usingGamepad_ = false;  // true when last input was from a gamepad (shows soft KB on PC)
