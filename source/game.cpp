@@ -3521,6 +3521,23 @@ void Game::updateBullets(float dt) {
         if (map_.isSolid(tx, ty)) {
             // Check if it's a breakable box
             if (map_.get(tx, ty) == TILE_BOX) {
+                if (b.explosive) {
+                    for (int i = 0; i < 10; i++) {
+                        BoxFragment f;
+                        f.pos = b.pos;
+                        float ang = (float)(rand() % 360) * (float)M_PI / 180.0f;
+                        float spd = 90.0f + (float)(rand() % 210);
+                        f.vel = {cosf(ang) * spd, sinf(ang) * spd};
+                        f.size = 2.0f + (float)(rand() % 4);
+                        f.lifetime = 0.18f + (float)(rand() % 20) / 100.0f;
+                        f.age = 0.0f; f.alive = true;
+                        f.rotation = (float)(rand() % 360);
+                        f.rotSpeed = (float)(rand() % 500 - 250);
+                        f.color = {255, (Uint8)(140 + rand() % 50), (Uint8)(40 + rand() % 30), 255};
+                        boxFragments_.push_back(f);
+                    }
+                    camera_.addShake(1.8f);
+                }
                 destroyBox(tx, ty);
                 b.alive = false;
             } else if (upgrades_.hasRicochet && b.bounces < 3) {
@@ -3554,6 +3571,23 @@ void Game::updateBullets(float dt) {
                     boxFragments_.push_back(f);
                 }
             } else {
+                if (b.explosive) {
+                    for (int i = 0; i < 10; i++) {
+                        BoxFragment f;
+                        f.pos = b.pos;
+                        float ang = (float)(rand() % 360) * (float)M_PI / 180.0f;
+                        float spd = 90.0f + (float)(rand() % 210);
+                        f.vel = {cosf(ang) * spd, sinf(ang) * spd};
+                        f.size = 2.0f + (float)(rand() % 4);
+                        f.lifetime = 0.18f + (float)(rand() % 20) / 100.0f;
+                        f.age = 0.0f; f.alive = true;
+                        f.rotation = (float)(rand() % 360);
+                        f.rotSpeed = (float)(rand() % 500 - 250);
+                        f.color = {255, (Uint8)(140 + rand() % 50), (Uint8)(40 + rand() % 30), 255};
+                        boxFragments_.push_back(f);
+                    }
+                    camera_.addShake(1.8f);
+                }
                 // Bullet shatter sparks on wall hit
                 int numSparks = 4 + rand() % 4;
                 for (int i = 0; i < numSparks; i++) {
@@ -3620,14 +3654,16 @@ void Game::spawnBullet(Vec2 pos, float angle) {
     Vec2 fwd = Vec2::fromAngle(angle);
     Vec2 right = {-fwd.y, fwd.x}; // perpendicular right
     b.pos = pos + fwd * 30.0f + right * GUN_OFFSET_RIGHT;
-    b.vel = Vec2::fromAngle(angle) * BULLET_SPEED;
+    b.vel = Vec2::fromAngle(angle) * (BULLET_SPEED * upgrades_.bulletSpeedMulti);
     b.rotation = angle;
-    b.size = BULLET_SIZE;
-    b.lifetime = BULLET_LIFETIME;
+    b.size = BULLET_SIZE + upgrades_.bulletSizeBonus;
+    b.lifetime = BULLET_LIFETIME * std::max(1.0f, upgrades_.bulletSpeedMulti * 0.92f);
     b.tag = TAG_BULLET;
     b.sprite = bulletSprite_;
     b.damage = std::max(1, (int)roundf(upgrades_.damageMulti));
     b.piercing = upgrades_.hasPiercing;
+    b.explosive = upgrades_.hasExplosiveTips;
+    b.chainLightning = upgrades_.hasChainLightning;
 
     // Assign a stable network ID so remote peers can remove this bullet on hit
     auto& net = NetworkManager::instance();
@@ -4310,6 +4346,108 @@ void Game::spawnEnemy(Vec2 pos, EnemyType type) {
 void Game::resolveCollisions() {
     Player& p = player_;
     auto& net = NetworkManager::instance();
+    const bool simAuth = !net.isOnline() || net.isHost() || (net.isConnectedToDedicated() && net.isLobbyHost());
+
+    auto creditEnemyKill = [&](Enemy& enemy, uint8_t ownerId) {
+        uint32_t eIdx = (uint32_t)(&enemy - &enemies_[0]);
+        bool trackKill = !net.isOnline() || ownerId == net.localPlayerId();
+        killEnemy(enemy, trackKill);
+        if ((state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) &&
+            ownerId < 4 && coopSlots_[ownerId].joined)
+            coopSlots_[ownerId].kills++;
+        if (net.isInGame()) {
+            net.sendEnemyKilled(eIdx, ownerId);
+            enemyStatesNeedUpdate_ = true;
+        }
+    };
+
+    auto spawnBulletBurstFX = [&](Vec2 pos, SDL_Color color, int count, float shake) {
+        for (int i = 0; i < count; i++) {
+            BoxFragment f;
+            f.pos = {pos.x + (float)(rand() % 14 - 7), pos.y + (float)(rand() % 14 - 7)};
+            float ang = (float)(rand() % 360) * (float)M_PI / 180.0f;
+            float spd = 90.0f + (float)(rand() % 210);
+            f.vel = {cosf(ang) * spd, sinf(ang) * spd};
+            f.size = 2.0f + (float)(rand() % 4);
+            f.lifetime = 0.18f + (float)(rand() % 20) / 100.0f;
+            f.age = 0.0f;
+            f.alive = true;
+            f.rotation = (float)(rand() % 360);
+            f.rotSpeed = (float)(rand() % 500 - 250);
+            int v = rand() % 40 - 20;
+            f.color = {
+                (Uint8)std::clamp((int)color.r + v, 0, 255),
+                (Uint8)std::clamp((int)color.g + v, 0, 255),
+                (Uint8)std::clamp((int)color.b + v, 0, 255),
+                255
+            };
+            boxFragments_.push_back(f);
+        }
+        camera_.addShake(shake);
+    };
+
+    auto triggerExplosiveTip = [&](Entity& b, Vec2 pos, int skipEnemy) {
+        if (!b.explosive) return;
+        float radius = 72.0f;
+        int splashDamage = std::max(1, b.damage / 2);
+        spawnBulletBurstFX(pos, {255, 165, 70, 255}, 10, 1.8f);
+        if (simAuth) {
+            for (size_t i = 0; i < enemies_.size(); ++i) {
+                if ((int)i == skipEnemy) continue;
+                auto& ex = enemies_[i];
+                if (!ex.alive) continue;
+                if (Vec2::dist(pos, ex.pos) > radius + ex.size) continue;
+                ex.damageFlash = 1.0f;
+                ex.hp -= splashDamage;
+                if (upgrades_.hasStunRounds) ex.stunTimer = std::max(ex.stunTimer, 0.4f);
+                if (ex.hp <= 0) creditEnemyKill(ex, b.ownerId);
+            }
+            int minTx = TileMap::toTile(pos.x - radius);
+            int maxTx = TileMap::toTile(pos.x + radius);
+            int minTy = TileMap::toTile(pos.y - radius);
+            int maxTy = TileMap::toTile(pos.y + radius);
+            for (int ty = minTy; ty <= maxTy; ty++) {
+                for (int tx = minTx; tx <= maxTx; tx++) {
+                    if (map_.get(tx, ty) != TILE_BOX) continue;
+                    Vec2 bp = {TileMap::toWorld(tx), TileMap::toWorld(ty)};
+                    if (Vec2::dist(pos, bp) <= radius) destroyBox(tx, ty);
+                }
+            }
+        }
+    };
+
+    auto triggerChainLightning = [&](Entity& b, Vec2 pos, int primaryEnemy) {
+        if (!b.chainLightning) return;
+        int jumps = 0;
+        for (size_t pass = 0; pass < 2; ++pass) {
+            float bestDist = 170.0f;
+            int bestIdx = -1;
+            for (size_t i = 0; i < enemies_.size(); ++i) {
+                if ((int)i == primaryEnemy) continue;
+                auto& ex = enemies_[i];
+                if (!ex.alive) continue;
+                if (std::find(b.hitEnemies.begin(), b.hitEnemies.end(), (uint32_t)i) != b.hitEnemies.end()) continue;
+                float d = Vec2::dist(pos, ex.pos);
+                if (d < bestDist) { bestDist = d; bestIdx = (int)i; }
+            }
+            if (bestIdx < 0) break;
+            auto& ex = enemies_[(size_t)bestIdx];
+            b.hitEnemies.push_back((uint32_t)bestIdx);
+            spawnBulletBurstFX(ex.pos, {120, 230, 255, 255}, 7, 0.8f);
+            ex.damageFlash = 1.0f;
+            if (simAuth) {
+                ex.hp -= std::max(1, b.damage / 2);
+                ex.stunTimer = std::max(ex.stunTimer, 0.65f);
+                if (ex.hp <= 0) creditEnemyKill(ex, b.ownerId);
+            }
+            pos = ex.pos;
+            jumps++;
+        }
+        if (jumps > 0 && sfxParry_) {
+            int ch = Mix_PlayChannel(-1, sfxParry_, 0);
+            if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 3);
+        }
+    };
 
     // Player bullets vs enemies — all peers resolve locally for instant feedback;
     // the killer also sends EnemyKilled so the host/others stay in sync.
@@ -4404,8 +4542,10 @@ void Game::resolveCollisions() {
                         net.sendBulletHit(b.netId);
                     }
                 }
+                triggerExplosiveTip(b, b.pos, (int)ei);
+                triggerChainLightning(b, b.pos, (int)ei);
                 // State changes are authoritative on: offline, P2P host, or dedicated-server lobby-host
-                if (!net.isOnline() || net.isHost() || (net.isConnectedToDedicated() && net.isLobbyHost())) {
+                if (simAuth) {
                     e.hp -= b.damage;
                     if (upgrades_.hasStunRounds) e.stunTimer = std::max(e.stunTimer, 0.75f);
                     // Aggro — target the player who shot this bullet
@@ -4414,20 +4554,7 @@ void Game::resolveCollisions() {
                     e.idleTimer    = 0;
                     if (b.ownerId != 255) e.targetPlayerId = b.ownerId;
                     if (e.hp <= 0) {
-                        uint32_t eIdx = (uint32_t)(&e - &enemies_[0]);
-                        // In singleplayer b.ownerId is 255 (default), so always track.
-                        // In multiplayer, only credit kills for the local player's bullets.
-                        bool trackKill = !net.isOnline() || b.ownerId == net.localPlayerId();
-                        killEnemy(e, trackKill);
-                        // Local co-op kill tracking
-                        if ((state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) &&
-                            b.ownerId < 4 && coopSlots_[b.ownerId].joined)
-                            coopSlots_[b.ownerId].kills++;
-                        // Broadcast kill — pass actual killer so clients credit the right player
-                        if (net.isInGame()) {
-                            net.sendEnemyKilled(eIdx, b.ownerId);
-                            enemyStatesNeedUpdate_ = true;
-                        }
+                        creditEnemyKill(e, b.ownerId);
                     }
                 }
                 if (!b.piercing) break;
@@ -10937,6 +11064,12 @@ void Game::applyUpgrade(UpgradeType type) {
             break;
         case UpgradeType::StunRounds:
         case UpgradeType::Scavenger:
+        case UpgradeType::ExplosiveTips:
+        case UpgradeType::ChainLightning:
+            break;
+        case UpgradeType::RailSlugs:
+            player_.fireRate = std::max(1.8f, player_.fireRate * 0.94f);
+            break;
         case UpgradeType::SharpenedEdge:
         case UpgradeType::Bloodlust:
         case UpgradeType::ShockEdge:
