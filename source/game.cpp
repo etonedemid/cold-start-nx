@@ -295,6 +295,12 @@ bool Game::init() {
         }
     }
 
+    sceneTarget_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA8888,
+        SDL_TEXTUREACCESS_TARGET, SCREEN_W, SCREEN_H);
+    if (sceneTarget_) {
+        SDL_SetTextureBlendMode(sceneTarget_, SDL_BLENDMODE_BLEND);
+    }
+
     // Start main menu music
     if (menuMusic_) {
         Mix_PlayMusic(menuMusic_, -1);
@@ -498,6 +504,7 @@ void Game::shutdown() {
     for (auto& cd : availableChars_) cd.unload();
     ui_.shutdown();
     Assets::instance().shutdown();
+    if (sceneTarget_) SDL_DestroyTexture(sceneTarget_);
     if (vignetteTex_) SDL_DestroyTexture(vignetteTex_);
     Mix_HaltMusic();
     if (customMapMusic_) { Mix_FreeMusic(customMapMusic_); customMapMusic_ = nullptr; }
@@ -2805,7 +2812,7 @@ void Game::updatePlayer(float dt) {
             p.hadMeleeSwing   = true;
             p.meleeBloodlustProc = false;
             p.vel = p.vel + Vec2::fromAngle(p.rotation) * (140.0f + std::min(60.0f, upgrades_.speedBonus * 0.12f));
-            camera_.addShake(0.8f);
+            camera_.addShake(0.45f);
             if (sfxSwoosh_) { int ch = Mix_PlayChannel(-1, sfxSwoosh_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
         }
     }
@@ -2856,7 +2863,7 @@ void Game::updatePlayer(float dt) {
                     pu.pos = c.pos;
                     pu.type = c.contents;
                     pickups_.push_back(pu);
-                    spawnMeleeImpact(c.pos, {170, 110, 55, 255}, heavyBreak ? 18 : 14, heavyBreak ? 3.2f : 2.6f);
+                    spawnMeleeImpact(c.pos, {170, 110, 55, 255}, heavyBreak ? 18 : 14, heavyBreak ? 1.35f : 1.05f);
                     screenFlashTimer_ = 0.06f;
                     screenFlashR_ = 255; screenFlashG_ = 200; screenFlashB_ = 50;
                     if (sfxBreak_) { int ch = Mix_PlayChannel(-1, sfxBreak_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
@@ -2917,7 +2924,7 @@ void Game::updatePlayer(float dt) {
                 if (dist > meleeRange + e.size) continue;
                 if (!angleDiffOk(toEnemy)) continue;
                 e.damageFlash = 1.0f;
-                spawnMeleeImpact(e.pos, {170, 15, 15, 255}, 10 + std::max(0, meleePlayerDamage - MELEE_PLAYER_DAMAGE) * 2, 2.6f);
+                spawnMeleeImpact(e.pos, {170, 15, 15, 255}, 10 + std::max(0, meleePlayerDamage - MELEE_PLAYER_DAMAGE) * 2, 1.15f);
                 if (upgrades_.hasShockEdge || upgrades_.hasStunRounds) emitShockPulse(e.pos);
                 if (simAuth) {
                     e.hp = -9999.0f;
@@ -2948,7 +2955,7 @@ void Game::updatePlayer(float dt) {
                         float dist = toBox.length();
                         if (dist > meleeRange + TILE_SIZE * 0.5f) continue;
                         if (!angleDiffOk(toBox)) continue;
-                        spawnMeleeImpact({wx, wy}, {165, 110, 60, 255}, upgrades_.hasShockEdge ? 16 : 12, upgrades_.hasShockEdge ? 3.0f : 2.3f);
+                        spawnMeleeImpact({wx, wy}, {165, 110, 60, 255}, upgrades_.hasShockEdge ? 16 : 12, upgrades_.hasShockEdge ? 1.2f : 0.95f);
                         destroyBox(btx, bty);
                         if (upgrades_.hasBloodlust) p.meleeBloodlustProc = true;
                         if (upgrades_.hasShockEdge) emitShockPulse({wx, wy});
@@ -2974,7 +2981,7 @@ void Game::updatePlayer(float dt) {
                 if (dist > meleeRange + PLAYER_SIZE) return;
                 if (!angleDiffOk(toTarget)) return;
                 target.takeDamage(meleePlayerDamage);
-                spawnMeleeImpact(target.pos, {255, 60, 60, 255}, 10, 2.2f);
+                spawnMeleeImpact(target.pos, {255, 60, 60, 255}, 10, 1.1f);
                 if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
                 if (target.dead) {
                     if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
@@ -3488,6 +3495,8 @@ Vec2 Game::steerToward(Vec2 from, Vec2 to, float spd, float dt) const {
 // ═════════════════════════════════════════════════════════════════════════════
 
 void Game::updateBullets(float dt) {
+    const bool bulletSimAuth = !NetworkManager::instance().isOnline() || NetworkManager::instance().isHost() ||
+        (NetworkManager::instance().isConnectedToDedicated() && NetworkManager::instance().isLobbyHost());
     for (auto& b : bullets_) {
         b.tick(dt);
         // Magnet upgrade — gently steer bullets toward the nearest alive enemy
@@ -3521,24 +3530,8 @@ void Game::updateBullets(float dt) {
         if (map_.isSolid(tx, ty)) {
             // Check if it's a breakable box
             if (map_.get(tx, ty) == TILE_BOX) {
-                if (b.explosive) {
-                    for (int i = 0; i < 10; i++) {
-                        BoxFragment f;
-                        f.pos = b.pos;
-                        float ang = (float)(rand() % 360) * (float)M_PI / 180.0f;
-                        float spd = 90.0f + (float)(rand() % 210);
-                        f.vel = {cosf(ang) * spd, sinf(ang) * spd};
-                        f.size = 2.0f + (float)(rand() % 4);
-                        f.lifetime = 0.18f + (float)(rand() % 20) / 100.0f;
-                        f.age = 0.0f; f.alive = true;
-                        f.rotation = (float)(rand() % 360);
-                        f.rotSpeed = (float)(rand() % 500 - 250);
-                        f.color = {255, (Uint8)(140 + rand() % 50), (Uint8)(40 + rand() % 30), 255};
-                        boxFragments_.push_back(f);
-                    }
-                    camera_.addShake(1.8f);
-                }
                 destroyBox(tx, ty);
+                if (b.explosive) spawnBulletExplosion(b.pos, b.damage, b.ownerId, -1, bulletSimAuth);
                 b.alive = false;
             } else if (upgrades_.hasRicochet && b.bounces < 3) {
                 // Determine which axis caused the collision
@@ -3571,23 +3564,7 @@ void Game::updateBullets(float dt) {
                     boxFragments_.push_back(f);
                 }
             } else {
-                if (b.explosive) {
-                    for (int i = 0; i < 10; i++) {
-                        BoxFragment f;
-                        f.pos = b.pos;
-                        float ang = (float)(rand() % 360) * (float)M_PI / 180.0f;
-                        float spd = 90.0f + (float)(rand() % 210);
-                        f.vel = {cosf(ang) * spd, sinf(ang) * spd};
-                        f.size = 2.0f + (float)(rand() % 4);
-                        f.lifetime = 0.18f + (float)(rand() % 20) / 100.0f;
-                        f.age = 0.0f; f.alive = true;
-                        f.rotation = (float)(rand() % 360);
-                        f.rotSpeed = (float)(rand() % 500 - 250);
-                        f.color = {255, (Uint8)(140 + rand() % 50), (Uint8)(40 + rand() % 30), 255};
-                        boxFragments_.push_back(f);
-                    }
-                    camera_.addShake(1.8f);
-                }
+                if (b.explosive) spawnBulletExplosion(b.pos, b.damage, b.ownerId, -1, bulletSimAuth);
                 // Bullet shatter sparks on wall hit
                 int numSparks = 4 + rand() % 4;
                 for (int i = 0; i < numSparks; i++) {
@@ -3719,6 +3696,71 @@ void Game::spawnEnemyBullet(Vec2 pos, Vec2 target, float angleOffset) {
     auto& net = NetworkManager::instance();
     if (net.isHost() && net.isInGame()) {
         net.sendEnemyBulletSpawn(b.pos, dir);
+    }
+}
+
+void Game::spawnBulletExplosion(Vec2 pos, int damage, uint8_t ownerId, int skipEnemyIdx, bool applyDamage) {
+    auto& net = NetworkManager::instance();
+    const float radius = 72.0f;
+    const int splashDamage = std::max(1, damage / 2);
+
+    for (int i = 0; i < 14; i++) {
+        BoxFragment f;
+        f.pos = {pos.x + (float)(rand() % 18 - 9), pos.y + (float)(rand() % 18 - 9)};
+        float ang = (float)(rand() % 360) * (float)M_PI / 180.0f;
+        float spd = 90.0f + (float)(rand() % 240);
+        f.vel = {cosf(ang) * spd, sinf(ang) * spd};
+        f.size = 2.5f + (float)(rand() % 5);
+        f.lifetime = 0.22f + (float)(rand() % 22) / 100.0f;
+        f.age = 0.0f;
+        f.alive = true;
+        f.rotation = (float)(rand() % 360);
+        f.rotSpeed = (float)(rand() % 560 - 280);
+        f.color = {255, (Uint8)(145 + rand() % 70), (Uint8)(35 + rand() % 35), 255};
+        boxFragments_.push_back(f);
+    }
+    camera_.addShake(1.6f);
+    screenFlashTimer_ = std::max(screenFlashTimer_, 0.035f);
+    screenFlashR_ = 255; screenFlashG_ = 150; screenFlashB_ = 50;
+    if (sfxExplosion_) {
+        int ch = Mix_PlayChannel(-1, sfxExplosion_, 0);
+        if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 3);
+    }
+
+    if (!applyDamage) return;
+
+    for (size_t i = 0; i < enemies_.size(); ++i) {
+        if ((int)i == skipEnemyIdx) continue;
+        auto& e = enemies_[i];
+        if (!e.alive) continue;
+        if (Vec2::dist(pos, e.pos) > radius + e.size) continue;
+        e.damageFlash = 1.0f;
+        e.hp -= splashDamage;
+        if (upgrades_.hasStunRounds) e.stunTimer = std::max(e.stunTimer, 0.4f);
+        if (e.hp <= 0) {
+            uint32_t eIdx = (uint32_t)i;
+            bool trackKill = !net.isOnline() || ownerId == net.localPlayerId();
+            killEnemy(e, trackKill);
+            if ((state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) &&
+                ownerId < 4 && coopSlots_[ownerId].joined)
+                coopSlots_[ownerId].kills++;
+            if (net.isInGame()) {
+                net.sendEnemyKilled(eIdx, ownerId);
+                enemyStatesNeedUpdate_ = true;
+            }
+        }
+    }
+
+    int minTx = TileMap::toTile(pos.x - radius);
+    int maxTx = TileMap::toTile(pos.x + radius);
+    int minTy = TileMap::toTile(pos.y - radius);
+    int maxTy = TileMap::toTile(pos.y + radius);
+    for (int ty = minTy; ty <= maxTy; ty++) {
+        for (int tx = minTx; tx <= maxTx; tx++) {
+            if (map_.get(tx, ty) != TILE_BOX) continue;
+            Vec2 bp = {TileMap::toWorld(tx), TileMap::toWorld(ty)};
+            if (Vec2::dist(pos, bp) <= radius) destroyBox(tx, ty);
+        }
     }
 }
 
@@ -4388,32 +4430,7 @@ void Game::resolveCollisions() {
 
     auto triggerExplosiveTip = [&](Entity& b, Vec2 pos, int skipEnemy) {
         if (!b.explosive) return;
-        float radius = 72.0f;
-        int splashDamage = std::max(1, b.damage / 2);
-        spawnBulletBurstFX(pos, {255, 165, 70, 255}, 10, 1.8f);
-        if (simAuth) {
-            for (size_t i = 0; i < enemies_.size(); ++i) {
-                if ((int)i == skipEnemy) continue;
-                auto& ex = enemies_[i];
-                if (!ex.alive) continue;
-                if (Vec2::dist(pos, ex.pos) > radius + ex.size) continue;
-                ex.damageFlash = 1.0f;
-                ex.hp -= splashDamage;
-                if (upgrades_.hasStunRounds) ex.stunTimer = std::max(ex.stunTimer, 0.4f);
-                if (ex.hp <= 0) creditEnemyKill(ex, b.ownerId);
-            }
-            int minTx = TileMap::toTile(pos.x - radius);
-            int maxTx = TileMap::toTile(pos.x + radius);
-            int minTy = TileMap::toTile(pos.y - radius);
-            int maxTy = TileMap::toTile(pos.y + radius);
-            for (int ty = minTy; ty <= maxTy; ty++) {
-                for (int tx = minTx; tx <= maxTx; tx++) {
-                    if (map_.get(tx, ty) != TILE_BOX) continue;
-                    Vec2 bp = {TileMap::toWorld(tx), TileMap::toWorld(ty)};
-                    if (Vec2::dist(pos, bp) <= radius) destroyBox(tx, ty);
-                }
-            }
-        }
+        spawnBulletExplosion(pos, b.damage, b.ownerId, skipEnemy, simAuth);
     };
 
     auto triggerChainLightning = [&](Entity& b, Vec2 pos, int primaryEnemy) {
@@ -5046,6 +5063,14 @@ void Game::updateBoxFragments(float dt) {
 // ═════════════════════════════════════════════════════════════════════════════
 
 void Game::render() {
+    bool gameplayView =
+        state_ == GameState::Playing || state_ == GameState::Paused || state_ == GameState::Dead ||
+        state_ == GameState::PlayingCustom || state_ == GameState::CustomPaused || state_ == GameState::CustomDead || state_ == GameState::CustomWin ||
+        state_ == GameState::PlayingPack || state_ == GameState::PackPaused || state_ == GameState::PackDead || state_ == GameState::PackLevelWin ||
+        state_ == GameState::MultiplayerGame || state_ == GameState::MultiplayerPaused || state_ == GameState::MultiplayerDead || state_ == GameState::MultiplayerSpectator ||
+        state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused || state_ == GameState::LocalCoopDead;
+
+    if (sceneTarget_) SDL_SetRenderTarget(renderer_, sceneTarget_);
     SDL_SetRenderDrawColor(renderer_, 20, 20, 25, 255);
     SDL_RenderClear(renderer_);
 
@@ -5668,7 +5693,93 @@ void Game::render() {
         renderModSaveDialog();
 
     ui_.endFrame();
+    if (sceneTarget_) {
+        SDL_SetRenderTarget(renderer_, nullptr);
+        renderPostFXComposite(gameplayView);
+    }
     SDL_RenderPresent(renderer_);
+}
+
+void Game::renderPostFXComposite(bool gameplayView) {
+    SDL_SetRenderDrawColor(renderer_, 8, 8, 12, 255);
+    SDL_RenderClear(renderer_);
+
+    if (!sceneTarget_) return;
+
+    SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
+
+    float pulse = 0.0f;
+    if (gameplayView) {
+        pulse += std::min(1.0f, screenFlashTimer_ * 8.0f);
+        pulse += std::min(0.55f, muzzleFlashTimer_ * 7.0f);
+        if (player_.isMeleeSwinging) pulse += 0.16f;
+        if (player_.dead) pulse += 0.35f;
+    }
+    pulse = std::min(1.0f, pulse);
+
+    SDL_SetTextureColorMod(sceneTarget_, 255, 255, 255);
+    SDL_SetTextureAlphaMod(sceneTarget_, 255);
+    SDL_SetTextureBlendMode(sceneTarget_, SDL_BLENDMODE_BLEND);
+    SDL_RenderCopy(renderer_, sceneTarget_, nullptr, &full);
+
+    if (gameplayView) {
+        int shift = 1 + (int)std::floor(pulse * 3.0f);
+
+        SDL_SetTextureBlendMode(sceneTarget_, SDL_BLENDMODE_ADD);
+
+        SDL_SetTextureColorMod(sceneTarget_, 255, 70, 70);
+        SDL_SetTextureAlphaMod(sceneTarget_, (Uint8)(28 + pulse * 46.0f));
+        SDL_Rect redRect = { shift, 0, SCREEN_W, SCREEN_H };
+        SDL_RenderCopy(renderer_, sceneTarget_, nullptr, &redRect);
+
+        SDL_SetTextureColorMod(sceneTarget_, 70, 220, 255);
+        SDL_SetTextureAlphaMod(sceneTarget_, (Uint8)(22 + pulse * 40.0f));
+        SDL_Rect cyanRect = { -shift, 0, SCREEN_W, SCREEN_H };
+        SDL_RenderCopy(renderer_, sceneTarget_, nullptr, &cyanRect);
+
+        SDL_SetTextureColorMod(sceneTarget_, 255, 180, 90);
+        SDL_SetTextureAlphaMod(sceneTarget_, (Uint8)(10 + pulse * 28.0f));
+        SDL_Rect glowRect = { 0, shift / 2, SCREEN_W, SCREEN_H };
+        SDL_RenderCopy(renderer_, sceneTarget_, nullptr, &glowRect);
+
+        SDL_SetTextureBlendMode(sceneTarget_, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureColorMod(sceneTarget_, 255, 255, 255);
+        SDL_SetTextureAlphaMod(sceneTarget_, 255);
+
+        // Horizontal glitch strips when action intensity spikes
+        if (pulse > 0.20f) {
+            int strips = 2 + (int)std::floor(pulse * 4.0f);
+            for (int i = 0; i < strips; i++) {
+                int y = (int)((gameTime_ * 43.0f + i * 71.0f)) % SCREEN_H;
+                int h = 2 + (i % 3);
+                int offs = ((i & 1) ? 1 : -1) * (1 + (int)std::floor(pulse * 5.0f));
+                SDL_Rect src = {0, y, SCREEN_W, std::min(h, SCREEN_H - y)};
+                SDL_Rect dst = {offs, y, SCREEN_W, std::min(h, SCREEN_H - y)};
+                SDL_SetTextureBlendMode(sceneTarget_, SDL_BLENDMODE_ADD);
+                SDL_SetTextureColorMod(sceneTarget_, 120, 255, 240);
+                SDL_SetTextureAlphaMod(sceneTarget_, (Uint8)(18 + pulse * 28.0f));
+                SDL_RenderCopy(renderer_, sceneTarget_, &src, &dst);
+            }
+            SDL_SetTextureBlendMode(sceneTarget_, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureColorMod(sceneTarget_, 255, 255, 255);
+            SDL_SetTextureAlphaMod(sceneTarget_, 255);
+        }
+
+        // Scanlines
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        for (int y = 0; y < SCREEN_H; y += 4) {
+            Uint8 a = (Uint8)(18 + ((y / 4 + (int)(gameTime_ * 20.0f)) & 1) * 8 + pulse * 10.0f);
+            SDL_SetRenderDrawColor(renderer_, 0, 0, 0, a);
+            SDL_RenderDrawLine(renderer_, 0, y, SCREEN_W, y);
+        }
+
+        // Neon edge tint
+        SDL_SetRenderDrawColor(renderer_, 20, 180, 200, (Uint8)(14 + pulse * 26.0f));
+        SDL_Rect top = {0, 0, SCREEN_W, 6};
+        SDL_Rect bottom = {0, SCREEN_H - 6, SCREEN_W, 6};
+        SDL_RenderFillRect(renderer_, &top);
+        SDL_RenderFillRect(renderer_, &bottom);
+    }
 }
 
 // Bypass SDL_RenderCopyExF entirely — compute corners on CPU and submit raw
