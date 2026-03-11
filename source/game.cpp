@@ -106,6 +106,27 @@ bool sweptCircleOverlap(Vec2 curPos, Vec2 vel, float backtrackSec, Vec2 center, 
     float dy = closest.y - center.y;
     return (dx * dx + dy * dy) <= (radius * radius);
 }
+
+float getMeleeRange(const Player& p, const PlayerUpgrades& u) {
+    float range = MELEE_RANGE + u.meleeRangeBonus;
+    if (u.speedBonus > 0.0f) range += std::min(18.0f, u.speedBonus * 0.08f);
+    if (p.speed > PLAYER_SPEED) range += std::min(14.0f, (p.speed - PLAYER_SPEED) * 0.04f);
+    return range;
+}
+
+float getMeleeArc(const PlayerUpgrades& u) {
+    return std::min(2.30f, MELEE_ARC + u.meleeArcBonus);
+}
+
+int getMeleePlayerDamage(const PlayerUpgrades& u) {
+    int dmg = MELEE_PLAYER_DAMAGE + u.meleeDamageBonus;
+    dmg += std::max(0, (int)floorf((u.damageMulti - 1.0f) * 2.0f));
+    return std::min(8, std::max(1, dmg));
+}
+
+float getMeleeCooldownTime(const PlayerUpgrades& u) {
+    return std::max(0.16f, MELEE_COOLDOWN_TIME * u.meleeCooldownMulti);
+}
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -2769,6 +2790,10 @@ void Game::updatePlayer(float dt) {
     } // !spectatorMode_
 
     // ── Melee (axe swing) ──
+    const float meleeRange = getMeleeRange(p, upgrades_);
+    const float meleeArc = getMeleeArc(upgrades_);
+    const int meleePlayerDamage = getMeleePlayerDamage(upgrades_);
+    const float meleeCooldownTime = getMeleeCooldownTime(upgrades_);
     if (p.meleeCooldown > 0) p.meleeCooldown -= dt;
     if (!spectatorMode_) {
         // Trigger: dedicated E key OR fire trigger when axe is equipped
@@ -2778,6 +2803,9 @@ void Game::updatePlayer(float dt) {
             p.meleeTimer      = 0.0f;
             p.meleeHit        = false;
             p.hadMeleeSwing   = true;
+            p.meleeBloodlustProc = false;
+            p.vel = p.vel + Vec2::fromAngle(p.rotation) * (140.0f + std::min(60.0f, upgrades_.speedBonus * 0.12f));
+            camera_.addShake(0.8f);
             if (sfxSwoosh_) { int ch = Mix_PlayChannel(-1, sfxSwoosh_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
         }
     }
@@ -2789,21 +2817,115 @@ void Game::updatePlayer(float dt) {
             p.meleeHit = true;
             auto& net = NetworkManager::instance();
             const bool simAuth = !net.isOnline() || net.isHost() || (net.isConnectedToDedicated() && net.isLobbyHost());
-            // Hit enemies in a cone in front of the player
-            for (auto& e : enemies_) {
-                if (!e.alive) continue;
-                Vec2  toEnemy = {e.pos.x - p.pos.x, e.pos.y - p.pos.y};
-                float dist    = toEnemy.length();
-                if (dist > MELEE_RANGE + e.size) continue;
-                float ang  = atan2f(toEnemy.y, toEnemy.x);
+
+            auto angleDiffOk = [&](Vec2 toTarget) {
+                float ang  = atan2f(toTarget.y, toTarget.x);
                 float diff = ang - p.rotation;
                 while (diff >  (float)M_PI) diff -= 2.0f * (float)M_PI;
                 while (diff < -(float)M_PI) diff += 2.0f * (float)M_PI;
-                if (fabsf(diff) > MELEE_ARC) continue;
+                return fabsf(diff) <= meleeArc;
+            };
+            auto spawnMeleeImpact = [&](Vec2 pos, SDL_Color color, int count, float shake) {
+                for (int i = 0; i < count; i++) {
+                    BoxFragment f;
+                    f.pos = {pos.x + (float)(rand() % 14 - 7), pos.y + (float)(rand() % 14 - 7)};
+                    float angle = p.rotation + (((float)(rand() % 90) - 45.0f) * (float)M_PI / 180.0f);
+                    float spd = 120.0f + (float)(rand() % 260);
+                    f.vel = {cosf(angle) * spd, sinf(angle) * spd};
+                    f.size = 2.5f + (float)(rand() % 6);
+                    f.lifetime = 0.20f + (float)(rand() % 25) / 100.0f;
+                    f.age = 0.0f;
+                    f.alive = true;
+                    f.rotation = (float)(rand() % 360);
+                    f.rotSpeed = (float)(rand() % 700 - 350);
+                    int vr = rand() % 40 - 20;
+                    f.color = {
+                        (Uint8)std::clamp((int)color.r + vr, 0, 255),
+                        (Uint8)std::clamp((int)color.g + vr, 0, 255),
+                        (Uint8)std::clamp((int)color.b + vr, 0, 255),
+                        255
+                    };
+                    boxFragments_.push_back(f);
+                }
+                camera_.addShake(shake);
+            };
+            auto breakCrateAt = [&](PickupCrate& c, bool heavyBreak) {
+                c.takeDamage(99.0f);
+                if (!c.alive) {
+                    Pickup pu;
+                    pu.pos = c.pos;
+                    pu.type = c.contents;
+                    pickups_.push_back(pu);
+                    spawnMeleeImpact(c.pos, {170, 110, 55, 255}, heavyBreak ? 18 : 14, heavyBreak ? 3.2f : 2.6f);
+                    screenFlashTimer_ = 0.06f;
+                    screenFlashR_ = 255; screenFlashG_ = 200; screenFlashB_ = 50;
+                    if (sfxBreak_) { int ch = Mix_PlayChannel(-1, sfxBreak_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                    if (upgrades_.hasBloodlust) {
+                        p.meleeBloodlustProc = true;
+                        p.ammo = std::min(p.maxAmmo, p.ammo + 1);
+                    }
+                }
+            };
+            auto emitShockPulse = [&](Vec2 pos) {
+                if (!(upgrades_.hasShockEdge || upgrades_.hasStunRounds)) return;
+                float shockRadius = upgrades_.hasShockEdge ? 110.0f : 80.0f;
+                for (int i = 0; i < (upgrades_.hasShockEdge ? 10 : 6); i++) {
+                    BoxFragment f;
+                    f.pos = pos;
+                    float angle = (float)(rand() % 360) * (float)M_PI / 180.0f;
+                    float spd = 120.0f + (float)(rand() % 160);
+                    f.vel = {cosf(angle) * spd, sinf(angle) * spd};
+                    f.size = 2.0f + (float)(rand() % 4);
+                    f.lifetime = 0.16f + (float)(rand() % 14) / 100.0f;
+                    f.age = 0.0f;
+                    f.alive = true;
+                    f.rotation = 0.0f;
+                    f.rotSpeed = 0.0f;
+                    f.color = {120, 230, 255, 255};
+                    boxFragments_.push_back(f);
+                }
+                for (auto& e : enemies_) {
+                    if (!e.alive) continue;
+                    if (Vec2::dist(pos, e.pos) > shockRadius) continue;
+                    e.damageFlash = 1.0f;
+                    if (simAuth) e.stunTimer = std::max(e.stunTimer, upgrades_.hasShockEdge ? 1.1f : 0.7f);
+                }
+                if (simAuth && upgrades_.hasShockEdge) {
+                    int px = TileMap::toTile(pos.x);
+                    int py = TileMap::toTile(pos.y);
+                    for (int dy = -1; dy <= 1; dy++) {
+                        for (int dx = -1; dx <= 1; dx++) {
+                            int tx = px + dx, ty = py + dy;
+                            if (map_.get(tx, ty) == TILE_BOX) {
+                                Vec2 boxPos = {TileMap::toWorld(tx), TileMap::toWorld(ty)};
+                                if (Vec2::dist(pos, boxPos) <= shockRadius * 0.65f) destroyBox(tx, ty);
+                            }
+                        }
+                    }
+                    for (auto& c : crates_) {
+                        if (!c.alive) continue;
+                        if (Vec2::dist(pos, c.pos) <= shockRadius * 0.55f) breakCrateAt(c, false);
+                    }
+                }
+            };
+
+            // Hit enemies in a cone in front of the player
+            for (auto& e : enemies_) {
+                if (!e.alive) continue;
+                Vec2 toEnemy = {e.pos.x - p.pos.x, e.pos.y - p.pos.y};
+                float dist = toEnemy.length();
+                if (dist > meleeRange + e.size) continue;
+                if (!angleDiffOk(toEnemy)) continue;
                 e.damageFlash = 1.0f;
+                spawnMeleeImpact(e.pos, {170, 15, 15, 255}, 10 + std::max(0, meleePlayerDamage - MELEE_PLAYER_DAMAGE) * 2, 2.6f);
+                if (upgrades_.hasShockEdge || upgrades_.hasStunRounds) emitShockPulse(e.pos);
                 if (simAuth) {
                     e.hp = -9999.0f;
                     killEnemy(e);
+                    if (upgrades_.hasBloodlust) {
+                        p.meleeBloodlustProc = true;
+                        p.ammo = std::min(p.maxAmmo, p.ammo + 1 + (upgrades_.hasScavenger ? 1 : 0));
+                    }
                     if (net.isInGame()) {
                         uint32_t eIdx = (uint32_t)(&e - &enemies_[0]);
                         net.sendEnemyKilled(eIdx, net.localPlayerId());
@@ -2815,7 +2937,7 @@ void Game::updatePlayer(float dt) {
             {
                 int px = TileMap::toTile(p.pos.x);
                 int py = TileMap::toTile(p.pos.y);
-                int sr = (int)(MELEE_RANGE / TILE_SIZE) + 1;
+                int sr = (int)(meleeRange / TILE_SIZE) + 1;
                 for (int dy = -sr; dy <= sr; dy++) {
                     for (int dx = -sr; dx <= sr; dx++) {
                         int btx = px + dx, bty = py + dy;
@@ -2824,72 +2946,39 @@ void Game::updatePlayer(float dt) {
                         float wy = TileMap::toWorld(bty);
                         Vec2 toBox = {wx - p.pos.x, wy - p.pos.y};
                         float dist = toBox.length();
-                        if (dist > MELEE_RANGE + TILE_SIZE * 0.5f) continue;
-                        float ang  = atan2f(toBox.y, toBox.x);
-                        float diff = ang - p.rotation;
-                        while (diff >  (float)M_PI) diff -= 2.0f * (float)M_PI;
-                        while (diff < -(float)M_PI) diff += 2.0f * (float)M_PI;
-                        if (fabsf(diff) > MELEE_ARC) continue;
+                        if (dist > meleeRange + TILE_SIZE * 0.5f) continue;
+                        if (!angleDiffOk(toBox)) continue;
+                        spawnMeleeImpact({wx, wy}, {165, 110, 60, 255}, upgrades_.hasShockEdge ? 16 : 12, upgrades_.hasShockEdge ? 3.0f : 2.3f);
                         destroyBox(btx, bty);
+                        if (upgrades_.hasBloodlust) p.meleeBloodlustProc = true;
+                        if (upgrades_.hasShockEdge) emitShockPulse({wx, wy});
                     }
                 }
             }
             // Melee breaks upgrade crates
             for (auto& c : crates_) {
                 if (!c.alive) continue;
-                Vec2  toCrate = {c.pos.x - p.pos.x, c.pos.y - p.pos.y};
+                Vec2 toCrate = {c.pos.x - p.pos.x, c.pos.y - p.pos.y};
                 float dist = toCrate.length();
-                if (dist > MELEE_RANGE + 20.0f) continue;
-                float ang  = atan2f(toCrate.y, toCrate.x);
-                float diff = ang - p.rotation;
-                while (diff >  (float)M_PI) diff -= 2.0f * (float)M_PI;
-                while (diff < -(float)M_PI) diff += 2.0f * (float)M_PI;
-                if (fabsf(diff) > MELEE_ARC) continue;
-                c.takeDamage(99.0f); // one-shot
-                if (!c.alive) {
-                    Pickup pu;
-                    pu.pos = c.pos;
-                    pu.type = c.contents;
-                    pickups_.push_back(pu);
-                    for (int i = 0; i < 14; i++) {
-                        BoxFragment f;
-                        f.pos = c.pos;
-                        float angle = (float)(rand() % 360) * (float)M_PI / 180.0f;
-                        float spd = 130.0f + (float)(rand() % 250);
-                        f.vel = {cosf(angle) * spd, sinf(angle) * spd};
-                        f.size = 3.0f + (float)(rand() % 7);
-                        f.lifetime = 0.45f + (float)(rand() % 30) / 100.0f;
-                        f.age = 0; f.alive = true;
-                        f.rotation = (float)(rand() % 360);
-                        f.rotSpeed = (float)(rand() % 600 - 300);
-                        f.color = {(Uint8)(140 + rand() % 60), (Uint8)(90 + rand() % 50), (Uint8)(40 + rand() % 20), 255};
-                        boxFragments_.push_back(f);
-                    }
-                    camera_.addShake(2.5f);
-                    screenFlashTimer_ = 0.05f;
-                    screenFlashR_ = 255; screenFlashG_ = 200; screenFlashB_ = 50;
-                    if (sfxBreak_) { int ch = Mix_PlayChannel(-1, sfxBreak_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
-                }
+                if (dist > meleeRange + 20.0f) continue;
+                if (!angleDiffOk(toCrate)) continue;
+                breakCrateAt(c, true);
+                if (upgrades_.hasShockEdge) emitShockPulse(c.pos);
             }
             // PvP / local co-op: hit other players
             bool pvpActive = lobbySettings_.isPvp || currentRules_.pvpEnabled;
             auto doPvpMeleeHit = [&](Player& target, uint8_t targetId) {
                 if (target.dead || target.invulnerable) return;
-                Vec2  toTarget = {target.pos.x - p.pos.x, target.pos.y - p.pos.y};
+                Vec2 toTarget = {target.pos.x - p.pos.x, target.pos.y - p.pos.y};
                 float dist = toTarget.length();
-                if (dist > MELEE_RANGE + PLAYER_SIZE) return;
-                float ang  = atan2f(toTarget.y, toTarget.x);
-                float diff = ang - p.rotation;
-                while (diff >  (float)M_PI) diff -= 2.0f * (float)M_PI;
-                while (diff < -(float)M_PI) diff += 2.0f * (float)M_PI;
-                if (fabsf(diff) > MELEE_ARC) return;
-                target.takeDamage(MELEE_PLAYER_DAMAGE);
-                camera_.addShake(1.8f);
+                if (dist > meleeRange + PLAYER_SIZE) return;
+                if (!angleDiffOk(toTarget)) return;
+                target.takeDamage(meleePlayerDamage);
+                spawnMeleeImpact(target.pos, {255, 60, 60, 255}, 10, 2.2f);
                 if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
                 if (target.dead) {
                     if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
-                    camera_.addShake(4.0f);
-                    if (net.isInGame()) net.sendPlayerDied(targetId, 0);
+                    if (net.isInGame()) net.sendPlayerDied(targetId, net.localPlayerId());
                 }
             };
             if ((state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) || pvpActive) {
@@ -2904,24 +2993,18 @@ void Game::updatePlayer(float dt) {
                 uint8_t localId = net.localPlayerId();
                 for (auto& rp : net.players()) {
                     if (rp.id == localId || !rp.alive) continue;
-                    Vec2  toTarget = {rp.targetPos.x - p.pos.x, rp.targetPos.y - p.pos.y};
+                    Vec2 toTarget = {rp.targetPos.x - p.pos.x, rp.targetPos.y - p.pos.y};
                     float dist = toTarget.length();
-                    if (dist > MELEE_RANGE + PLAYER_SIZE) continue;
-                    float ang  = atan2f(toTarget.y, toTarget.x);
-                    float diff = ang - p.rotation;
-                    while (diff >  (float)M_PI) diff -= 2.0f * (float)M_PI;
-                    while (diff < -(float)M_PI) diff += 2.0f * (float)M_PI;
-                    if (fabsf(diff) > MELEE_ARC) continue;
-                    // Friendly-fire check (don't hit teammates)
+                    if (dist > meleeRange + PLAYER_SIZE) continue;
+                    if (!angleDiffOk(toTarget)) continue;
                     if (localTeam_ >= 0) {
                         NetPlayer* rpFull = net.findPlayer(rp.id);
                         if (rpFull && rpFull->team == localTeam_) continue;
                     }
                     if (net.isHost()) {
-                        // P2P host: apply damage directly
                         NetPlayer* rpM = net.findPlayer(rp.id);
                         if (rpM) {
-                            rpM->hp -= MELEE_PLAYER_DAMAGE;
+                            rpM->hp -= meleePlayerDamage;
                             if (rpM->hp <= 0) {
                                 rpM->hp = 0; rpM->alive = false;
                                 net.sendPlayerDied(rp.id, localId);
@@ -2930,8 +3013,7 @@ void Game::updatePlayer(float dt) {
                             }
                         }
                     } else {
-                        // Client: ask host to validate + apply
-                        net.sendMeleeHitRequest(rp.id);
+                        net.sendMeleeHitRequest(rp.id, meleePlayerDamage);
                     }
                 }
             }
@@ -2940,7 +3022,9 @@ void Game::updatePlayer(float dt) {
         if (p.meleeTimer >= MELEE_DURATION) {
             p.isMeleeSwinging   = false;
             p.meleeSwingReverse = !p.meleeSwingReverse; // alternate next swing direction
-            p.meleeCooldown     = MELEE_COOLDOWN_TIME;
+            p.meleeCooldown     = p.meleeBloodlustProc ? std::max(0.08f, meleeCooldownTime * 0.45f)
+                                                       : meleeCooldownTime;
+            p.meleeBloodlustProc = false;
         }
     }
 
@@ -9754,7 +9838,7 @@ void Game::setupNetworkCallbacks() {
     };
 
     // PvP melee: host applies authoritative damage for a client melee hit
-    net.onMeleeHitRequest = [this](uint8_t attackerId, uint8_t targetId) {
+    net.onMeleeHitRequest = [this](uint8_t attackerId, uint8_t targetId, int damage) {
         auto& net = NetworkManager::instance();
         NetPlayer* target = net.findPlayer(targetId);
         if (!target || !target->alive) return;
@@ -9763,7 +9847,7 @@ void Game::setupNetworkCallbacks() {
             NetPlayer* attacker = net.findPlayer(attackerId);
             if (attacker && attacker->team == target->team) return;
         }
-        target->hp -= MELEE_PLAYER_DAMAGE;
+        target->hp -= std::max(1, damage);
         if (target->hp <= 0) {
             target->hp = 0; target->alive = false;
             net.sendPlayerDied(targetId, attackerId);
@@ -10853,6 +10937,9 @@ void Game::applyUpgrade(UpgradeType type) {
             break;
         case UpgradeType::StunRounds:
         case UpgradeType::Scavenger:
+        case UpgradeType::SharpenedEdge:
+        case UpgradeType::Bloodlust:
+        case UpgradeType::ShockEdge:
             break;
         case UpgradeType::SlowDown:
             player_.speed = std::max(200.0f, player_.speed - 60.0f);

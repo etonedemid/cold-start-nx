@@ -277,7 +277,7 @@ public:
     void sendEnemyKilled(uint32_t enemyIdx, uint8_t killerId);
     // PvP host-authoritative hit validation
     void sendHitRequest(uint32_t bulletNetId, int damage, uint8_t ownerId); // client→host
-    void sendMeleeHitRequest(uint8_t targetId);                              // client→host
+    void sendMeleeHitRequest(uint8_t targetId, int damage);                  // client→host
     void sendPlayerHpSync(uint8_t playerId, int hp, int maxHp, uint8_t killerId); // host→all
     void sendWaveStart(int waveNum);
     void sendScoreUpdate(uint8_t playerId, int score);
@@ -328,7 +328,7 @@ public:
     // PvP: host receives a hit request from a client; return true to accept
     std::function<bool(uint32_t bulletNetId, int damage, uint8_t ownerId, uint8_t senderPlayerId)> onHitRequest;
     // PvP: host receives a melee hit request from a client
-    std::function<void(uint8_t attackerId, uint8_t targetId)> onMeleeHitRequest;
+    std::function<void(uint8_t attackerId, uint8_t targetId, int damage)> onMeleeHitRequest;
     std::function<void(int waveNum)> onWaveStarted;
     std::function<void(const std::string& sender, const std::string& text)> onChatMessage;
     std::function<void(uint32_t mapSeed, int mapW, int mapH, const std::vector<uint8_t>& customMapData)> onGameStarted;
