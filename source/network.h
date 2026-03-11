@@ -93,6 +93,7 @@ enum class NetPacketType : uint8_t {
     LobbyHostTransfer = 0x5C, // lobby-host transfer request (host player -> server)
     LobbyHostChanged  = 0x5D, // server -> all: current lobby host id
     LobbyStartRequest = 0x5E, // lobby host -> server: request game start
+    MeleeHitRequest = 0x5F,  // client→host: attacker hit target with melee
 };
 
 // ── Network channels ──
@@ -276,6 +277,7 @@ public:
     void sendEnemyKilled(uint32_t enemyIdx, uint8_t killerId);
     // PvP host-authoritative hit validation
     void sendHitRequest(uint32_t bulletNetId, int damage, uint8_t ownerId); // client→host
+    void sendMeleeHitRequest(uint8_t targetId);                              // client→host
     void sendPlayerHpSync(uint8_t playerId, int hp, int maxHp, uint8_t killerId); // host→all
     void sendWaveStart(int waveNum);
     void sendScoreUpdate(uint8_t playerId, int score);
@@ -325,6 +327,8 @@ public:
     std::function<void(uint8_t playerId, int hp, int maxHp, uint8_t killerId)> onPlayerHpSync;
     // PvP: host receives a hit request from a client; return true to accept
     std::function<bool(uint32_t bulletNetId, int damage, uint8_t ownerId, uint8_t senderPlayerId)> onHitRequest;
+    // PvP: host receives a melee hit request from a client
+    std::function<void(uint8_t attackerId, uint8_t targetId)> onMeleeHitRequest;
     std::function<void(int waveNum)> onWaveStarted;
     std::function<void(const std::string& sender, const std::string& text)> onChatMessage;
     std::function<void(uint32_t mapSeed, int mapW, int mapH, const std::vector<uint8_t>& customMapData)> onGameStarted;
