@@ -43,6 +43,9 @@ struct Player {
     bool  hasFiredOnce = false;
     float shootAnimTimer = 0;
 
+    // Active weapon: 0 = gun, 1 = axe
+    int   activeWeapon   = 0;
+
     // Melee (axe swing)
     bool  isMeleeSwinging  = false;  // axe swing in progress
     bool  meleeHit         = false;  // damage already applied this swing
