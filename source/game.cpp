@@ -2618,6 +2618,10 @@ void Game::updatePlayer(float dt) {
     if (weaponSwitchDelta_ != 0) {
         p.activeWeapon = ((p.activeWeapon + weaponSwitchDelta_) % NUM_WEAPONS + NUM_WEAPONS) % NUM_WEAPONS;
         weaponSwitchDelta_ = 0;
+        if (p.activeWeapon == 0) {
+            // Switching back to gun: clear axe-pose so gun animation resumes
+            p.hadMeleeSwing = false;
+        }
     }
 
     // ── Movement ──
@@ -2803,6 +2807,29 @@ void Game::updatePlayer(float dt) {
                         uint32_t eIdx = (uint32_t)(&e - &enemies_[0]);
                         net.sendEnemyKilled(eIdx, net.localPlayerId());
                         enemyStatesNeedUpdate_ = true;
+                    }
+                }
+            }
+            // Hit destroyable boxes in the swing arc
+            {
+                int px = TileMap::toTile(p.pos.x);
+                int py = TileMap::toTile(p.pos.y);
+                int sr = (int)(MELEE_RANGE / TILE_SIZE) + 1;
+                for (int dy = -sr; dy <= sr; dy++) {
+                    for (int dx = -sr; dx <= sr; dx++) {
+                        int btx = px + dx, bty = py + dy;
+                        if (map_.get(btx, bty) != TILE_BOX) continue;
+                        float wx = TileMap::toWorld(btx);
+                        float wy = TileMap::toWorld(bty);
+                        Vec2 toBox = {wx - p.pos.x, wy - p.pos.y};
+                        float dist = toBox.length();
+                        if (dist > MELEE_RANGE + TILE_SIZE * 0.5f) continue;
+                        float ang  = atan2f(toBox.y, toBox.x);
+                        float diff = ang - p.rotation;
+                        while (diff >  (float)M_PI) diff -= 2.0f * (float)M_PI;
+                        while (diff < -(float)M_PI) diff += 2.0f * (float)M_PI;
+                        if (fabsf(diff) > MELEE_ARC) continue;
+                        destroyBox(btx, bty);
                     }
                 }
             }
