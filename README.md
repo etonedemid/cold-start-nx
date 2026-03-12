@@ -1,7 +1,7 @@
 
 <img width="848" height="204" alt="banner" src="https://github.com/user-attachments/assets/2a0af91e-a15e-462f-aa99-d2869a311675" />
 
-# COLD START  `v1.1.1`
+# COLD START  `v1.2.0`
 
 COLD START is a top-down action shooter built in C++ with SDL2 for PC and Nintendo Switch homebrew. It combines fast combat, local content editing, multiplayer support, and a lightweight modding pipeline aimed at rapid iteration.
 
@@ -302,8 +302,17 @@ When the host enables mods, lightweight mod data can be serialized and sent to j
 
 ## Changelog
 
+### v1.2.0 (2026-03-12)
+- **Controller rumble support** — added haptic feedback via SDL_GameControllerRumble for damage, shooting, parrying, and melee attacks on all platforms with controller support (PC, Switch, Android)
+- **Automatic update checker** — game checks GitHub API for new releases on startup; UPDATE button appears in main menu (before QUIT) when newer version is available, opening release page in browser when clicked
+
 ### v1.1.1 (2026-03-12)
 - **Security: mod sync path traversal fix** — `deserializeAndInstallMods` now validates both the mod ID and each file's relative path before touching the filesystem; crafted payloads containing `..` components, absolute paths, backslashes, or null bytes are rejected and skipped, preventing arbitrary file writes outside the mod sync directory
+- **Character creator rebuilt** — complete remake with visual preview system showing all sprite sections (IDLE, SHOOT, LEGS, DEATH, DETAIL), 10 FPS animation playback with play/pause controls, and keyboard navigation (Tab/Shift+Tab for sections, P for play/pause)
+- **PNG sprite import** — new "LOAD SPRITES" button in character creator scans mod folders for custom character sprites, loads them into the preview system, and displays sprite count indicators with color-coded completion status (green=complete, yellow=partial, gray=none)
+- **Enhanced parry system** — parry now triggers a dash with the same speed and effect as scout enemy dash (1050 speed, 0.15s duration), providing tactical mobility during defensive maneuvers
+- **Player sprites upscaled** — all 31 player sprite frames upscaled from 32×32 to 64×64 with render scale adjusted to 1.5× (maintaining 96px effective display size)
+- **Texture editor removed** — legacy in-game sprite editor removed in favor of external PNG workflow and character creator preview system
 
 ### v1.1.0 (2026-03-11)
 - **Character creator rebuilt** — complete remake with visual preview system showing all sprite sections (IDLE, SHOOT, LEGS, DEATH, DETAIL), 10 FPS animation playback with play/pause controls, and keyboard navigation (Tab/Shift+Tab for sections, P for play/pause)
