@@ -138,6 +138,12 @@ sudo systemctl enable --now cold_start
 sudo ufw allow 7777/udp
 ```
 
+Update to the latest release (one-liner for your VPS):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/etonedemid/cold-start-nx/main/deploy/digitalocean/update_server.sh | bash
+```
+
 ### Windows
 
 Run `build-win/cold_start.exe`
@@ -151,13 +157,12 @@ nxlink -a <SWITCH_IP> -s cold_start.nro
 
 ## Release artifacts
 
-Current release artifacts for `v1.0.2`:
+Current release artifacts for `v1.1.0`:
 
-- `cold_start-linux-v1.0.2.zip` — Linux x86_64 (self-contained, SDL2 libs bundled)
-- `cold_start-linux-server-v1.0.2.zip` — Linux dedicated server (headless)
-- `cold_start-windows-v1.0.2.zip` — Windows x86_64 (MinGW, all DLLs bundled)
+- `cold_start-linux-v1.1.0.zip` — Linux x86_64 (self-contained, SDL2 libs bundled)
+- `cold_start-linux-server-v1.1.0.zip` — Linux dedicated server (headless)
+- `cold_start-windows-v1.1.0.zip` — Windows x86_64 (MinGW, all DLLs bundled)
 - `cold-start-nx.nro` — Nintendo Switch homebrew
-- `cold_start-android-v1.0.2.apk` — Android (arm64-v8a / armeabi-v7a / x86_64)
 
 ## Controls
 
