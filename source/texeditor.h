@@ -73,6 +73,7 @@ public:
     void render();
 
     void showConfig();          // show config screen (new/load dialog)
+    void setScreenSize(int w, int h);
     bool isInConfig() const { return state_ == TexEditorState::Config; }
     bool wantsExit() const { return wantsExit_; }
     void setActive(bool a) { active_ = a; }

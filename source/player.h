@@ -32,6 +32,7 @@ struct Player {
     bool  isParrying   = false;
     float parryTimer   = 0;
     float parryCdTimer = 0;
+    float parryDashTimer = 0;  // Separate timer for dash movement
     Vec2  parryDir     = {0,0};
 
     // Animation

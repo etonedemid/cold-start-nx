@@ -12,7 +12,6 @@
 #include "mapformat.h"
 #include "charformat.h"
 #include "editor.h"
-#include "texeditor.h"
 #include "mappack.h"
 #include "pickup.h"
 #include "gamemode.h"
@@ -62,8 +61,6 @@ enum class GameState {
     WinLoss,             // Win/Loss result screen (shown before Scoreboard)
     // ── Map game mode select (before playing a custom map) ──
     MapConfig,       // Choose Arena / Sandbox before starting a custom map
-    // ── Sprite editor ──
-    SpriteEditor,    // Pixel art / sprite editor
     // ── Mod management ──
     ModMenu,         // Enable/disable mods
     // ── Local Co-op (splitscreen, up to 4 players) ──
@@ -76,6 +73,8 @@ enum class GameState {
 struct GameConfig {
     int mapWidth = MAP_DEFAULT_W;
     int mapHeight = MAP_DEFAULT_H;
+    int windowWidth = 1280;
+    int windowHeight = 720;
     int playerMaxHp = PLAYER_MAX_HP;
     float spawnRateScale = 1.0f;
     float enemyHpScale = 1.0f;
@@ -84,6 +83,12 @@ struct GameConfig {
     int sfxVolume   = 100;  // 0-128
     std::string username = "Player"; // multiplayer display name
     bool fullscreen = false;
+    bool shaderCRT = true;
+    bool shaderChromatic = true;
+    bool shaderScanlines = true;
+    bool shaderGlow = true;
+    bool shaderGlitch = true;
+    bool shaderNeonEdge = true;
 };
 
 enum class DecalType : uint8_t { Blood, Scorch };
@@ -134,7 +139,7 @@ struct CoopSlot {
 // ── Mod-save dialog state ────────────────────────────────────────────────────
 struct ModSaveDialogState {
     enum Phase  { Closed, ChooseMod, NameNewMod, ChooseCategory };
-    enum Asset  { AssetMap, AssetSprite, AssetCharacter };
+    enum Asset  { AssetMap, AssetCharacter };
 
     Phase phase = Closed;
     Asset asset = AssetMap;
@@ -250,9 +255,6 @@ private:
     // ── Map Editor ──
     MapEditor editor_;
 
-    // ── Sprite / Texture Editor ──
-    TextureEditor texEditor_;
-
     // ── Custom map play ──
     CustomMap customMap_;
     bool      playingCustomMap_ = false;
@@ -263,8 +265,10 @@ private:
     // ── Character system ──
     std::vector<CharacterDef> availableChars_;
     int selectedChar_ = -1;  // -1 = default character
+    CharacterDef activeCharDef_;  // Currently active character (for stat application)
+    bool hasActiveChar_ = false;  // Whether a custom character is selected
 
-    // ── Character Creator ──
+    // ── Character Creator (simplified) ──
     struct CharCreatorState {
         std::string name = "NewChar";
         float speed = 520.0f;
@@ -272,13 +276,39 @@ private:
         int   ammo  = 10;
         float fireRate = 10.0f;
         float reloadTime = 1.0f;
-        int   bodyFrames = 10;
-        int   legFrames  = 8;
-        int   deathFrames = 12;
-        int   field = 0;      // currently selected field (0-8)
-        bool  textEditing = false;  // editing name text
-        std::string textBuf;        // temp text input buffer
-        int   gpCharIdx = 0;        // gamepad char palette index
+
+        int   field = 0;      // currently selected field
+        bool  textEditing = false;
+        std::string textBuf;
+        int   gpCharIdx = 0;
+
+        // Preview
+        int   previewSection = 0;  // 0=idle, 1=body anim, 2=legs, 3=death, 4=detail
+        float animTime = 0.0f;
+        int   previewFrame = 0;
+        bool  playAnimation = true;
+
+        // Character being edited (loaded from folder)
+        CharacterDef charDef;
+        bool loaded = false;
+        std::string folderPath;  // e.g. "characters/MyChar"
+
+        // Editing existing character or creating new?
+        bool isEditing = false;   // true = editing existing folder
+        int  editIdx = -1;        // index into availableChars_ if editing
+
+        // Validation warnings
+        std::vector<std::string> warnings;
+
+        // Status message shown at bottom
+        std::string statusMsg;
+        float statusTimer = 0;
+
+        void clearPreviews(SDL_Renderer* renderer) {
+            charDef.unload();
+            loaded = false;
+            warnings.clear();
+        }
     } charCreator_;
 
     // ── Local Co-op ──
@@ -454,6 +484,8 @@ private:
     void scanMapFiles();
     void scanCharacters();
     void applyCharacter(const CharacterDef& cd);
+    void applyCharacterStatsToPlayer(Player& p);  // apply active character stats
+    void resetToDefaultCharacter();                // revert to built-in sprites/stats
 
     // Additional menu renders
     void renderMapSelectMenu();
@@ -461,8 +493,9 @@ private:
     void renderCharSelectMenu();
     void renderCustomWinScreen();
     void renderCharCreator();
-    void saveCharCreator();
-    void saveCharCreatorToMod(const std::string& modFolder);
+    void saveCharacterToFolder(const std::string& folderPath);    // save character.cfg
+    void loadCharacterIntoCreator(const std::string& folderPath); // load folder into creator
+    void testCharacter();  // quick-test with current character in sandbox
 
     // ── Mod-save overlay dialog ──
     ModSaveDialogState modSaveDialog_;
@@ -471,6 +504,8 @@ private:
     void handleModSaveDialogEvent(const SDL_Event& e);
     void renderModSaveDialog();
     static std::string modBuildFolder(const std::string& modId, const std::string& displayName);
+    void applyResolutionSettings(bool rebuildTargets = true);
+    bool rebuildScreenTextures();
     void saveConfig();
     void loadConfig();
 

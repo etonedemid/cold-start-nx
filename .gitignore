@@ -4,7 +4,8 @@ build-pc/
 build-win/
 build-server/
 dist/
-
+hbas-repo/
+deploy/
 # ─── Release archives ───────────────────────────────────────────────────────
 cold_start-*.zip
 *.zip
