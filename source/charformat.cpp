@@ -6,6 +6,10 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <algorithm>
+#ifdef _WIN32
+#  include <direct.h>
+#  define mkdir(p, m) _mkdir(p)
+#endif
 
 // ── INI parser (shared by .cschar and character.cfg) ─────────────────────────
 
