@@ -3,11 +3,15 @@
 #include "vec2.h"
 
 // ── Version ──
-constexpr const char* GAME_VERSION = "1.0.6";
+constexpr const char* GAME_VERSION = "1.1.0";
 
-// Screen
-constexpr int SCREEN_W = 1280;
-constexpr int SCREEN_H = 720;
+// Screen (window resolution - runtime configurable)
+inline int SCREEN_W = 1280;
+inline int SCREEN_H = 720;
+
+// Base game viewport (always rendered at this resolution, scaled to window)
+constexpr int BASE_VIEWPORT_W = 1280;
+constexpr int BASE_VIEWPORT_H = 720;
 
 // World / tile
 constexpr int   TILE_SIZE   = 64;
@@ -110,8 +114,8 @@ constexpr int   MAX_BOMBS         = 5;
 // Parry
 constexpr float PARRY_WINDOW   = 0.25f;
 constexpr float PARRY_COOLDOWN = 1.0f;
-constexpr float PARRY_DASH_SPEED    = 700.0f;
-constexpr float PARRY_DASH_DURATION = 0.13f;
+constexpr float PARRY_DASH_SPEED    = 1050.0f;  // Match scout dash force
+constexpr float PARRY_DASH_DURATION = 0.15f;    // Match scout dash duration
 constexpr float PARRY_DMG      = 4.0f;
 
 // Melee (player axe swing)
