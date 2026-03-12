@@ -1,7 +1,7 @@
 
 <img width="848" height="204" alt="banner" src="https://github.com/user-attachments/assets/2a0af91e-a15e-462f-aa99-d2869a311675" />
 
-# COLD START  `v1.1.0`
+# COLD START  `v1.1.1`
 
 COLD START is a top-down action shooter built in C++ with SDL2 for PC and Nintendo Switch homebrew. It combines fast combat, local content editing, multiplayer support, and a lightweight modding pipeline aimed at rapid iteration.
 
@@ -157,11 +157,11 @@ nxlink -a <SWITCH_IP> -s cold_start.nro
 
 ## Release artifacts
 
-Current release artifacts for `v1.1.0`:
+Current release artifacts for `v1.1.1`:
 
-- `cold_start-linux-v1.1.0.zip` — Linux x86_64 (self-contained, SDL2 libs bundled)
-- `cold_start-linux-server-v1.1.0.zip` — Linux dedicated server (headless)
-- `cold_start-windows-v1.1.0.zip` — Windows x86_64 (MinGW, all DLLs bundled)
+- `cold_start-linux-v1.1.1.zip` — Linux x86_64 (self-contained, SDL2 libs bundled)
+- `cold_start-linux-server-v1.1.1.zip` — Linux dedicated server (headless)
+- `cold_start-windows-v1.1.1.zip` — Windows x86_64 (MinGW, all DLLs bundled)
 - `cold-start-nx.nro` — Nintendo Switch homebrew
 
 ## Controls
@@ -301,6 +301,9 @@ When the host enables mods, lightweight mod data can be serialized and sent to j
 - First launch may create missing runtime content directories automatically
 
 ## Changelog
+
+### v1.1.1 (2026-03-12)
+- **Security: mod sync path traversal fix** — `deserializeAndInstallMods` now validates both the mod ID and each file's relative path before touching the filesystem; crafted payloads containing `..` components, absolute paths, backslashes, or null bytes are rejected and skipped, preventing arbitrary file writes outside the mod sync directory
 
 ### v1.1.0 (2026-03-11)
 - **Character creator rebuilt** — complete remake with visual preview system showing all sprite sections (IDLE, SHOOT, LEGS, DEATH, DETAIL), 10 FPS animation playback with play/pause controls, and keyboard navigation (Tab/Shift+Tab for sections, P for play/pause)

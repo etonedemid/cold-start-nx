@@ -67,6 +67,44 @@ static bool dirExists(const std::string& path) {
     return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
 }
 
+// ── Path safety helpers for mod sync deserialization ──
+
+// Returns true if `id` is a safe mod identifier (single path component,
+// no directory traversal characters).
+static bool isSafeModId(const std::string& id) {
+    if (id.empty()) return false;
+    if (id == "." || id == "..") return false;
+    if (id.find('/') != std::string::npos) return false;
+    if (id.find('\\') != std::string::npos) return false;
+    if (id.find('\0') != std::string::npos) return false;
+#ifdef _WIN32
+    if (id.find(':') != std::string::npos) return false;
+#endif
+    return true;
+}
+
+// Returns true if `p` is a safe relative path (no absolute paths, no ".."
+// components, no backslashes or null bytes).
+static bool isSafeRelPath(const std::string& p) {
+    if (p.empty()) return false;
+    if (p[0] == '/') return false;
+    if (p.find('\\') != std::string::npos) return false;
+    if (p.find('\0') != std::string::npos) return false;
+#ifdef _WIN32
+    if (p.find(':') != std::string::npos) return false;
+#endif
+    // Check each path component for ".."
+    size_t start = 0;
+    while (start < p.size()) {
+        size_t end = p.find('/', start);
+        if (end == std::string::npos) end = p.size();
+        if (p.substr(start, end - start) == "..") return false;
+        if (end == p.size()) break;
+        start = end + 1;
+    }
+    return true;
+}
+
 static std::vector<std::string> listFiles(const std::string& dir, const std::string& ext) {
     std::vector<std::string> result;
     DIR* d = opendir(dir.c_str());
@@ -607,9 +645,15 @@ void ModManager::deserializeAndInstallMods(const std::vector<uint8_t>& data) {
         std::string modId((char*)data.data() + offset, idLen);
         offset += idLen;
 
-        // Create mod directory
+        // Validate mod ID to prevent path traversal
+        bool skipMod = !isSafeModId(modId);
+        if (skipMod) {
+            printf("ModSync: skipping mod with unsafe id (len=%u)\n", (unsigned)modId.size());
+        }
+
+        // Create mod directory (only if id is safe)
         std::string modDir = syncBase + "/" + modId;
-        mkdir(modDir.c_str(), 0755);
+        if (!skipMod) mkdir(modDir.c_str(), 0755);
 
         // Read file count
         if (offset + 2 > data.size()) break;
@@ -617,7 +661,8 @@ void ModManager::deserializeAndInstallMods(const std::vector<uint8_t>& data) {
         memcpy(&numFiles, data.data() + offset, 2);
         offset += 2;
 
-        printf("ModSync: installing mod '%s' (%u files)\n", modId.c_str(), numFiles);
+        if (!skipMod)
+            printf("ModSync: installing mod '%s' (%u files)\n", modId.c_str(), numFiles);
 
         for (uint16_t fi = 0; fi < numFiles && offset < data.size(); fi++) {
             // Read relative path
@@ -635,6 +680,14 @@ void ModManager::deserializeAndInstallMods(const std::vector<uint8_t>& data) {
             memcpy(&dataLen, data.data() + offset, 4);
             offset += 4;
             if (offset + dataLen > data.size()) break;
+
+            // Validate relative path to prevent path traversal; skip write if unsafe
+            if (skipMod || !isSafeRelPath(relPath)) {
+                if (!skipMod)
+                    printf("ModSync: skipping file with unsafe path (len=%u)\n", (unsigned)relPath.size());
+                offset += dataLen;
+                continue;
+            }
 
             // Create subdirectories as needed
             std::string fullPath = modDir + "/" + relPath;
