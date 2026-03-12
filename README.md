@@ -1,7 +1,7 @@
 
 <img width="848" height="204" alt="banner" src="https://github.com/user-attachments/assets/2a0af91e-a15e-462f-aa99-d2869a311675" />
 
-# COLD START  `v1.0.6`
+# COLD START  `v1.1.0`
 
 COLD START is a top-down action shooter built in C++ with SDL2 for PC and Nintendo Switch homebrew. It combines fast combat, local content editing, multiplayer support, and a lightweight modding pipeline aimed at rapid iteration.
 
@@ -296,6 +296,13 @@ When the host enables mods, lightweight mod data can be serialized and sent to j
 - First launch may create missing runtime content directories automatically
 
 ## Changelog
+
+### v1.1.0 (2026-03-11)
+- **Character creator rebuilt** — complete remake with visual preview system showing all sprite sections (IDLE, SHOOT, LEGS, DEATH, DETAIL), 10 FPS animation playback with play/pause controls, and keyboard navigation (Tab/Shift+Tab for sections, P for play/pause)
+- **PNG sprite import** — new "LOAD SPRITES" button in character creator scans mod folders for custom character sprites, loads them into the preview system, and displays sprite count indicators with color-coded completion status (green=complete, yellow=partial, gray=none)
+- **Enhanced parry system** — parry now triggers a dash with the same speed and effect as scout enemy dash (1050 speed, 0.15s duration), providing tactical mobility during defensive maneuvers
+- **Player sprites upscaled** — all 31 player sprite frames upscaled from 32×32 to 64×64 with render scale adjusted to 1.5× (maintaining 96px effective display size)
+- **Texture editor removed** — legacy in-game sprite editor removed in favor of external PNG workflow and character creator preview system
 
 ### v1.0.6 (2026-03-10)
 - **Network: instant disconnect notification** — clients now send an app-level `Disconnect` packet before tearing down the ENet connection; the server handles it immediately in `handlePacket()` rather than waiting for keepalive timeout. `ENET_EVENT_TYPE_DISCONNECT` is guarded against double-calling `onPlayerLeft` when both events arrive

@@ -114,6 +114,7 @@ public:
     bool isShowingConfig() const { return showConfig_; }
     void showConfig();    // enter config screen before editing
     EditorConfig& getConfig() { return config_; }
+    void setScreenSize(int w, int h);
 
     // Wantsback (user cancelled config)
     bool wantsBack() const { return wantsBack_; }

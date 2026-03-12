@@ -50,6 +50,13 @@ bool MapEditor::init(SDL_Renderer* renderer, int screenW, int screenH, UI::Conte
     return true;
 }
 
+void MapEditor::setScreenSize(int w, int h) {
+    screenW_ = w;
+    screenH_ = h;
+    cursorX_ = std::max(0.0f, std::min(cursorX_, (float)screenW_));
+    cursorY_ = std::max(0.0f, std::min(cursorY_, (float)screenH_));
+}
+
 void MapEditor::shutdown() {
     for (auto& pt : palette_) {
         if (pt.texture) SDL_DestroyTexture(pt.texture);
