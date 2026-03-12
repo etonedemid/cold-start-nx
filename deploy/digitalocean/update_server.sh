@@ -22,8 +22,8 @@ done
 
 # Resolve the latest server zip download URL
 URL=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
-      | grep -o '"browser_download_url":"[^"]*cold_start-linux-server[^"]*\.zip"' \
-      | grep -o 'https://[^"]*')
+      | grep -o '"browser_download_url": *"[^"]*cold_start-linux-server[^"]*\.zip"' \
+      | grep -o 'https://[^"]*' || true)
 
 if [ -z "$URL" ]; then
   echo "ERROR: Could not find server release asset." >&2
