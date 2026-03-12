@@ -7,7 +7,8 @@ SERVICE_NAME="cold_start.service"
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
   ca-certificates \
-  libsdl2-2.0-0 libsdl2-image-2.0-0 libsdl2-ttf-2.0-0 libsdl2-mixer-2.0-0 \
+  curl \
+  unzip \
   libenet7 libminiupnpc17
 
 if ! id -u coldstart >/dev/null 2>&1; then
