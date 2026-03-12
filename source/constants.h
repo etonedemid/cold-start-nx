@@ -3,7 +3,7 @@
 #include "vec2.h"
 
 // ── Version ──
-constexpr const char* GAME_VERSION = "1.1.1";
+constexpr const char* GAME_VERSION = "1.2.0";
 
 // Screen (window resolution - runtime configurable)
 inline int SCREEN_W = 1280;

@@ -194,6 +194,17 @@ private:
     float gameTime_ = 0;      // seconds since level start
     float dt_ = 0;
 
+    // ── Controller rumble ──
+    SDL_GameController* activeController_ = nullptr;
+    void rumble(float strength, int durationMs);
+
+    // ── Update checker ──
+    bool updateAvailable_ = false;
+    bool updateChecked_   = false;
+    std::string latestVersion_;
+    void checkForUpdates();
+    bool isNewerVersion(const char* current, const char* latest);
+
     // ── Input (mapped to Joy-Con / Pro Controller) ──
     Vec2 moveInput_  = {0,0};
     Vec2 aimInput_   = {0,0};
