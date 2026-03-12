@@ -53,6 +53,52 @@ bool isCrateSpawnType(uint8_t type) {
     return type == ENTITY_CRATE || type == ENTITY_UPGRADE_CRATE;
 }
 
+struct ResolutionPreset {
+    int w;
+    int h;
+    const char* label;
+};
+
+constexpr ResolutionPreset kResolutionPresets[] = {
+    {1280,  720,  "1280x720"},
+    {1600,  900,  "1600x900"},
+    {1920, 1080,  "1920x1080"},
+    {2560, 1440,  "2560x1440"},
+};
+
+int findResolutionPresetIndex(int w, int h) {
+    for (int i = 0; i < (int)(sizeof(kResolutionPresets) / sizeof(kResolutionPresets[0])); ++i) {
+        if (kResolutionPresets[i].w == w && kResolutionPresets[i].h == h) return i;
+    }
+
+    int bestIdx = 0;
+    int bestScore = 1 << 30;
+    for (int i = 0; i < (int)(sizeof(kResolutionPresets) / sizeof(kResolutionPresets[0])); ++i) {
+        int score = std::abs(kResolutionPresets[i].w - w) + std::abs(kResolutionPresets[i].h - h);
+        if (score < bestScore) {
+            bestScore = score;
+            bestIdx = i;
+        }
+    }
+    return bestIdx;
+}
+
+void clampResolutionConfig(GameConfig& config) {
+    int idx = findResolutionPresetIndex(config.windowWidth, config.windowHeight);
+    config.windowWidth = kResolutionPresets[idx].w;
+    config.windowHeight = kResolutionPresets[idx].h;
+}
+
+constexpr int CONFIG_RESOLUTION_INDEX = 6;
+constexpr int CONFIG_SHADER_CRT_INDEX = 7;
+constexpr int CONFIG_SHADER_CHROMATIC_INDEX = 8;
+constexpr int CONFIG_SHADER_SCANLINES_INDEX = 9;
+constexpr int CONFIG_SHADER_GLOW_INDEX = 10;
+constexpr int CONFIG_SHADER_GLITCH_INDEX = 11;
+constexpr int CONFIG_SHADER_NEON_INDEX = 12;
+constexpr int CONFIG_USERNAME_INDEX = 13;
+constexpr int CONFIG_BACK_INDEX = 14;
+
 EnemyType enemyTypeFromSpawnId(uint8_t type) {
     switch (type) {
         case ENTITY_SHOOTER: return EnemyType::Shooter;
@@ -129,6 +175,77 @@ float getMeleeCooldownTime(const PlayerUpgrades& u) {
 }
 }
 
+bool Game::rebuildScreenTextures() {
+    if (!renderer_) return false;
+
+    if (sceneTarget_) {
+        SDL_DestroyTexture(sceneTarget_);
+        sceneTarget_ = nullptr;
+    }
+    if (vignetteTex_) {
+        SDL_DestroyTexture(vignetteTex_);
+        vignetteTex_ = nullptr;
+    }
+
+    // Use base viewport dimensions for render targets
+    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, SCREEN_W, SCREEN_H, 32, SDL_PIXELFORMAT_RGBA8888);
+    if (surf) {
+        SDL_LockSurface(surf);
+        Uint32* pixels = (Uint32*)surf->pixels;
+        float cx = SCREEN_W / 2.0f;
+        float cy = SCREEN_H / 2.0f;
+        for (int py = 0; py < SCREEN_H; py++) {
+            for (int px = 0; px < SCREEN_W; px++) {
+                float dx = (px - cx) / cx;
+                float dy = (py - cy) / cy;
+                float dist = sqrtf(dx * dx + dy * dy);
+                float t = (dist - 0.4f) / 0.9f;
+                if (t < 0) t = 0;
+                if (t > 1) t = 1;
+                t = t * t;
+                Uint8 alpha = (Uint8)(t * 120);
+                pixels[py * (surf->pitch / 4) + px] = SDL_MapRGBA(surf->format, 0, 0, 0, alpha);
+            }
+        }
+        SDL_UnlockSurface(surf);
+        vignetteTex_ = SDL_CreateTextureFromSurface(renderer_, surf);
+        if (vignetteTex_) SDL_SetTextureBlendMode(vignetteTex_, SDL_BLENDMODE_BLEND);
+        SDL_FreeSurface(surf);
+    }
+
+    sceneTarget_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA8888,
+        SDL_TEXTUREACCESS_TARGET, SCREEN_W, SCREEN_H);
+    if (sceneTarget_) SDL_SetTextureBlendMode(sceneTarget_, SDL_BLENDMODE_BLEND);
+
+    return sceneTarget_ != nullptr;
+}
+
+void Game::applyResolutionSettings(bool rebuildTargets) {
+#ifdef __SWITCH__
+    // On Switch: use fixed 720p resolution
+    config_.windowWidth = 1280;
+    config_.windowHeight = 720;
+#else
+    clampResolutionConfig(config_);
+#endif
+
+    // Camera viewport is ALWAYS the base resolution (SCREEN_W x SCREEN_H) for consistent gameplay
+    camera_.viewW = SCREEN_W;
+    camera_.viewH = SCREEN_H;
+    editor_.setScreenSize(SCREEN_W, SCREEN_H);
+
+    if (window_ && !config_.fullscreen) {
+        SDL_SetWindowSize(window_, config_.windowWidth, config_.windowHeight);
+        SDL_SetWindowPosition(window_, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+    }
+
+    if (renderer_) {
+        // Logical size is always SCREEN_W x SCREEN_H - SDL scales to window size
+        SDL_RenderSetLogicalSize(renderer_, SCREEN_W, SCREEN_H);
+        if (rebuildTargets) rebuildScreenTextures();
+    }
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 //  Init / Shutdown
 // ═════════════════════════════════════════════════════════════════════════════
@@ -163,6 +280,9 @@ bool Game::init() {
         // Non-fatal: continue without audio
     }
     Mix_AllocateChannels(32);
+
+    loadConfig();
+    applyResolutionSettings(false);
 
     char windowTitle[64];
     snprintf(windowTitle, sizeof(windowTitle), "COLD START v%s", GAME_VERSION);
@@ -219,10 +339,6 @@ bool Game::init() {
 #endif
     if (!renderer_) { printf("SDL_CreateRenderer: %s\n", SDL_GetError()); return false; }
 
-    // Lock the logical resolution to SCREEN_W x SCREEN_H.
-    // SDL will scale and letterbox to fill any window/fullscreen size.
-    SDL_RenderSetLogicalSize(renderer_, SCREEN_W, SCREEN_H);
-
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
 
 #ifndef __SWITCH__
@@ -239,7 +355,7 @@ bool Game::init() {
     Assets::instance().init(renderer_);
     ui_.init(renderer_);
     loadAssets();
-    loadConfig();
+    applyResolutionSettings(true);
 #ifndef __SWITCH__
     if (config_.fullscreen)
         SDL_SetWindowFullscreen(window_, SDL_WINDOW_FULLSCREEN_DESKTOP);
@@ -261,45 +377,6 @@ bool Game::init() {
 
     // Initialize multiplayer
     initMultiplayer();
-
-    // Generate radial vignette texture
-    {
-        SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, SCREEN_W, SCREEN_H, 32, SDL_PIXELFORMAT_RGBA8888);
-        if (surf) {
-            SDL_LockSurface(surf);
-            Uint32* pixels = (Uint32*)surf->pixels;
-            float cx = SCREEN_W / 2.0f;
-            float cy = SCREEN_H / 2.0f;
-            // maxDist not needed; we use normalized coords
-            for (int py = 0; py < SCREEN_H; py++) {
-                for (int px = 0; px < SCREEN_W; px++) {
-                    float dx = (px - cx) / cx;  // normalized -1..1
-                    float dy = (py - cy) / cy;
-                    float dist = sqrtf(dx * dx + dy * dy); // 0 at center, ~1.41 at corners
-                    // Smooth vignette curve: starts fading at 0.4, maxes out at edges
-                    float t = (dist - 0.4f) / 0.9f;
-                    if (t < 0) t = 0;
-                    if (t > 1) t = 1;
-                    t = t * t; // quadratic falloff
-                    Uint8 alpha = (Uint8)(t * 120); // max 120 alpha at corners
-                    // RGBA8888: R in bits 31-24, A in bits 7-0
-                    pixels[py * (surf->pitch / 4) + px] = SDL_MapRGBA(surf->format, 0, 0, 0, alpha);
-                }
-            }
-            SDL_UnlockSurface(surf);
-            vignetteTex_ = SDL_CreateTextureFromSurface(renderer_, surf);
-            if (vignetteTex_) {
-                SDL_SetTextureBlendMode(vignetteTex_, SDL_BLENDMODE_BLEND);
-            }
-            SDL_FreeSurface(surf);
-        }
-    }
-
-    sceneTarget_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA8888,
-        SDL_TEXTUREACCESS_TARGET, SCREEN_W, SCREEN_H);
-    if (sceneTarget_) {
-        SDL_SetTextureBlendMode(sceneTarget_, SDL_BLENDMODE_BLEND);
-    }
 
     // Start main menu music
     if (menuMusic_) {
@@ -634,6 +711,7 @@ void Game::startGame() {
     player_.hp = config_.playerMaxHp;
     player_.pos = {map_.worldWidth() / 2.0f, map_.worldHeight() / 2.0f};
     player_.bombCount = 1; // Start with one bomb
+    applyCharacterStatsToPlayer(player_);
 
     // Camera
     camera_.pos = {player_.pos.x - SCREEN_W/2, player_.pos.y - SCREEN_H/2};
@@ -815,15 +893,6 @@ void Game::run() {
                 testPlayFromEditor_ = true;
             }
         }
-        else if (state_ == GameState::SpriteEditor) {
-            texEditor_.update(dt_);
-            if (texEditor_.wantsExit()) {
-                texEditor_.setActive(false);
-                texEditor_.shutdown();
-                state_ = GameState::MainMenu;
-                menuSelection_ = 0;
-            }
-        }
 
         if (!dedicatedMode_) {
             render();
@@ -874,11 +943,6 @@ void Game::handleInput() {
         // Pass events to editor if active
         if ((state_ == GameState::Editor || state_ == GameState::EditorConfig) && editor_.isActive()) {
             editor_.handleInput(e);
-        }
-
-        // Pass events to sprite/texture editor if active
-        if (state_ == GameState::SpriteEditor && texEditor_.isActive()) {
-            texEditor_.handleInput(e);
         }
 
         // Centralized soft keyboard handles ALL text input
@@ -1207,39 +1271,32 @@ void Game::handleInput() {
                 menuSelection_ = 0;
             }
             else if (menuSelection_ == 3) {
-                // Sprite editor
-                state_ = GameState::SpriteEditor;
-                texEditor_.init(renderer_, SCREEN_W, SCREEN_H);
-                texEditor_.setActive(true);
-                texEditor_.showConfig();
-                menuSelection_ = 0;
-            }
-            else if (menuSelection_ == 4) {
                 scanMapFiles();
                 prevMenuState_ = GameState::MainMenu;
                 state_ = GameState::MapSelect;
                 mapSelectIdx_ = 0;
                 menuSelection_ = 0;
             }
-            else if (menuSelection_ == 5) {
+            else if (menuSelection_ == 4) {
                 scanMapPacks();
                 prevMenuState_ = GameState::MainMenu;
                 state_ = GameState::PackSelect;
                 packSelectIdx_ = 0;
                 menuSelection_ = 0;
             }
-            else if (menuSelection_ == 6) {
+            else if (menuSelection_ == 5) {
                 scanCharacters();
                 state_ = GameState::CharSelect;
                 menuSelection_ = 0;
             }
-            else if (menuSelection_ == 7) {
-                // Create Character
+            else if (menuSelection_ == 6) {
+                // Create Character — scan first so we can edit existing ones
+                scanCharacters();
                 charCreator_ = CharCreatorState{};
                 state_ = GameState::CharCreator;
                 menuSelection_ = 0;
             }
-            else if (menuSelection_ == 8) {
+            else if (menuSelection_ == 7) {
                 // Mods
                 ModManager::instance().scanMods();
                 state_ = GameState::ModMenu;
@@ -1247,7 +1304,7 @@ void Game::handleInput() {
                 modMenuTab_ = 0;
                 menuSelection_ = 0;
             }
-            else if (menuSelection_ == 9) {
+            else if (menuSelection_ == 8) {
                 state_ = GameState::ConfigMenu;
                 configSelection_ = 0;
                 menuSelection_ = 0;
@@ -1362,10 +1419,10 @@ void Game::handleInput() {
     }
     else if (state_ == GameState::ConfigMenu) {
         if (configSelection_ < 0) configSelection_ = 0;
-        if (configSelection_ > 7) configSelection_ = 7;
+        if (configSelection_ > CONFIG_BACK_INDEX) configSelection_ = CONFIG_BACK_INDEX;
 
         if (menuSelection_ < 0) menuSelection_ = 0;
-        if (menuSelection_ > 7) menuSelection_ = 7;
+        if (menuSelection_ > CONFIG_BACK_INDEX) menuSelection_ = CONFIG_BACK_INDEX;
 
         // Username text input handling
         if (usernameTyping_) {
@@ -1382,6 +1439,18 @@ void Game::handleInput() {
                 if (leftInput_) value = std::max(minV, value - step);
                 if (rightInput_) value = std::min(maxV, value + step);
             };
+            auto toggleBool = [&](bool& value) {
+                if (confirmInput_ || leftInput_ || rightInput_) value = !value;
+            };
+#ifndef __SWITCH__
+            auto adjustResolution = [&](int dir) {
+                int idx = findResolutionPresetIndex(config_.windowWidth, config_.windowHeight);
+                idx = std::max(0, std::min((int)(sizeof(kResolutionPresets) / sizeof(kResolutionPresets[0])) - 1, idx + dir));
+                config_.windowWidth = kResolutionPresets[idx].w;
+                config_.windowHeight = kResolutionPresets[idx].h;
+                applyResolutionSettings(true);
+            };
+#endif
 
             if      (configSelection_ == 0) adjustInt  (config_.playerMaxHp,    1,    20, 1);
             else if (configSelection_ == 1) adjustFloat(config_.spawnRateScale, 0.3f, 3.0f, 0.1f);
@@ -1389,7 +1458,19 @@ void Game::handleInput() {
             else if (configSelection_ == 3) adjustFloat(config_.enemySpeedScale,0.5f, 2.5f, 0.1f);
             else if (configSelection_ == 4) { adjustInt(config_.musicVolume, 0, 128, 8); Mix_VolumeMusic(config_.musicVolume); }
             else if (configSelection_ == 5) { adjustInt(config_.sfxVolume, 0, 128, 8); }
-            else if (configSelection_ == 6 && confirmInput_) {
+#ifndef __SWITCH__
+            else if (configSelection_ == CONFIG_RESOLUTION_INDEX) {
+                if (leftInput_) adjustResolution(-1);
+                if (rightInput_) adjustResolution(1);
+            }
+#endif
+            else if (configSelection_ == CONFIG_SHADER_CRT_INDEX) toggleBool(config_.shaderCRT);
+            else if (configSelection_ == CONFIG_SHADER_CHROMATIC_INDEX) toggleBool(config_.shaderChromatic);
+            else if (configSelection_ == CONFIG_SHADER_SCANLINES_INDEX) toggleBool(config_.shaderScanlines);
+            else if (configSelection_ == CONFIG_SHADER_GLOW_INDEX) toggleBool(config_.shaderGlow);
+            else if (configSelection_ == CONFIG_SHADER_GLITCH_INDEX) toggleBool(config_.shaderGlitch);
+            else if (configSelection_ == CONFIG_SHADER_NEON_INDEX) toggleBool(config_.shaderNeonEdge);
+            else if (configSelection_ == CONFIG_USERNAME_INDEX && confirmInput_) {
                 // Edit username
                 usernameTyping_ = true;
                 softKB_.open("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-", 16,
@@ -1399,7 +1480,7 @@ void Game::handleInput() {
                     NetworkManager::instance().setUsername(config_.username);
                 });
             }
-            else if (configSelection_ == 7 && (confirmInput_ || backInput_ || pauseInput_)) {
+            else if (configSelection_ == CONFIG_BACK_INDEX && (confirmInput_ || backInput_ || pauseInput_)) {
                 saveConfig();
                 state_ = GameState::MainMenu;
                 menuSelection_ = 0;
@@ -1439,9 +1520,27 @@ void Game::handleInput() {
         if (confirmInput_) {
             if (menuSelection_ == 0) state_ = GameState::Playing;
 #ifndef __SWITCH__
-            else if (menuSelection_ == 4) { state_ = GameState::MainMenu; playMenuMusic(); }
+            else if (menuSelection_ == 4) {
+                if (testPlayFromEditor_) {
+                    testPlayFromEditor_ = false;
+                    state_ = GameState::CharCreator;
+                    playMenuMusic();
+                    menuSelection_ = 0;
+                } else {
+                    state_ = GameState::MainMenu; playMenuMusic();
+                }
+            }
 #else
-            else if (menuSelection_ == 3) { state_ = GameState::MainMenu; playMenuMusic(); }
+            else if (menuSelection_ == 3) {
+                if (testPlayFromEditor_) {
+                    testPlayFromEditor_ = false;
+                    state_ = GameState::CharCreator;
+                    playMenuMusic();
+                    menuSelection_ = 0;
+                } else {
+                    state_ = GameState::MainMenu; playMenuMusic();
+                }
+            }
 #endif
         }
     }
@@ -1452,8 +1551,23 @@ void Game::handleInput() {
         if (menuSelection_ < 0) menuSelection_ = 0;
         if (menuSelection_ > 1) menuSelection_ = 1;
         if (confirmInput_) {
-            if (menuSelection_ == 0) startGame();
-            else { state_ = GameState::MainMenu; playMenuMusic(); menuSelection_ = 0; }
+            if (menuSelection_ == 0) {
+                if (testPlayFromEditor_) {
+                    // Restart test with same character
+                    testCharacter();
+                } else {
+                    startGame();
+                }
+            } else {
+                if (testPlayFromEditor_) {
+                    testPlayFromEditor_ = false;
+                    state_ = GameState::CharCreator;
+                    playMenuMusic();
+                    menuSelection_ = 0;
+                } else {
+                    state_ = GameState::MainMenu; playMenuMusic(); menuSelection_ = 0;
+                }
+            }
         }
     }
     else if (state_ == GameState::EditorConfig) {
@@ -1530,7 +1644,7 @@ void Game::handleInput() {
         if (backInput_) { state_ = GameState::MainMenu; menuSelection_ = 0; }
         if (confirmInput_) {
             if (menuSelection_ == 0) {
-                selectedChar_ = -1; // default
+                resetToDefaultCharacter();
             } else if (menuSelection_ <= (int)availableChars_.size()) {
                 selectedChar_ = menuSelection_ - 1;
                 applyCharacter(availableChars_[selectedChar_]);
@@ -1607,15 +1721,49 @@ void Game::handleInput() {
         if (cc.textEditing) {
             // Text input handled via SDL_TEXTINPUT events already processed
         } else {
-            // Navigate fields
-            if (menuSelection_ != cc.field) {
-                cc.field = menuSelection_;
-            }
+            cc.field = menuSelection_;
             if (cc.field < 0) cc.field = 0;
-            if (cc.field > 10) cc.field = 10;
+            if (cc.field > 9) cc.field = 9;
             menuSelection_ = cc.field;
+            
+            // Tab/Shift+Tab for preview sections
+            const Uint8* keys = SDL_GetKeyboardState(nullptr);
+            if (cc.field < 1 || cc.field > 5) {
+                static bool tabWasPressed = false;
+                static bool shiftTabWasPressed = false;
+                bool tabPressed = keys[SDL_SCANCODE_TAB] && !(keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT]);
+                bool shiftTabPressed = keys[SDL_SCANCODE_TAB] && (keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT]);
+                
+                if (tabPressed && !tabWasPressed) {
+                    cc.previewSection++;
+                    if (cc.previewSection > 4) cc.previewSection = 0;
+                    cc.previewFrame = 0; cc.animTime = 0.0f;
+                }
+                if (shiftTabPressed && !shiftTabWasPressed) {
+                    cc.previewSection--;
+                    if (cc.previewSection < 0) cc.previewSection = 4;
+                    cc.previewFrame = 0; cc.animTime = 0.0f;
+                }
+                tabWasPressed = tabPressed;
+                shiftTabWasPressed = shiftTabPressed;
+                
+                // P key to toggle play/pause, R key to hot-reload
+                static bool pWasPressed = false, rWasPressed = false;
+                bool pPressed = keys[SDL_SCANCODE_P];
+                bool rPressed = keys[SDL_SCANCODE_R];
+                if (pPressed && !pWasPressed) cc.playAnimation = !cc.playAnimation;
+                if (rPressed && !rWasPressed && cc.loaded) {
+                    // Hot-reload sprites
+                    cc.charDef.reloadSprites(renderer_);
+                    cc.warnings = cc.charDef.validate();
+                    cc.statusMsg = "Sprites reloaded!";
+                    cc.statusTimer = 2.0f;
+                }
+                pWasPressed = pPressed;
+                rWasPressed = rPressed;
+            }
 
-            // Adjust values with left/right
+            // Adjust values with left/right (fields 1-5 = stats)
             if (cc.field == 1 && (leftInput_ || rightInput_)) {
                 cc.speed += rightInput_ ? 20.0f : -20.0f;
                 if (cc.speed < 100.0f) cc.speed = 100.0f;
@@ -1641,21 +1789,6 @@ void Game::handleInput() {
                 if (cc.reloadTime < 0.1f) cc.reloadTime = 0.1f;
                 if (cc.reloadTime > 5.0f) cc.reloadTime = 5.0f;
             }
-            if (cc.field == 6 && (leftInput_ || rightInput_)) {
-                cc.bodyFrames += rightInput_ ? 1 : -1;
-                if (cc.bodyFrames < 1) cc.bodyFrames = 1;
-                if (cc.bodyFrames > 30) cc.bodyFrames = 30;
-            }
-            if (cc.field == 7 && (leftInput_ || rightInput_)) {
-                cc.legFrames += rightInput_ ? 1 : -1;
-                if (cc.legFrames < 1) cc.legFrames = 1;
-                if (cc.legFrames > 30) cc.legFrames = 30;
-            }
-            if (cc.field == 8 && (leftInput_ || rightInput_)) {
-                cc.deathFrames += rightInput_ ? 1 : -1;
-                if (cc.deathFrames < 1) cc.deathFrames = 1;
-                if (cc.deathFrames > 30) cc.deathFrames = 30;
-            }
 
             // Name field: start text editing on confirm
             if (cc.field == 0 && confirmInput_) {
@@ -1667,17 +1800,45 @@ void Game::handleInput() {
                     if (confirmed) charCreator_.name = charCreator_.textBuf;
                 });
             }
+            // Reload button
+            if (cc.field == 6 && confirmInput_) {
+                if (cc.loaded) {
+                    cc.charDef.reloadSprites(renderer_);
+                    cc.warnings = cc.charDef.validate();
+                    cc.statusMsg = "Sprites reloaded!";
+                    cc.statusTimer = 2.0f;
+                } else if (!cc.folderPath.empty()) {
+                    loadCharacterIntoCreator(cc.folderPath);
+                } else {
+                    // Try characters/<name>
+                    std::string tryPath = "characters/" + cc.name;
+                    loadCharacterIntoCreator(tryPath);
+                }
+            }
+            // Test Play button
+            if (cc.field == 7 && confirmInput_) {
+                testCharacter();
+            }
             // Save button
-            if (cc.field == 9 && confirmInput_) {
-                charCreatorWantsModSave_ = true;
+            if (cc.field == 8 && confirmInput_) {
+                std::string folder = cc.folderPath.empty() ? 
+                    "characters/" + cc.name : cc.folderPath;
+                saveCharacterToFolder(folder);
+                cc.statusMsg = "Saved to " + folder + "/";
+                cc.statusTimer = 3.0f;
             }
             // Back button
-            if (cc.field == 10 && confirmInput_) {
+            if (cc.field == 9 && confirmInput_) {
+                cc.clearPreviews(renderer_);
                 state_ = GameState::MainMenu;
                 menuSelection_ = 0;
             }
         }
+        // Status timer
+        if (cc.statusTimer > 0) cc.statusTimer -= dt_;
+
         if (backInput_ && !cc.textEditing) {
+            cc.clearPreviews(renderer_);
             state_ = GameState::MainMenu;
             menuSelection_ = 0;
         }
@@ -2552,12 +2713,32 @@ void Game::update() {
     // Always update multiplayer (even in lobby/menus for network events)
     updateMultiplayer(dt);
 
-    // Mod-save for texEditor / charCreator (map saves handled in Editor state block)
+    // Character Creator animation update
+    if (state_ == GameState::CharCreator) {
+        auto& cc = charCreator_;
+        if (cc.playAnimation) {
+            cc.animTime += dt;
+            float frameTime = 0.1f;
+            if (cc.animTime >= frameTime) {
+                cc.animTime -= frameTime;
+                cc.previewFrame++;
+                
+                int maxFrames = 0;
+                switch (cc.previewSection) {
+                    case 0: maxFrames = 1; break;
+                    case 1: maxFrames = cc.loaded ? (int)cc.charDef.bodySprites.size() : (int)playerSprites_.size(); break;
+                    case 2: maxFrames = cc.loaded ? (int)cc.charDef.legSprites.size() : (int)legSprites_.size(); break;
+                    case 3: maxFrames = cc.loaded ? (int)cc.charDef.deathSprites.size() : (int)playerDeathSprites_.size(); break;
+                    case 4: maxFrames = 1; break;
+                }
+                if (maxFrames > 0 && cc.previewFrame >= maxFrames) cc.previewFrame = 0;
+            }
+        }
+    }
+
+    // Mod-save for editor maps (character creator no longer uses mod save dialog)
     if (!modSaveDialog_.isOpen()) {
-        if (texEditor_.wantsModSave()) {
-            texEditor_.clearWantsModSave();
-            openModSaveDialog(ModSaveDialogState::AssetSprite);
-        } else if (charCreatorWantsModSave_) {
+        if (charCreatorWantsModSave_) {
             charCreatorWantsModSave_ = false;
             openModSaveDialog(ModSaveDialogState::AssetCharacter);
         }
@@ -2570,16 +2751,10 @@ void Game::update() {
             case ModSaveDialogState::AssetMap:
                 editor_.performModSave(folder);
                 break;
-            case ModSaveDialogState::AssetSprite:
-                texEditor_.performModSave(folder, modSaveDialog_.confirmedCat);
-                break;
             case ModSaveDialogState::AssetCharacter:
-                saveCharCreatorToMod(folder);
-                state_ = GameState::MainMenu;
-                menuSelection_ = 0;
+                // Legacy mod-save path (kept for backward compat)
                 break;
         }
-        // Refresh mod list so the new mod shows up immediately
         ModManager::instance().scanMods();
         modSaveDialog_.close();
     }
@@ -2663,8 +2838,8 @@ void Game::updatePlayer(float dt) {
     // Smooth velocity (like Unity's Lerp)
     p.vel = Vec2::lerp(p.vel, targetVel, dt * PLAYER_SMOOTHING);
 
-    // Parry dash override
-    if (p.isParrying && p.parryTimer > 0) {
+    // Parry dash override (matches scout enemy dash)
+    if (p.isParrying && p.parryDashTimer > 0) {
         p.vel = p.parryDir * PARRY_DASH_SPEED;
     }
 
@@ -2786,6 +2961,7 @@ void Game::updatePlayer(float dt) {
     }
     if (p.isParrying) {
         p.parryTimer -= dt;
+        p.parryDashTimer -= dt;
         if (p.parryTimer <= 0) {
             p.isParrying = false;
         }
@@ -4436,28 +4612,64 @@ void Game::resolveCollisions() {
     auto triggerChainLightning = [&](Entity& b, Vec2 pos, int primaryEnemy) {
         if (!b.chainLightning) return;
         int jumps = 0;
-        for (size_t pass = 0; pass < 2; ++pass) {
-            float bestDist = 170.0f;
+        const int maxJumps = 4;  // Increased from 2 to 4 for better chain effect
+        const float chainRange = 200.0f;  // Increased from 170 to 200 for better reach
+        
+        for (int pass = 0; pass < maxJumps; ++pass) {
+            float bestDist = chainRange;
             int bestIdx = -1;
             for (size_t i = 0; i < enemies_.size(); ++i) {
                 if ((int)i == primaryEnemy) continue;
                 auto& ex = enemies_[i];
                 if (!ex.alive) continue;
+                // Skip enemies already hit by this chain
                 if (std::find(b.hitEnemies.begin(), b.hitEnemies.end(), (uint32_t)i) != b.hitEnemies.end()) continue;
                 float d = Vec2::dist(pos, ex.pos);
                 if (d < bestDist) { bestDist = d; bestIdx = (int)i; }
             }
             if (bestIdx < 0) break;
+            
             auto& ex = enemies_[(size_t)bestIdx];
             b.hitEnemies.push_back((uint32_t)bestIdx);
-            spawnBulletBurstFX(ex.pos, {120, 230, 255, 255}, 7, 0.8f);
+            
+            // Enhanced visual feedback
+            spawnBulletBurstFX(ex.pos, {120, 230, 255, 255}, 9, 1.0f);
+            
+            // Lightning arc line effect
+            int numArcs = 3;
+            for (int arc = 0; arc < numArcs; arc++) {
+                for (int seg = 0; seg < 8; seg++) {
+                    BoxFragment f;
+                    float t = seg / 7.0f;
+                    Vec2 start = pos;
+                    Vec2 end = ex.pos;
+                    f.pos = Vec2::lerp(start, end, t);
+                    // Add perpendicular offset for arc effect
+                    Vec2 dir = (end - start).normalized();
+                    Vec2 perp = {-dir.y, dir.x};
+                    float arcHeight = sinf(t * (float)M_PI) * (15.0f + (float)(rand() % 10));
+                    f.pos += perp * arcHeight;
+                    f.vel = {0, 0};
+                    f.size = 2.0f + (float)(rand() % 3);
+                    f.lifetime = 0.12f + (float)(rand() % 8) / 100.0f;
+                    f.age = 0.0f;
+                    f.rotation = 0;
+                    f.rotSpeed = 0;
+                    int bright = 150 + rand() % 105;
+                    f.color = {(Uint8)(bright * 0.5f), (Uint8)bright, (Uint8)255, 255};
+                    boxFragments_.push_back(f);
+                }
+            }
+            
             ex.damageFlash = 1.0f;
             if (simAuth) {
+                // Chain lightning deals 50% of bullet damage per jump
                 ex.hp -= std::max(1, b.damage / 2);
                 ex.stunTimer = std::max(ex.stunTimer, 0.65f);
                 if (ex.hp <= 0) creditEnemyKill(ex, b.ownerId);
             }
-            pos = ex.pos;
+            pos = ex.pos;  // Continue chain from this enemy
+            primaryEnemy = bestIdx;  // Update primary to avoid re-hitting
             jumps++;
         }
         if (jumps > 0 && sfxParry_) {
@@ -4907,7 +5119,8 @@ void Game::playerParry() {
     Player& p = player_;
     p.canParry = false;
     p.isParrying = true;
-    p.parryTimer = PARRY_WINDOW;
+    p.parryTimer = PARRY_WINDOW;           // Reflect/counter window
+    p.parryDashTimer = PARRY_DASH_DURATION; // Dash movement duration (scout speed)
     p.parryCdTimer = PARRY_COOLDOWN;
 
     // Dash direction = aim direction
@@ -5174,7 +5387,7 @@ void Game::render() {
         // Player legs
         if (!player_.dead && !legSprites_.empty()) {
             int idx = player_.legAnimFrame % (int)legSprites_.size();
-            renderSprite(legSprites_[idx], player_.pos, player_.legRotation + M_PI/2, 3.0f);
+            renderSprite(legSprites_[idx], player_.pos, player_.legRotation + M_PI/2, 1.5f);
         }
 
         // Player body
@@ -5185,19 +5398,19 @@ void Game::render() {
                 // Flash white when invulnerable
                 if (player_.invulnerable && ((int)(player_.invulnTimer * 10) % 2 == 0)) {
                     SDL_Color tint = {255, 255, 255, 128};
-                    renderSpriteEx(playerSprites_[idx], bodyPos, player_.rotation + M_PI/2, 3.0f, tint);
+                    renderSpriteEx(playerSprites_[idx], bodyPos, player_.rotation + M_PI/2, 1.5f, tint);
                 } else if (player_.isParrying) {
                     SDL_Color tint = {128, 200, 255, 255};
-                    renderSpriteEx(playerSprites_[idx], bodyPos, player_.rotation + M_PI/2, 3.0f, tint);
+                    renderSpriteEx(playerSprites_[idx], bodyPos, player_.rotation + M_PI/2, 1.5f, tint);
                 } else {
-                    renderSprite(playerSprites_[idx], bodyPos, player_.rotation + M_PI/2, 3.0f);
+                    renderSprite(playerSprites_[idx], bodyPos, player_.rotation + M_PI/2, 1.5f);
                 }
             }
         } else {
             // Death animation
             if (!playerDeathSprites_.empty()) {
                 int idx = player_.animFrame % (int)playerDeathSprites_.size();
-                renderSprite(playerDeathSprites_[idx], player_.pos, player_.rotation + M_PI/2, 3.0f);
+                renderSprite(playerDeathSprites_[idx], player_.pos, player_.rotation + M_PI/2, 1.5f);
             }
         }
 
@@ -5298,10 +5511,6 @@ void Game::render() {
         editor_.render(renderer_);
         break;
 
-    case GameState::SpriteEditor:
-        texEditor_.render();
-        break;
-
     case GameState::MapSelect:
     case GameState::MapConfig:
         renderMapSelectMenu();
@@ -5356,7 +5565,7 @@ void Game::render() {
         // Player rendering (same as Playing)
         if (!player_.dead && !legSprites_.empty()) {
             int idx = player_.legAnimFrame % (int)legSprites_.size();
-            renderSprite(legSprites_[idx], player_.pos, player_.legRotation + (float)M_PI/2, 3.0f);
+            renderSprite(legSprites_[idx], player_.pos, player_.legRotation + (float)M_PI/2, 1.5f);
         }
         if (!player_.dead) {
             if (!playerSprites_.empty()) {
@@ -5364,17 +5573,17 @@ void Game::render() {
                 Vec2 bodyPos = player_.pos + Vec2::fromAngle(player_.rotation) * 6.0f;
                 if (player_.invulnerable && ((int)(player_.invulnTimer * 10) % 2 == 0)) {
                     SDL_Color tint = {255, 255, 255, 128};
-                    renderSpriteEx(playerSprites_[idx], bodyPos, player_.rotation + (float)M_PI/2, 3.0f, tint);
+                    renderSpriteEx(playerSprites_[idx], bodyPos, player_.rotation + (float)M_PI/2, 1.5f, tint);
                 } else if (player_.isParrying) {
                     SDL_Color tint = {128, 200, 255, 255};
-                    renderSpriteEx(playerSprites_[idx], bodyPos, player_.rotation + (float)M_PI/2, 3.0f, tint);
+                    renderSpriteEx(playerSprites_[idx], bodyPos, player_.rotation + (float)M_PI/2, 1.5f, tint);
                 } else {
-                    renderSprite(playerSprites_[idx], bodyPos, player_.rotation + (float)M_PI/2, 3.0f);
+                    renderSprite(playerSprites_[idx], bodyPos, player_.rotation + (float)M_PI/2, 1.5f);
                 }
             }
         } else if (!playerDeathSprites_.empty()) {
             int idx = player_.animFrame % (int)playerDeathSprites_.size();
-            renderSprite(playerDeathSprites_[idx], player_.pos, player_.rotation + (float)M_PI/2, 3.0f);
+            renderSprite(playerDeathSprites_[idx], player_.pos, player_.rotation + (float)M_PI/2, 1.5f);
         }
         for (auto& b : bullets_) {
             if (!b.alive) continue;
@@ -5465,7 +5674,7 @@ void Game::render() {
         }
         if (!player_.dead && !legSprites_.empty()) {
             int idx = player_.legAnimFrame % (int)legSprites_.size();
-            renderSprite(legSprites_[idx], player_.pos, player_.legRotation + (float)M_PI/2, 3.0f);
+            renderSprite(legSprites_[idx], player_.pos, player_.legRotation + (float)M_PI/2, 1.5f);
         }
         if (!player_.dead && !playerSprites_.empty()) {
             int idx = player_.animFrame % (int)playerSprites_.size();
@@ -5474,9 +5683,9 @@ void Game::render() {
                 static const SDL_Color ltTint[4] = {
                     {255,210,210,255},{210,220,255,255},{210,255,220,255},{255,250,210,255}
                 };
-                renderSpriteEx(playerSprites_[idx], bodyPos, player_.rotation + (float)M_PI/2, 3.0f, ltTint[localTeam_]);
+                renderSpriteEx(playerSprites_[idx], bodyPos, player_.rotation + (float)M_PI/2, 1.5f, ltTint[localTeam_]);
             } else {
-                renderSprite(playerSprites_[idx], bodyPos, player_.rotation + (float)M_PI/2, 3.0f);
+                renderSprite(playerSprites_[idx], bodyPos, player_.rotation + (float)M_PI/2, 1.5f);
             }
         }
         for (auto& b : bullets_) {
@@ -5585,7 +5794,7 @@ void Game::render() {
         if (!player_.dead && !legSprites_.empty()) {
             int idx = player_.legAnimFrame % (int)legSprites_.size();
             if (spectatorMode_) SDL_SetTextureAlphaMod(legSprites_[idx], 80);
-            renderSprite(legSprites_[idx], player_.pos, player_.legRotation + (float)M_PI/2, 3.0f);
+            renderSprite(legSprites_[idx], player_.pos, player_.legRotation + (float)M_PI/2, 1.5f);
             if (spectatorMode_) SDL_SetTextureAlphaMod(legSprites_[idx], 255);
         }
         if (!player_.dead && !playerSprites_.empty()) {
@@ -5596,9 +5805,9 @@ void Game::render() {
                 static const SDL_Color ltTint[4] = {
                     {255,210,210,255},{210,220,255,255},{210,255,220,255},{255,250,210,255}
                 };
-                renderSpriteEx(playerSprites_[idx], bodyPos, player_.rotation + (float)M_PI/2, 3.0f, ltTint[localTeam_]);
+                renderSpriteEx(playerSprites_[idx], bodyPos, player_.rotation + (float)M_PI/2, 1.5f, ltTint[localTeam_]);
             } else {
-                renderSprite(playerSprites_[idx], bodyPos, player_.rotation + (float)M_PI/2, 3.0f);
+                renderSprite(playerSprites_[idx], bodyPos, player_.rotation + (float)M_PI/2, 1.5f);
             }
             if (spectatorMode_) SDL_SetTextureAlphaMod(playerSprites_[idx], 255);
         }
@@ -5706,6 +5915,7 @@ void Game::renderPostFXComposite(bool gameplayView) {
 
     if (!sceneTarget_) return;
 
+    // Use base viewport dimensions for rendering
     SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
 
     float pulse = 0.0f;
@@ -5720,34 +5930,56 @@ void Game::renderPostFXComposite(bool gameplayView) {
     SDL_SetTextureColorMod(sceneTarget_, 255, 255, 255);
     SDL_SetTextureAlphaMod(sceneTarget_, 255);
     SDL_SetTextureBlendMode(sceneTarget_, SDL_BLENDMODE_BLEND);
-    SDL_RenderCopy(renderer_, sceneTarget_, nullptr, &full);
+    if (gameplayView && config_.shaderCRT) {
+        const int stripH = 2;  // Reduced for smoother curve at higher resolutions
+        for (int y = 0; y < SCREEN_H; y += stripH) {
+            int h = std::min(stripH, SCREEN_H - y);
+            float yNorm = ((float)y + h * 0.5f) / (float)SCREEN_H;
+            yNorm = yNorm * 2.0f - 1.0f;
+            float curve = std::fabs(yNorm);
+            // Slightly reduced curve for cleaner look
+            int inset = (int)std::floor(3.0f + curve * curve * 14.0f);
+            int dstW = std::max(1, SCREEN_W - inset * 2);
+            SDL_Rect src = {0, y, SCREEN_W, h};
+            SDL_Rect dst = {inset, y, dstW, h};
+            SDL_RenderCopy(renderer_, sceneTarget_, &src, &dst);
+        }
+    } else {
+        SDL_RenderCopy(renderer_, sceneTarget_, nullptr, &full);
+    }
 
     if (gameplayView) {
         int shift = 1 + (int)std::floor(pulse * 3.0f);
 
-        SDL_SetTextureBlendMode(sceneTarget_, SDL_BLENDMODE_ADD);
+        if (config_.shaderChromatic) {
+            SDL_SetTextureBlendMode(sceneTarget_, SDL_BLENDMODE_ADD);
 
-        SDL_SetTextureColorMod(sceneTarget_, 255, 70, 70);
-        SDL_SetTextureAlphaMod(sceneTarget_, (Uint8)(28 + pulse * 46.0f));
-        SDL_Rect redRect = { shift, 0, SCREEN_W, SCREEN_H };
-        SDL_RenderCopy(renderer_, sceneTarget_, nullptr, &redRect);
+            // Reduced alpha for cleaner chromatic aberration
+            SDL_SetTextureColorMod(sceneTarget_, 255, 70, 70);
+            SDL_SetTextureAlphaMod(sceneTarget_, (Uint8)(20 + pulse * 35.0f));
+            SDL_Rect redRect = { shift, 0, SCREEN_W, SCREEN_H };
+            SDL_RenderCopy(renderer_, sceneTarget_, nullptr, &redRect);
 
-        SDL_SetTextureColorMod(sceneTarget_, 70, 220, 255);
-        SDL_SetTextureAlphaMod(sceneTarget_, (Uint8)(22 + pulse * 40.0f));
-        SDL_Rect cyanRect = { -shift, 0, SCREEN_W, SCREEN_H };
-        SDL_RenderCopy(renderer_, sceneTarget_, nullptr, &cyanRect);
+            SDL_SetTextureColorMod(sceneTarget_, 70, 220, 255);
+            SDL_SetTextureAlphaMod(sceneTarget_, (Uint8)(16 + pulse * 30.0f));
+            SDL_Rect cyanRect = { -shift, 0, SCREEN_W, SCREEN_H };
+            SDL_RenderCopy(renderer_, sceneTarget_, nullptr, &cyanRect);
+        }
 
-        SDL_SetTextureColorMod(sceneTarget_, 255, 180, 90);
-        SDL_SetTextureAlphaMod(sceneTarget_, (Uint8)(10 + pulse * 28.0f));
-        SDL_Rect glowRect = { 0, shift / 2, SCREEN_W, SCREEN_H };
-        SDL_RenderCopy(renderer_, sceneTarget_, nullptr, &glowRect);
+        if (config_.shaderGlow) {
+            SDL_SetTextureBlendMode(sceneTarget_, SDL_BLENDMODE_ADD);
+            SDL_SetTextureColorMod(sceneTarget_, 255, 180, 90);
+            SDL_SetTextureAlphaMod(sceneTarget_, (Uint8)(12 + pulse * 32.0f));
+            SDL_Rect glowRect = { 0, shift / 2, SCREEN_W, SCREEN_H };
+            SDL_RenderCopy(renderer_, sceneTarget_, nullptr, &glowRect);
+        }
 
         SDL_SetTextureBlendMode(sceneTarget_, SDL_BLENDMODE_BLEND);
         SDL_SetTextureColorMod(sceneTarget_, 255, 255, 255);
         SDL_SetTextureAlphaMod(sceneTarget_, 255);
 
         // Horizontal glitch strips when action intensity spikes
-        if (pulse > 0.20f) {
+        if (config_.shaderGlitch && pulse > 0.20f) {
             int strips = 2 + (int)std::floor(pulse * 4.0f);
             for (int i = 0; i < strips; i++) {
                 int y = (int)((gameTime_ * 43.0f + i * 71.0f)) % SCREEN_H;
@@ -5767,18 +5999,49 @@ void Game::renderPostFXComposite(bool gameplayView) {
 
         // Scanlines
         SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-        for (int y = 0; y < SCREEN_H; y += 4) {
-            Uint8 a = (Uint8)(18 + ((y / 4 + (int)(gameTime_ * 20.0f)) & 1) * 8 + pulse * 10.0f);
-            SDL_SetRenderDrawColor(renderer_, 0, 0, 0, a);
-            SDL_RenderDrawLine(renderer_, 0, y, SCREEN_W, y);
+        if (config_.shaderScanlines) {
+            // Thinner scanlines for better quality
+            for (int y = 0; y < SCREEN_H; y += 3) {
+                Uint8 a = (Uint8)(16 + ((y / 3 + (int)(gameTime_ * 20.0f)) & 1) * 6 + pulse * 8.0f);
+                SDL_SetRenderDrawColor(renderer_, 0, 0, 0, a);
+                SDL_RenderDrawLine(renderer_, 0, y, SCREEN_W, y);
+            }
         }
 
         // Neon edge tint
-        SDL_SetRenderDrawColor(renderer_, 20, 180, 200, (Uint8)(14 + pulse * 26.0f));
-        SDL_Rect top = {0, 0, SCREEN_W, 6};
-        SDL_Rect bottom = {0, SCREEN_H - 6, SCREEN_W, 6};
-        SDL_RenderFillRect(renderer_, &top);
-        SDL_RenderFillRect(renderer_, &bottom);
+        if (config_.shaderNeonEdge) {
+            SDL_SetRenderDrawColor(renderer_, 20, 180, 200, (Uint8)(14 + pulse * 26.0f));
+            SDL_Rect top = {0, 0, SCREEN_W, 6};
+            SDL_Rect bottom = {0, SCREEN_H - 6, SCREEN_W, 6};
+            SDL_RenderFillRect(renderer_, &top);
+            SDL_RenderFillRect(renderer_, &bottom);
+        }
+
+        if (config_.shaderCRT) {
+            // RGB phosphor mask - thinner stripes for better quality
+            for (int x = 0; x < SCREEN_W; x += 2) {
+                SDL_Color maskColor = {255, 70, 60, (Uint8)(6 + pulse * 5.0f)};
+                if (x % 6 == 2) maskColor = {90, 255, 140, (Uint8)(6 + pulse * 5.0f)};
+                else if (x % 6 == 4) maskColor = {90, 180, 255, (Uint8)(6 + pulse * 5.0f)};
+                SDL_SetRenderDrawColor(renderer_, maskColor.r, maskColor.g, maskColor.b, maskColor.a);
+                SDL_RenderDrawLine(renderer_, x, 0, x, SCREEN_H);
+            }
+
+            // Vignette border effect
+            for (int i = 0; i < 10; ++i) {
+                int inset = i * 2;
+                Uint8 alpha = (Uint8)(8 + i * 5);
+                SDL_SetRenderDrawColor(renderer_, 0, 0, 0, alpha);
+                SDL_Rect topBand = {inset, inset, std::max(1, SCREEN_W - inset * 2), 2};
+                SDL_Rect bottomBand = {inset, SCREEN_H - inset - 2, std::max(1, SCREEN_W - inset * 2), 2};
+                SDL_Rect leftBand = {inset, inset, 2, std::max(1, SCREEN_H - inset * 2)};
+                SDL_Rect rightBand = {SCREEN_W - inset - 2, inset, 2, std::max(1, SCREEN_H - inset * 2)};
+                SDL_RenderFillRect(renderer_, &topBand);
+                SDL_RenderFillRect(renderer_, &bottomBand);
+                SDL_RenderFillRect(renderer_, &leftBand);
+                SDL_RenderFillRect(renderer_, &rightBand);
+            }
+        }
     }
 }
 
@@ -6621,16 +6884,15 @@ void Game::renderMainMenu() {
         {"PLAY",             UI::Color::Green},   // 0
         {"MULTIPLAYER",      UI::Color::Blue},    // 1
         {"EDITOR",           UI::Color::Yellow},  // 2
-        {"SPRITE EDITOR",    UI::Color::Orange},  // 3
-        {"MAPS",             UI::Color::White},   // 4
-        {"PACKS",            UI::Color::White},   // 5
-        {"CHARACTER",        UI::Color::White},   // 6
-        {"CHARACTER EDITOR", UI::Color::White},   // 7
-        {"MODS",             UI::Color::Purple},  // 8
-        {"CONFIG",           UI::Color::White},   // 9
-        {"QUIT",             UI::Color::Red},     // 10
+        {"MAPS",             UI::Color::White},   // 3
+        {"PACKS",            UI::Color::White},   // 4
+        {"CHARACTER",        UI::Color::White},   // 5
+        {"CHARACTER EDITOR", UI::Color::White},   // 6
+        {"MODS",             UI::Color::Purple},  // 7
+        {"CONFIG",           UI::Color::White},   // 8
+        {"QUIT",             UI::Color::Red},     // 9
     };
-    constexpr int count = 11;
+    constexpr int count = 10;
     int baseY = SCREEN_H / 4 + 10;
     int stepY = 32;
     int itemW = 320;
@@ -6654,7 +6916,7 @@ void Game::renderMainMenu() {
         }
 
         // Group separators
-        if (i == 1 || i == 3 || i == 7 || i == 8) {
+        if (i == 1 || i == 2 || i == 6 || i == 7) {
             ui_.drawSeparator(SCREEN_W / 2, baseY + i * stepY + 28, 80, {60, 60, 80, 60});
         }
     }
@@ -6793,16 +7055,19 @@ void Game::renderConfigMenu() {
     ui_.drawSeparator(SCREEN_W / 2, 92, 80);
 
     char valBuf[128];
-    int y = 120;
-    int stepY = 46;
-    int rowW = 440;
-    int rowH = 36;
+    int y = 116;
+    int stepY = 34;
+    int rowW = 460;
+    int rowH = 28;
 
     // Slider rows (idx 0-5): label + adjustable value with mouse/keyboard
     struct ConfigRow { const char* label; int idx; };
     ConfigRow rows[] = {
         {"Player HP:", 0}, {"Enemy Spawnrate:", 1}, {"Enemy HP:", 2},
         {"Enemy Speed:", 3}, {"Music Volume:", 4}, {"SFX Volume:", 5},
+#ifndef __SWITCH__
+        {"Resolution:", CONFIG_RESOLUTION_INDEX},
+#endif
     };
 
     // Values for display
@@ -6814,6 +7079,7 @@ void Game::renderConfigMenu() {
             case 3: snprintf(valBuf, sizeof(valBuf), "%.1fx",config_.enemySpeedScale); break;
             case 4: snprintf(valBuf, sizeof(valBuf), "%d%%",  config_.musicVolume * 100 / 128); break;
             case 5: snprintf(valBuf, sizeof(valBuf), "%d%%",  config_.sfxVolume   * 100 / 128); break;
+            case CONFIG_RESOLUTION_INDEX: snprintf(valBuf, sizeof(valBuf), "%dx%d", config_.windowWidth, config_.windowHeight); break;
             default: valBuf[0] = 0; break;
         }
         return valBuf;
@@ -6838,14 +7104,62 @@ void Game::renderConfigMenu() {
                 case 3: config_.enemySpeedScale= std::max(0.5f, std::min(2.5f, config_.enemySpeedScale+ delta * 0.1f)); break;
                 case 4: config_.musicVolume    = std::max(0,    std::min(128,  config_.musicVolume     + delta * 8));    Mix_VolumeMusic(config_.musicVolume); break;
                 case 5: config_.sfxVolume      = std::max(0,    std::min(128,  config_.sfxVolume       + delta * 8));    break;
+#ifndef __SWITCH__
+                case CONFIG_RESOLUTION_INDEX: {
+                    int idx = findResolutionPresetIndex(config_.windowWidth, config_.windowHeight);
+                    idx = std::max(0, std::min((int)(sizeof(kResolutionPresets) / sizeof(kResolutionPresets[0])) - 1, idx + delta));
+                    config_.windowWidth = kResolutionPresets[idx].w;
+                    config_.windowHeight = kResolutionPresets[idx].h;
+                    applyResolutionSettings(true);
+                } break;
+#endif
             }
         }
         y += stepY;
     }
 
-    // Username field (idx 6)
+    struct ToggleRow {
+        const char* label;
+        int idx;
+        bool* value;
+    };
+    ToggleRow toggleRows[] = {
+        {"CRT Filter:", CONFIG_SHADER_CRT_INDEX, &config_.shaderCRT},
+        {"Chromatic Aberration:", CONFIG_SHADER_CHROMATIC_INDEX, &config_.shaderChromatic},
+        {"Scanlines:", CONFIG_SHADER_SCANLINES_INDEX, &config_.shaderScanlines},
+        {"Glow Pass:", CONFIG_SHADER_GLOW_INDEX, &config_.shaderGlow},
+        {"Glitch Strips:", CONFIG_SHADER_GLITCH_INDEX, &config_.shaderGlitch},
+        {"Neon Edge:", CONFIG_SHADER_NEON_INDEX, &config_.shaderNeonEdge},
+    };
+
+    for (auto& row : toggleRows) {
+        bool sel = (configSelection_ == row.idx);
+        char tbuf[128];
+        snprintf(tbuf, sizeof(tbuf), "%s %s", row.label, *row.value ? "ON" : "OFF");
+
+        SDL_Color accent = *row.value ? UI::Color::Cyan : UI::Color::White;
+        if (ui_.menuItem(row.idx, tbuf, SCREEN_W / 2, y, rowW, rowH, accent, sel, 18, 20)) {
+            configSelection_ = row.idx;
+            menuSelection_ = row.idx;
+            confirmInput_ = true;
+        }
+        if (ui_.hoveredItem == row.idx && !usingGamepad_) {
+            configSelection_ = row.idx;
+            menuSelection_ = row.idx;
+        }
+        if (sel) {
+            char hint[72];
+            snprintf(hint, sizeof(hint), "[%s/%s toggle]",
+                     UI::glyphLabel(UI::Action::Confirm, usingGamepad_),
+                     UI::glyphLabel(UI::Action::Right, usingGamepad_));
+            ui_.drawText(hint, SCREEN_W / 2 + 160, y + 4, 10, UI::Color::HintGray);
+        }
+        y += stepY;
+    }
+
+    // Username field
     {
-        bool sel = (configSelection_ == 6);
+        bool sel = (configSelection_ == CONFIG_USERNAME_INDEX);
         std::string uDisplay = config_.username;
         if (usernameTyping_) {
             static float blinkT = 0; blinkT += dt_;
@@ -6855,14 +7169,14 @@ void Game::renderConfigMenu() {
         snprintf(ubuf, sizeof(ubuf), "Username:  %s", uDisplay.c_str());
 
         SDL_Color accent = usernameTyping_ ? UI::Color::Cyan : UI::Color::White;
-        if (ui_.menuItem(6, ubuf, SCREEN_W / 2, y, rowW, rowH, accent, sel, 20, 22)) {
-            configSelection_ = 6;
-            menuSelection_ = 6;
+        if (ui_.menuItem(CONFIG_USERNAME_INDEX, ubuf, SCREEN_W / 2, y, rowW, rowH, accent, sel, 18, 20)) {
+            configSelection_ = CONFIG_USERNAME_INDEX;
+            menuSelection_ = CONFIG_USERNAME_INDEX;
             if (!usernameTyping_) confirmInput_ = true;
         }
-        if (ui_.hoveredItem == 6 && !usingGamepad_) {
-            configSelection_ = 6;
-            menuSelection_ = 6;
+        if (ui_.hoveredItem == CONFIG_USERNAME_INDEX && !usingGamepad_) {
+            configSelection_ = CONFIG_USERNAME_INDEX;
+            menuSelection_ = CONFIG_USERNAME_INDEX;
         }
         if (sel && !usernameTyping_) {
             char hint[64];
@@ -6872,18 +7186,18 @@ void Game::renderConfigMenu() {
         y += stepY;
     }
 
-    // Back button (idx 7)
+    // Back button
     {
-        bool sel = (configSelection_ == 7);
-        if (ui_.menuItem(7, "BACK", SCREEN_W / 2, y + 10, rowW, rowH,
-                         UI::Color::White, sel, 20, 22)) {
-            configSelection_ = 7;
-            menuSelection_ = 7;
+        bool sel = (configSelection_ == CONFIG_BACK_INDEX);
+        if (ui_.menuItem(CONFIG_BACK_INDEX, "BACK", SCREEN_W / 2, y + 8, rowW, rowH,
+                         UI::Color::White, sel, 18, 20)) {
+            configSelection_ = CONFIG_BACK_INDEX;
+            menuSelection_ = CONFIG_BACK_INDEX;
             confirmInput_ = true;
         }
-        if (ui_.hoveredItem == 7 && !usingGamepad_) {
-            configSelection_ = 7;
-            menuSelection_ = 7;
+        if (ui_.hoveredItem == CONFIG_BACK_INDEX && !usingGamepad_) {
+            configSelection_ = CONFIG_BACK_INDEX;
+            menuSelection_ = CONFIG_BACK_INDEX;
         }
     }
 
@@ -7119,6 +7433,7 @@ void Game::startCustomMap(const std::string& path) {
     player_.maxHp = config_.playerMaxHp;
     player_.hp = config_.playerMaxHp;
     player_.bombCount = 1;
+    applyCharacterStatsToPlayer(player_);
 
     // Find start trigger for player spawn
     MapTrigger* startT = customMap_.findStartTrigger();
@@ -7210,6 +7525,7 @@ void Game::startCustomMapMultiplayer(const std::string& path) {
     player_.maxHp = config_.playerMaxHp;
     player_.hp = config_.playerMaxHp;
     player_.bombCount = 1;
+    applyCharacterStatsToPlayer(player_);
 
     // Find start trigger for player spawn (prefer team spawn in team/PvP mode)
     {
@@ -7326,12 +7642,24 @@ void Game::scanCharacters() {
     for (auto& cd : availableChars_) cd.unload();
     availableChars_.clear();
 
+    // Scan standard character directories
     const char* dirs[] = {"characters", "romfs/characters", "romfs:/characters"};
     for (const char* dir : dirs) {
         auto found = ::scanCharacters(dir, renderer_);
         for (auto& cd : found)
             availableChars_.push_back(std::move(cd));
     }
+
+    // Also scan mod character directories
+    const auto& mods = ModManager::instance().mods();
+    for (const auto& mod : mods) {
+        if (!mod.enabled) continue;
+        std::string modCharDir = "mods/" + mod.id + "/characters";
+        auto found = ::scanCharacters(modCharDir, renderer_);
+        for (auto& cd : found)
+            availableChars_.push_back(std::move(cd));
+    }
+
     printf("Found %d characters\n", (int)availableChars_.size());
 }
 
@@ -7341,8 +7669,44 @@ void Game::applyCharacter(const CharacterDef& cd) {
     if (!cd.legSprites.empty()) legSprites_ = cd.legSprites;
     if (!cd.deathSprites.empty()) playerDeathSprites_ = cd.deathSprites;
 
-    // Apply stats to config
-    // (Stats applied when startGame/startCustomMap creates the player)
+    // Store active character for stat application
+    activeCharDef_ = CharacterDef{};
+    activeCharDef_.name = cd.name;
+    activeCharDef_.speed = cd.speed;
+    activeCharDef_.hp = cd.hp;
+    activeCharDef_.ammo = cd.ammo;
+    activeCharDef_.fireRate = cd.fireRate;
+    activeCharDef_.reloadTime = cd.reloadTime;
+    hasActiveChar_ = true;
+    printf("Applied character: %s (spd:%.0f hp:%d ammo:%d)\n",
+           cd.name.c_str(), cd.speed, cd.hp, cd.ammo);
+}
+
+void Game::applyCharacterStatsToPlayer(Player& p) {
+    if (!hasActiveChar_) return;
+    p.speed      = activeCharDef_.speed;
+    p.hp         = activeCharDef_.hp;
+    p.maxHp      = activeCharDef_.hp;
+    p.ammo       = activeCharDef_.ammo;
+    p.maxAmmo    = activeCharDef_.ammo;
+    p.fireRate   = activeCharDef_.fireRate;
+    p.reloadTime = activeCharDef_.reloadTime;
+}
+
+void Game::resetToDefaultCharacter() {
+    hasActiveChar_ = false;
+    selectedChar_ = -1;
+    // Reload default player sprites
+    playerSprites_ = Assets::instance().loadAnim("sprites/player/body-", 10, 1);
+    legSprites_    = Assets::instance().loadAnim("sprites/player/legs-", 8, 1);
+    // Death sprites use different naming
+    playerDeathSprites_.clear();
+    for (int i = 1; i <= 12; i++) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "sprites/player/death-%d.png", i);
+        SDL_Texture* t = Assets::instance().tex(buf);
+        if (t) playerDeathSprites_.push_back(t);
+    }
 }
 
 void Game::renderMapSelectMenu() {
@@ -7582,61 +7946,63 @@ void Game::renderCharCreator() {
     SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
     SDL_RenderFillRect(renderer_, &full);
 
-    SDL_Color title = {0, 255, 228, 255};
-    SDL_Color white = {255, 255, 255, 255};
-    SDL_Color gray  = {120, 120, 130, 255};
-    SDL_Color cyan  = {0, 255, 228, 255};
+    SDL_Color title  = {0, 255, 228, 255};
+    SDL_Color white  = {255, 255, 255, 255};
+    SDL_Color gray   = {120, 120, 130, 255};
+    SDL_Color cyan   = {0, 255, 228, 255};
     SDL_Color yellow = {255, 220, 50, 255};
+    SDL_Color green  = {0, 255, 100, 255};
+    SDL_Color red    = {255, 80, 80, 255};
 
-    drawTextCentered("CHARACTER CREATOR", 30, 36, title);
+    const char* heading = charCreator_.isEditing ? "EDIT CHARACTER" : "CHARACTER CREATOR";
+    drawTextCentered(heading, 30, 36, title);
     SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 60);
     SDL_Rect tl = {SCREEN_W / 2 - 120, 72, 240, 1};
     SDL_RenderFillRect(renderer_, &tl);
 
     auto& cc = charCreator_;
+    int leftX = 60;
     int y = 90;
-    int step = 38;
+    int step = 32;
     char buf[256];
 
+    // ── Left panel: Name + Stats ──
+
     auto drawField = [&](int idx, const char* label, const char* value) {
-        SDL_Color c = (cc.field == idx) ? white : gray;
+        SDL_Color c  = (cc.field == idx) ? white : gray;
         SDL_Color vc = (cc.field == idx) ? cyan : gray;
-        drawText(label, 120, y, 20, c);
-        if (cc.field == idx && idx >= 1 && idx <= 8) {
-            // Draw left/right arrows
-            drawText("<", 520, y, 20, yellow);
-            drawText(value, 560, y, 20, vc);
-            drawText(">", 760, y, 20, yellow);
+        drawText(label, leftX, y, 18, c);
+        if (cc.field == idx && idx >= 1 && idx <= 5) {
+            drawText("<", leftX + 210, y, 18, yellow);
+            drawText(value, leftX + 250, y, 18, vc);
+            drawText(">", leftX + 380, y, 18, yellow);
         } else {
-            drawText(value, 560, y, 20, vc);
+            drawText(value, leftX + 250, y, 18, vc);
         }
-        // Click support for field rows
-        bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, 120, y - 2, 660, step - 4);
+        bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, leftX, y - 2, 450, step - 4);
         if (hovered && !usingGamepad_) cc.field = idx;
         if (hovered) ui_.hoveredItem = idx;
-        if (hovered && ui_.mouseClicked) {
-            cc.field = idx;
-            confirmInput_ = true;
-        }
+        if (hovered && ui_.mouseClicked) { cc.field = idx; confirmInput_ = true; }
         y += step;
     };
 
     // Field 0: Name
     if (cc.textEditing) {
-        drawText("NAME:", 120, y, 20, yellow);
+        drawText("NAME:", leftX, y, 18, yellow);
         static float ccBlink = 0; ccBlink += 0.016f;
         std::string display = cc.textBuf + ((int)(ccBlink * 1.5f) % 2 == 0 ? '_' : ' ');
-        drawText(display.c_str(), 560, y, 20, yellow);
+        drawText(display.c_str(), leftX + 250, y, 18, yellow);
         renderSoftKB(y + 30);
     } else {
         SDL_Color nc = (cc.field == 0) ? white : gray;
-        drawText("NAME:", 120, y, 20, nc);
-        drawText(cc.name.c_str(), 560, y, 20, (cc.field == 0) ? cyan : gray);
-        if (cc.field == 0) drawText("[ENTER to edit]", 800, y, 14, gray);
+        drawText("NAME:", leftX, y, 18, nc);
+        drawText(cc.name.c_str(), leftX + 250, y, 18, (cc.field == 0) ? cyan : gray);
+        if (cc.field == 0) drawText("[ENTER]", leftX + 420, y, 12, gray);
     }
     y += step;
+    y += step / 2;
 
-    // Fields 1-8: stats
+    // Fields 1-5: Character stats
     snprintf(buf, sizeof(buf), "%.0f", cc.speed);
     drawField(1, "SPEED:", buf);
 
@@ -7650,128 +8016,249 @@ void Game::renderCharCreator() {
     drawField(4, "FIRE RATE:", buf);
 
     snprintf(buf, sizeof(buf), "%.1f", cc.reloadTime);
-    drawField(5, "RELOAD TIME:", buf);
+    drawField(5, "RELOAD:", buf);
 
-    snprintf(buf, sizeof(buf), "%d", cc.bodyFrames);
-    drawField(6, "BODY FRAMES:", buf);
+    y += 8;
 
-    snprintf(buf, sizeof(buf), "%d", cc.legFrames);
-    drawField(7, "LEG FRAMES:", buf);
+    // — Sprite info (auto-detected, read-only) —
+    drawText("SPRITES:", leftX, y, 14, title);
+    y += 20;
+    if (cc.loaded) {
+        SDL_Color bodyC = cc.charDef.bodySprites.empty() ? red : green;
+        snprintf(buf, sizeof(buf), "Body: %d frames", (int)cc.charDef.bodySprites.size());
+        drawText(buf, leftX + 10, y, 12, bodyC); y += 16;
+        
+        SDL_Color legC = cc.charDef.legSprites.empty() ? yellow : green;
+        snprintf(buf, sizeof(buf), "Legs: %d frames", (int)cc.charDef.legSprites.size());
+        drawText(buf, leftX + 10, y, 12, legC); y += 16;
+        
+        SDL_Color deathC = cc.charDef.deathSprites.empty() ? yellow : green;
+        snprintf(buf, sizeof(buf), "Death: %d frames", (int)cc.charDef.deathSprites.size());
+        drawText(buf, leftX + 10, y, 12, deathC); y += 16;
+        
+        SDL_Color detC = cc.charDef.hasDetail ? green : gray;
+        drawText(cc.charDef.hasDetail ? "Detail: yes" : "Detail: no", leftX + 10, y, 12, detC);
+        y += 20;
+    } else {
+        drawText("No sprites loaded yet", leftX + 10, y, 12, gray);
+        y += 20;
+        drawText("Put PNGs in characters/<name>/", leftX + 10, y, 12, {80, 80, 90, 255});
+        y += 16;
+        drawText("  body-0001.png, legs-0001.png, ...", leftX + 10, y, 12, {80, 80, 90, 255});
+        y += 24;
+    }
 
-    snprintf(buf, sizeof(buf), "%d", cc.deathFrames);
-    drawField(8, "DEATH FRAMES:", buf);
+    // ── Action buttons ──
 
-    // Buttons
-    y += 10;
-    if (ui_.menuItem(9, "SAVE", SCREEN_W / 2, y, 200, 32,
-                     UI::Color::Green, cc.field == 9, 22, 24)) {
-        cc.field = 9;
-        confirmInput_ = true;
+    // Reload button
+    const char* reloadLabel = cc.loaded ? "RELOAD SPRITES [R]" : "LOAD SPRITES";
+    SDL_Color reloadColor = cc.loaded ? UI::Color::Blue : UI::Color::Yellow;
+    if (ui_.menuItem(6, reloadLabel, leftX + 225, y, 200, 28,
+                     reloadColor, cc.field == 6, 16, 20)) {
+        cc.field = 6; confirmInput_ = true;
+    }
+    if (ui_.hoveredItem == 6 && !usingGamepad_) cc.field = 6;
+    y += 35;
+
+    // Test Play button
+    if (ui_.menuItem(7, "TEST PLAY", leftX + 225, y, 200, 28,
+                     UI::Color::Green, cc.field == 7, 18, 20)) {
+        cc.field = 7; confirmInput_ = true;
+    }
+    if (ui_.hoveredItem == 7 && !usingGamepad_) cc.field = 7;
+    if (cc.field == 7) {
+        drawText("Sandbox with this character", leftX + 30, y + 24, 11, {80, 80, 90, 255});
+    }
+    y += 35;
+
+    // Save button
+    if (ui_.menuItem(8, "SAVE", leftX + 225, y, 200, 28,
+                     UI::Color::Green, cc.field == 8, 18, 20)) {
+        cc.field = 8; confirmInput_ = true;
+    }
+    if (ui_.hoveredItem == 8 && !usingGamepad_) cc.field = 8;
+    y += 35;
+
+    // Back button
+    if (ui_.menuItem(9, "BACK", leftX + 225, y, 200, 28,
+                     UI::Color::White, cc.field == 9, 18, 20)) {
+        cc.field = 9; confirmInput_ = true;
     }
     if (ui_.hoveredItem == 9 && !usingGamepad_) cc.field = 9;
-    y += step;
 
-    if (ui_.menuItem(10, "BACK", SCREEN_W / 2, y, 200, 32,
-                     UI::Color::White, cc.field == 10, 22, 24)) {
-        cc.field = 10;
-        confirmInput_ = true;
+    // ── Right panel: Sprite Preview ──
+    int previewX = 600;
+    int previewY = 90;
+    
+    drawText("SPRITE PREVIEW", previewX + 90, previewY, 20, title);
+    SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 40);
+    SDL_Rect previewLine = {previewX + 80, previewY + 26, 120, 1};
+    SDL_RenderFillRect(renderer_, &previewLine);
+    previewY += 45;
+
+    // Section tabs
+    const char* sections[] = {"IDLE", "BODY", "LEGS", "DEATH", "DETAIL"};
+    int tabY = previewY;
+    for (int i = 0; i < 5; i++) {
+        bool selected = (cc.previewSection == i);
+        SDL_Color tabColor = selected ? cyan : gray;
+        if (selected) {
+            SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 40);
+            SDL_Rect tabBg = {previewX - 5, tabY - 2, 120, 22};
+            SDL_RenderFillRect(renderer_, &tabBg);
+        }
+        drawText(sections[i], previewX + 5, tabY, 14, tabColor);
+        bool tabHovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, previewX - 5, tabY - 2, 120, 22);
+        if (tabHovered && ui_.mouseClicked) cc.previewSection = i;
+        tabY += 26;
     }
-    if (ui_.hoveredItem == 10 && !usingGamepad_) cc.field = 10;
 
-    // Info panel on the right
-    int panelX = 880;
-    drawText("FOLDER STRUCTURE:", panelX, 90, 14, title);
-    snprintf(buf, sizeof(buf), "characters/%s/", cc.name.c_str());
-    drawText(buf, panelX, 115, 12, gray);
+    // Preview area
+    int pvX = previewX + 130;
+    int pvY = previewY + 20;
+    int pvSize = 256;
 
-    drawText("Required sprites:", panelX, 145, 14, title);
-    snprintf(buf, sizeof(buf), "body-0001.png .. body-%04d.png", cc.bodyFrames);
-    drawText(buf, panelX, 170, 12, gray);
-    snprintf(buf, sizeof(buf), "legs-0001.png .. legs-%04d.png", cc.legFrames);
-    drawText(buf, panelX, 190, 12, gray);
-    snprintf(buf, sizeof(buf), "death-1.png .. death-%d.png", cc.deathFrames);
-    drawText(buf, panelX, 210, 12, gray);
-    drawText("detail.png (optional)", panelX, 230, 12, gray);
+    SDL_SetRenderDrawColor(renderer_, 20, 24, 32, 255);
+    SDL_Rect pvPanel = {pvX, pvY, pvSize, pvSize};
+    SDL_RenderFillRect(renderer_, &pvPanel);
+    SDL_SetRenderDrawColor(renderer_, 60, 80, 100, 255);
+    SDL_RenderDrawRect(renderer_, &pvPanel);
 
-    drawText("All sprites should be 32x32 px", panelX, 265, 12, {180, 180, 180, 255});
+    // Grid
+    SDL_SetRenderDrawColor(renderer_, 30, 34, 42, 255);
+    for (int gx = 0; gx < pvSize; gx += 32)
+        SDL_RenderDrawLine(renderer_, pvX + gx, pvY, pvX + gx, pvY + pvSize);
+    for (int gy = 0; gy < pvSize; gy += 32)
+        SDL_RenderDrawLine(renderer_, pvX, pvY + gy, pvX + pvSize, pvY + gy);
 
-    // Hint
-    { UI::HintPair hints[] = { {UI::Action::Navigate, "Navigate/Adjust"}, {UI::Action::Confirm, "Confirm"}, {UI::Action::Back, "Back"} };
-      ui_.drawHintBar(hints, 3, SCREEN_H - 30); }
+    // Render current preview sprite
+    SDL_Texture* previewTex = nullptr;
+    int frameCount = 0;
+
+    auto& ccd = cc.charDef;
+    switch (cc.previewSection) {
+        case 0: // IDLE
+            if (cc.loaded && !ccd.bodySprites.empty()) previewTex = ccd.bodySprites[0];
+            else if (!playerSprites_.empty()) previewTex = playerSprites_[0];
+            break;
+        case 1: // BODY anim
+            if (cc.loaded && !ccd.bodySprites.empty()) {
+                frameCount = (int)ccd.bodySprites.size();
+                previewTex = ccd.bodySprites[cc.previewFrame % frameCount];
+            } else if (!playerSprites_.empty()) {
+                frameCount = (int)playerSprites_.size();
+                previewTex = playerSprites_[cc.previewFrame % frameCount];
+            }
+            break;
+        case 2: // LEGS anim
+            if (cc.loaded && !ccd.legSprites.empty()) {
+                frameCount = (int)ccd.legSprites.size();
+                previewTex = ccd.legSprites[cc.previewFrame % frameCount];
+            } else if (!legSprites_.empty()) {
+                frameCount = (int)legSprites_.size();
+                previewTex = legSprites_[cc.previewFrame % frameCount];
+            }
+            break;
+        case 3: // DEATH anim
+            if (cc.loaded && !ccd.deathSprites.empty()) {
+                frameCount = (int)ccd.deathSprites.size();
+                previewTex = ccd.deathSprites[cc.previewFrame % frameCount];
+            } else if (!playerDeathSprites_.empty()) {
+                frameCount = (int)playerDeathSprites_.size();
+                previewTex = playerDeathSprites_[cc.previewFrame % frameCount];
+            }
+            break;
+        case 4: // DETAIL
+            if (cc.loaded && ccd.detailSprite) previewTex = ccd.detailSprite;
+            break;
+    }
+
+    if (previewTex) {
+        int w, h;
+        SDL_QueryTexture(previewTex, nullptr, nullptr, &w, &h);
+        float scale = std::min((float)pvSize / w, (float)pvSize / h) * 0.8f;
+        int sw = (int)(w * scale);
+        int sh = (int)(h * scale);
+        SDL_Rect dst = {pvX + (pvSize - sw) / 2, pvY + (pvSize - sh) / 2, sw, sh};
+        SDL_RenderCopy(renderer_, previewTex, nullptr, &dst);
+    } else {
+        drawText("NO SPRITE", pvX + pvSize / 2 - 50, pvY + pvSize / 2 - 10, 16, gray);
+        drawText("Drop PNGs in folder", pvX + pvSize / 2 - 70, pvY + pvSize / 2 + 10, 12, {80, 80, 90, 255});
+    }
+
+    // Animation controls
+    int ctrlY = pvY + pvSize + 15;
+    if (frameCount > 1) {
+        const char* playLabel = cc.playAnimation ? "[PAUSE]" : "[PLAY]";
+        drawText(playLabel, pvX + pvSize / 2 - 28, ctrlY, 14, yellow);
+        bool playHovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, pvX + pvSize/2 - 40, ctrlY - 2, 80, 18);
+        if (playHovered && ui_.mouseClicked) cc.playAnimation = !cc.playAnimation;
+        
+        snprintf(buf, sizeof(buf), "Frame %d / %d", cc.previewFrame + 1, frameCount);
+        drawText(buf, pvX + pvSize / 2 - 40, ctrlY + 22, 12, gray);
+    }
+
+    // Folder path info
+    int infoY = ctrlY + 50;
+    drawText("FOLDER:", pvX, infoY, 14, title);
+    infoY += 20;
+    if (!cc.folderPath.empty()) {
+        drawText(cc.folderPath.c_str(), pvX, infoY, 11, green);
+    } else {
+        snprintf(buf, sizeof(buf), "characters/%s/", cc.name.c_str());
+        drawText(buf, pvX, infoY, 11, gray);
+    }
+
+    // Warnings
+    if (!cc.warnings.empty()) {
+        infoY += 25;
+        drawText("WARNINGS:", pvX, infoY, 12, yellow);
+        infoY += 16;
+        for (const auto& w : cc.warnings) {
+            drawText(w.c_str(), pvX, infoY, 10, yellow);
+            infoY += 14;
+        }
+    }
+
+    // Status message
+    if (cc.statusTimer > 0) {
+        SDL_Color statusC = green;
+        drawTextCentered(cc.statusMsg.c_str(), SCREEN_H - 65, 16, statusC);
+    }
+
+    // Existing characters list (bottom-left for quick edit)
+    if (!availableChars_.empty() && !cc.isEditing) {
+        int listY = SCREEN_H - 140;
+        drawText("EXISTING:", leftX, listY, 12, title);
+        listY += 16;
+        int shown = std::min((int)availableChars_.size(), 4);
+        for (int i = 0; i < shown; i++) {
+            drawText(availableChars_[i].name.c_str(), leftX + 10, listY, 11, gray);
+            bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, leftX, listY - 2, 200, 14);
+            if (hovered && ui_.mouseClicked) {
+                // Edit this character
+                loadCharacterIntoCreator(availableChars_[i].folder);
+            }
+            listY += 14;
+        }
+        if ((int)availableChars_.size() > 4) {
+            snprintf(buf, sizeof(buf), "... and %d more", (int)availableChars_.size() - 4);
+            drawText(buf, leftX + 10, listY, 10, gray);
+        }
+    }
+
+    // Hint bar
+    { UI::HintPair hints[] = { 
+        {UI::Action::Navigate, "Navigate/Adjust"}, 
+        {UI::Action::Confirm, "Confirm"},
+        {UI::Action::Back, "Back"}
+    };
+    ui_.drawHintBar(hints, 3, SCREEN_H - 30); }
+    drawText("[TAB] Preview  [R] Reload  [P] Play/Pause", 10, SCREEN_H - 35, 12, {100, 100, 110, 255});
 }
 
-void Game::saveCharCreator() {
-    auto& cc = charCreator_;
+// ── Mod build folder helper ──────────────────────────────────────────────────
 
-    // Sanitize name for folder (replace spaces with underscores)
-    std::string safeName = cc.name;
-    for (char& c : safeName) {
-        if (c == ' ') c = '_';
-        if (c == '/' || c == '\\') c = '_';
-    }
-    if (safeName.empty()) safeName = "unnamed";
-
-    // Create character directory
-    std::string dir = "characters/" + safeName;
-    mkdir("characters", 0755);
-    mkdir(dir.c_str(), 0755);
-
-    // Also create in romfs for Switch
-    std::string romfsDir = "romfs/characters/" + safeName;
-    mkdir("romfs/characters", 0755);
-    mkdir(romfsDir.c_str(), 0755);
-
-    // Write .cschar file
-    std::string path = dir + "/" + safeName + ".cschar";
-    FILE* f = fopen(path.c_str(), "w");
-    if (!f) {
-        printf("Failed to save character to: %s\n", path.c_str());
-        return;
-    }
-
-    fprintf(f, "[character]\n");
-    fprintf(f, "name=%s\n", cc.name.c_str());
-    fprintf(f, "speed=%.1f\n", cc.speed);
-    fprintf(f, "hp=%d\n", cc.hp);
-    fprintf(f, "ammo=%d\n", cc.ammo);
-    fprintf(f, "fire_rate=%.1f\n", cc.fireRate);
-    fprintf(f, "reload_time=%.1f\n", cc.reloadTime);
-    fprintf(f, "\n[sprites]\n");
-    fprintf(f, "body_frames=%d\n", cc.bodyFrames);
-    fprintf(f, "leg_frames=%d\n", cc.legFrames);
-    fprintf(f, "death_frames=%d\n", cc.deathFrames);
-    fprintf(f, "detail=detail.png\n");
-    fclose(f);
-
-    // Copy to romfs too
-    std::string romfsPath = romfsDir + "/" + safeName + ".cschar";
-    FILE* f2 = fopen(romfsPath.c_str(), "w");
-    if (f2) {
-        fprintf(f2, "[character]\n");
-        fprintf(f2, "name=%s\n", cc.name.c_str());
-        fprintf(f2, "speed=%.1f\n", cc.speed);
-        fprintf(f2, "hp=%d\n", cc.hp);
-        fprintf(f2, "ammo=%d\n", cc.ammo);
-        fprintf(f2, "fire_rate=%.1f\n", cc.fireRate);
-        fprintf(f2, "reload_time=%.1f\n", cc.reloadTime);
-        fprintf(f2, "\n[sprites]\n");
-        fprintf(f2, "body_frames=%d\n", cc.bodyFrames);
-        fprintf(f2, "leg_frames=%d\n", cc.legFrames);
-        fprintf(f2, "death_frames=%d\n", cc.deathFrames);
-        fprintf(f2, "detail=detail.png\n");
-        fclose(f2);
-    }
-
-    printf("Character saved: %s -> %s\n", cc.name.c_str(), path.c_str());
-    printf("Place sprites in: %s/\n", dir.c_str());
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-//  Mod-save dialog helpers
-// ═════════════════════════════════════════════════════════════════════════════
-
-// Create standard folder tree for a new mod and write mod.cfg.
-// Returns the base mod folder path (e.g. "mods/mymod").
 /*static*/ std::string Game::modBuildFolder(const std::string& modId, const std::string& displayName) {
     std::string base = "mods/" + modId;
     mkdir("mods",                                  0755);
@@ -7813,42 +8300,158 @@ void Game::saveCharCreator() {
     return base;
 }
 
-void Game::saveCharCreatorToMod(const std::string& modFolder) {
+// ── Character save/load helpers ─────────────────────────────────────────────
+
+void Game::saveCharacterToFolder(const std::string& folderPath) {
     auto& cc = charCreator_;
-    std::string safeName = cc.name;
-    for (char& c : safeName) {
-        if (c == ' ') c = '_';
-        if (c == '/' || c == '\\') c = '_';
+
+    // Create folder
+    mkdir("characters", 0755);
+    mkdir(folderPath.c_str(), 0755);
+
+    // Write character.cfg
+    std::string cfgPath = folderPath + "/character.cfg";
+    FILE* f = fopen(cfgPath.c_str(), "w");
+    if (!f) { printf("Failed to save: %s\n", cfgPath.c_str()); return; }
+    fprintf(f, "# Character config — sprites are auto-detected from PNGs\n");
+    fprintf(f, "name=%s\n\n", cc.name.c_str());
+    fprintf(f, "speed=%.0f\n",       cc.speed);
+    fprintf(f, "hp=%d\n",            cc.hp);
+    fprintf(f, "ammo=%d\n",          cc.ammo);
+    fprintf(f, "fire_rate=%.1f\n",   cc.fireRate);
+    fprintf(f, "reload_time=%.1f\n", cc.reloadTime);
+    fclose(f);
+
+    // If no sprites exist, copy default templates
+    if (!cc.loaded || cc.charDef.bodySprites.empty()) {
+        auto copySprite = [&](const char* srcPat, const char* dstPat, int count) {
+            for (int i = 1; i <= count; i++) {
+                char src[256], dst[256];
+                snprintf(src, sizeof(src), srcPat, i);
+                snprintf(dst, sizeof(dst), dstPat, i);
+                std::string dstPath = folderPath + "/" + dst;
+                FILE* check = fopen(dstPath.c_str(), "rb");
+                if (check) { fclose(check); continue; }
+                const char* srcDirs[] = {"romfs/sprites/player/", "sprites/player/"};
+                for (const char* sd : srcDirs) {
+                    std::string srcPath = std::string(sd) + src;
+                    FILE* sf = fopen(srcPath.c_str(), "rb");
+                    if (sf) {
+                        FILE* df = fopen(dstPath.c_str(), "wb");
+                        if (df) {
+                            char buffer[4096]; size_t bytes;
+                            while ((bytes = fread(buffer, 1, sizeof(buffer), sf)) > 0)
+                                fwrite(buffer, 1, bytes, df);
+                            fclose(df);
+                        }
+                        fclose(sf);
+                        break;
+                    }
+                }
+            }
+        };
+        copySprite("body-%04d.png", "body-%04d.png", 11);
+        copySprite("legs-%04d.png", "legs-%04d.png", 8);
+        copySprite("death-%d.png",  "death-%d.png",  12);
+        printf("Copied default sprite templates to %s\n", folderPath.c_str());
     }
-    if (safeName.empty()) safeName = "unnamed";
 
-    // Create character directory inside the mod
-    std::string dir = modFolder + "/characters/" + safeName;
-    mkdir((modFolder + "/characters").c_str(), 0755);
-    mkdir(dir.c_str(), 0755);
+    printf("Character saved: %s\n", cfgPath.c_str());
+}
 
-    // Helper lambda: write character .cschar to a given path
-    auto writeChar = [&](const std::string& path) {
-        FILE* f = fopen(path.c_str(), "w");
-        if (!f) { printf("Failed to save character to: %s\n", path.c_str()); return; }
-        fprintf(f, "[character]\n");
-        fprintf(f, "name=%s\n",            cc.name.c_str());
-        fprintf(f, "speed=%.1f\n",         cc.speed);
-        fprintf(f, "hp=%d\n",              cc.hp);
-        fprintf(f, "ammo=%d\n",            cc.ammo);
-        fprintf(f, "fire_rate=%.1f\n",     cc.fireRate);
-        fprintf(f, "reload_time=%.1f\n",   cc.reloadTime);
-        fprintf(f, "\n[sprites]\n");
-        fprintf(f, "body_frames=%d\n",     cc.bodyFrames);
-        fprintf(f, "leg_frames=%d\n",      cc.legFrames);
-        fprintf(f, "death_frames=%d\n",    cc.deathFrames);
-        fprintf(f, "detail=detail.png\n");
-        fclose(f);
-    };
+void Game::loadCharacterIntoCreator(const std::string& folderPath) {
+    auto& cc = charCreator_;
+    cc.charDef.unload();
+    cc.charDef = CharacterDef{};
 
-    std::string path = dir + "/" + safeName + ".cschar";
-    writeChar(path);
-    printf("Character saved to mod: %s\n", path.c_str());
+    if (cc.charDef.loadFromFolder(folderPath, renderer_)) {
+        cc.loaded = true;
+        cc.folderPath = folderPath;
+        cc.name = cc.charDef.name;
+        cc.speed = cc.charDef.speed;
+        cc.hp = cc.charDef.hp;
+        cc.ammo = cc.charDef.ammo;
+        cc.fireRate = cc.charDef.fireRate;
+        cc.reloadTime = cc.charDef.reloadTime;
+        cc.isEditing = true;
+        cc.warnings = cc.charDef.validate();
+        cc.previewFrame = 0;
+        cc.animTime = 0.0f;
+        cc.statusMsg = "Loaded: " + cc.name;
+        cc.statusTimer = 2.0f;
+        printf("Loaded character into creator: %s\n", cc.name.c_str());
+    } else {
+        cc.loaded = false;
+        cc.statusMsg = "Failed to load from " + folderPath;
+        cc.statusTimer = 3.0f;
+    }
+}
+
+void Game::testCharacter() {
+    auto& cc = charCreator_;
+
+    // Save current state first
+    std::string folder = cc.folderPath.empty() ? "characters/" + cc.name : cc.folderPath;
+    saveCharacterToFolder(folder);
+
+    // Load/reload character
+    if (!cc.loaded) {
+        loadCharacterIntoCreator(folder);
+    }
+
+    // Build a temporary CharacterDef with current stats
+    CharacterDef testDef;
+    testDef.name = cc.name;
+    testDef.speed = cc.speed;
+    testDef.hp = cc.hp;
+    testDef.ammo = cc.ammo;
+    testDef.fireRate = cc.fireRate;
+    testDef.reloadTime = cc.reloadTime;
+    if (cc.loaded) {
+        testDef.bodySprites = cc.charDef.bodySprites;
+        testDef.legSprites = cc.charDef.legSprites;
+        testDef.deathSprites = cc.charDef.deathSprites;
+    }
+    applyCharacter(testDef);
+
+    // Start sandbox game for testing
+    sandboxMode_ = true;
+    mapConfigMode_ = 1;
+    state_ = GameState::Playing;
+    testPlayFromEditor_ = true;  // return to creator when done
+    gameTime_ = 0;
+    lobbySettings_.isPvp = false;
+    waveNumber_ = 0;
+    waveEnemiesLeft_ = 0;
+    waveActive_ = false;
+    wavePauseTimer_ = WAVE_PAUSE_BASE;
+    waveSpawnTimer_ = 0;
+    enemies_.clear(); bullets_.clear(); enemyBullets_.clear();
+    bombs_.clear(); explosions_.clear(); debris_.clear();
+    blood_.clear(); boxFragments_.clear();
+    crates_.clear(); pickups_.clear();
+    upgrades_.reset();
+    crateSpawnTimer_ = 0;
+    map_.generate(config_.mapWidth, config_.mapHeight);
+
+    player_ = Player{};
+    player_.maxHp = cc.hp;
+    player_.hp = cc.hp;
+    player_.speed = cc.speed;
+    player_.ammo = cc.ammo;
+    player_.maxAmmo = cc.ammo;
+    player_.fireRate = cc.fireRate;
+    player_.reloadTime = cc.reloadTime;
+    player_.pos = {map_.worldWidth() / 2.0f, map_.worldHeight() / 2.0f};
+    player_.bombCount = 1;
+
+    camera_.pos = {player_.pos.x - SCREEN_W/2, player_.pos.y - SCREEN_H/2};
+    camera_.worldW = map_.worldWidth();
+    camera_.worldH = map_.worldHeight();
+
+    if (bgMusic_) { Mix_PlayMusic(bgMusic_, -1); Mix_VolumeMusic(config_.musicVolume); }
+
+    printf("Test playing character: %s\n", cc.name.c_str());
 }
 
 void Game::openModSaveDialog(ModSaveDialogState::Asset asset) {
@@ -7899,7 +8502,7 @@ void Game::handleModSaveDialogEvent(const SDL_Event& e) {
                     } else {
                         // Existing mod selected
                         d.confirmedModFolder = "mods/" + d.modIds[d.selIdx - 1];
-                        if (d.asset == ModSaveDialogState::AssetSprite)
+                        if (false)
                             d.phase = ModSaveDialogState::ChooseCategory;
                         else
                             d.confirmed = true;
@@ -7920,7 +8523,7 @@ void Game::handleModSaveDialogEvent(const SDL_Event& e) {
                         d.phase = ModSaveDialogState::NameNewMod;
                     } else {
                         d.confirmedModFolder = "mods/" + d.modIds[d.selIdx - 1];
-                        if (d.asset == ModSaveDialogState::AssetSprite)
+                        if (false)
                             d.phase = ModSaveDialogState::ChooseCategory;
                         else
                             d.confirmed = true;
@@ -7951,7 +8554,7 @@ void Game::handleModSaveDialogEvent(const SDL_Event& e) {
                 case SDLK_RETURN: {
                     if (d.newModId.empty()) break;
                     d.confirmedModFolder = modBuildFolder(d.newModId, d.newModId);
-                    if (d.asset == ModSaveDialogState::AssetSprite)
+                    if (false)
                         d.phase = ModSaveDialogState::ChooseCategory;
                     else
                         d.confirmed = true;
@@ -7998,7 +8601,7 @@ void Game::handleModSaveDialogEvent(const SDL_Event& e) {
                 case SDL_CONTROLLER_BUTTON_START: {
                     if (d.newModId.empty()) break;
                     d.confirmedModFolder = modBuildFolder(d.newModId, d.newModId);
-                    if (d.asset == ModSaveDialogState::AssetSprite)
+                    if (false)
                         d.phase = ModSaveDialogState::ChooseCategory;
                     else
                         d.confirmed = true;
@@ -8070,7 +8673,7 @@ void Game::renderModSaveDialog() {
     int cx = panX + panW / 2;
     int y  = panY + 18;
 
-    static const char* ASSET_NAMES[] = {"MAP", "SPRITE", "CHARACTER"};
+    static const char* ASSET_NAMES[] = {"MAP", "CHARACTER"};
     char title[64];
     snprintf(title, sizeof(title), "SAVE %s TO MOD", ASSET_NAMES[(int)d.asset]);
     drawTextCentered(title, y, 24, cyan);
@@ -8096,7 +8699,7 @@ void Game::renderModSaveDialog() {
                     d.phase = ModSaveDialogState::NameNewMod;
                 } else {
                     d.confirmedModFolder = "mods/" + d.modIds[i - 1];
-                    if (d.asset == ModSaveDialogState::AssetSprite)
+                    if (false)
                         d.phase = ModSaveDialogState::ChooseCategory;
                     else
                         d.confirmed = true;
@@ -8199,6 +8802,8 @@ void Game::saveConfig() {
     if (!f) { printf("Failed to save config\n"); return; }
     fprintf(f, "mapWidth=%d\n", config_.mapWidth);
     fprintf(f, "mapHeight=%d\n", config_.mapHeight);
+    fprintf(f, "windowWidth=%d\n", config_.windowWidth);
+    fprintf(f, "windowHeight=%d\n", config_.windowHeight);
     fprintf(f, "playerMaxHp=%d\n", config_.playerMaxHp);
     fprintf(f, "spawnRateScale=%.2f\n", config_.spawnRateScale);
     fprintf(f, "enemyHpScale=%.2f\n", config_.enemyHpScale);
@@ -8207,6 +8812,12 @@ void Game::saveConfig() {
     fprintf(f, "sfxVolume=%d\n", config_.sfxVolume);
     fprintf(f, "username=%s\n", config_.username.c_str());
     fprintf(f, "fullscreen=%d\n", config_.fullscreen ? 1 : 0);
+    fprintf(f, "shaderCRT=%d\n", config_.shaderCRT ? 1 : 0);
+    fprintf(f, "shaderChromatic=%d\n", config_.shaderChromatic ? 1 : 0);
+    fprintf(f, "shaderScanlines=%d\n", config_.shaderScanlines ? 1 : 0);
+    fprintf(f, "shaderGlow=%d\n", config_.shaderGlow ? 1 : 0);
+    fprintf(f, "shaderGlitch=%d\n", config_.shaderGlitch ? 1 : 0);
+    fprintf(f, "shaderNeonEdge=%d\n", config_.shaderNeonEdge ? 1 : 0);
     fclose(f);
     printf("Config saved to config.txt\n");
 }
@@ -8216,11 +8827,12 @@ void Game::loadConfig() {
     if (!f) return; // no saved config, use defaults
     char line[256];
     while (fgets(line, sizeof(line), f)) {
-        char key[64];
         float fval;
         int ival;
         if (sscanf(line, "mapWidth=%d", &ival) == 1) config_.mapWidth = ival;
         else if (sscanf(line, "mapHeight=%d", &ival) == 1) config_.mapHeight = ival;
+        else if (sscanf(line, "windowWidth=%d", &ival) == 1) config_.windowWidth = ival;
+        else if (sscanf(line, "windowHeight=%d", &ival) == 1) config_.windowHeight = ival;
         else if (sscanf(line, "playerMaxHp=%d", &ival) == 1) config_.playerMaxHp = ival;
         else if (sscanf(line, "spawnRateScale=%f", &fval) == 1) config_.spawnRateScale = fval;
         else if (sscanf(line, "enemyHpScale=%f", &fval) == 1) config_.enemyHpScale = fval;
@@ -8232,7 +8844,14 @@ void Game::loadConfig() {
             if (sscanf(line, "username=%63[^\n]", uname) == 1) config_.username = uname;
         }
         else if (sscanf(line, "fullscreen=%d", &ival) == 1) config_.fullscreen = (ival != 0);
+        else if (sscanf(line, "shaderCRT=%d", &ival) == 1) config_.shaderCRT = (ival != 0);
+        else if (sscanf(line, "shaderChromatic=%d", &ival) == 1) config_.shaderChromatic = (ival != 0);
+        else if (sscanf(line, "shaderScanlines=%d", &ival) == 1) config_.shaderScanlines = (ival != 0);
+        else if (sscanf(line, "shaderGlow=%d", &ival) == 1) config_.shaderGlow = (ival != 0);
+        else if (sscanf(line, "shaderGlitch=%d", &ival) == 1) config_.shaderGlitch = (ival != 0);
+        else if (sscanf(line, "shaderNeonEdge=%d", &ival) == 1) config_.shaderNeonEdge = (ival != 0);
     }
+    clampResolutionConfig(config_);
     fclose(f);
     printf("Config loaded from config.txt\n");
 }
@@ -9050,14 +9669,14 @@ void Game::renderLocalCoopGame() {
                 Vec2 bp = cp.pos + Vec2::fromAngle(cp.rotation)*6.f;
                 if (cp.invulnerable && ((int)(cp.invulnTimer * 10) % 2 == 0)) {
                     SDL_Color tint = {255, 255, 255, 128};
-                    renderSpriteEx(playerSprites_[idx], bp, cp.rotation+(float)M_PI/2, 3.f, tint);
+                    renderSpriteEx(playerSprites_[idx], bp, cp.rotation+(float)M_PI/2, 1.5f, tint);
                 } else if (cp.isParrying) {
                     SDL_Color tint = {128, 200, 255, 255};
-                    renderSpriteEx(playerSprites_[idx], bp, cp.rotation+(float)M_PI/2, 3.f, tint);
+                    renderSpriteEx(playerSprites_[idx], bp, cp.rotation+(float)M_PI/2, 1.5f, tint);
                 } else if (j == 0) {
-                    renderSprite(playerSprites_[idx], bp, cp.rotation+(float)M_PI/2, 3.f);
+                    renderSprite(playerSprites_[idx], bp, cp.rotation+(float)M_PI/2, 1.5f);
                 } else {
-                    renderSpriteEx(playerSprites_[idx], bp, cp.rotation+(float)M_PI/2, 3.f, pColors[j]);
+                    renderSpriteEx(playerSprites_[idx], bp, cp.rotation+(float)M_PI/2, 1.5f, pColors[j]);
                 }
             }
         }
@@ -9417,13 +10036,13 @@ void Game::renderMultiplayerSplitscreen() {
             // Legs
             if (!legSprites_.empty() && cp.moving) {
                 int idx = cp.legAnimFrame % (int)legSprites_.size();
-                renderSprite(legSprites_[idx], cp.pos, cp.legRotation + (float)M_PI/2, 3.f);
+                renderSprite(legSprites_[idx], cp.pos, cp.legRotation + (float)M_PI/2, 1.5f);
             }
             // Body — tint by slot color
             if (!playerSprites_.empty()) {
                 int idx = cp.animFrame % (int)playerSprites_.size();
                 Vec2 bodyPos = cp.pos + Vec2::fromAngle(cp.rotation) * 6.f;
-                renderSpriteEx(playerSprites_[idx], bodyPos, cp.rotation + (float)M_PI/2, 3.f, pColors[j]);
+                renderSpriteEx(playerSprites_[idx], bodyPos, cp.rotation + (float)M_PI/2, 1.5f, pColors[j]);
             }
         }
 
@@ -12700,7 +13319,7 @@ void Game::renderRemotePlayers() {
         if (rp.moving && !legSprites_.empty()) {
             int idx = rp.legFrame % (int)legSprites_.size();
             if (isGhost) SDL_SetTextureAlphaMod(legSprites_[idx], ghostAlpha);
-            renderSprite(legSprites_[idx], drawPos, rp.legRotation + (float)M_PI / 2, 3.0f);
+            renderSprite(legSprites_[idx], drawPos, rp.legRotation + (float)M_PI / 2, 1.5f);
             if (isGhost) SDL_SetTextureAlphaMod(legSprites_[idx], 255);
         }
 
@@ -12712,7 +13331,7 @@ void Game::renderRemotePlayers() {
             if (isGhost) tint = {140, 180, 255, ghostAlpha};
             else if (rp.team >= 0 && rp.team < 4) tint = teamTints[rp.team];
             if (isGhost) SDL_SetTextureAlphaMod(playerSprites_[idx], ghostAlpha);
-            renderSpriteEx(playerSprites_[idx], bodyPos, drawRot + (float)M_PI / 2, 3.0f, tint);
+            renderSpriteEx(playerSprites_[idx], bodyPos, drawRot + (float)M_PI / 2, 1.5f, tint);
             if (isGhost) SDL_SetTextureAlphaMod(playerSprites_[idx], 255);
         }
 
@@ -12728,7 +13347,7 @@ void Game::renderRemotePlayers() {
             // Legs
             if (sp.moving && !legSprites_.empty()) {
                 int idx = sp.legFrame % (int)legSprites_.size();
-                renderSprite(legSprites_[idx], spPos, sp.legRotation + (float)M_PI / 2, 3.0f);
+                renderSprite(legSprites_[idx], spPos, sp.legRotation + (float)M_PI / 2, 1.5f);
             }
             // Body — slightly different tint from primary
             if (!playerSprites_.empty()) {
@@ -12736,7 +13355,7 @@ void Game::renderRemotePlayers() {
                 Vec2 bodyPos = spPos + Vec2::fromAngle(spRot) * 6.0f;
                 SDL_Color tint = subTints[si % 3];
                 if (rp.team >= 0 && rp.team < 4) tint = teamTints[rp.team]; // use team color if teams
-                renderSpriteEx(playerSprites_[idx], bodyPos, spRot + (float)M_PI / 2, 3.0f, tint);
+                renderSpriteEx(playerSprites_[idx], bodyPos, spRot + (float)M_PI / 2, 1.5f, tint);
             }
         }
     }

@@ -46,6 +46,13 @@ bool TextureEditor::init(SDL_Renderer* renderer, int screenW, int screenH) {
     return true;
 }
 
+void TextureEditor::setScreenSize(int w, int h) {
+    screenW_ = w;
+    screenH_ = h;
+    cursorX_ = std::max(0.0f, std::min(cursorX_, (float)screenW_));
+    cursorY_ = std::max(0.0f, std::min(cursorY_, (float)screenH_));
+}
+
 void TextureEditor::shutdown() {
     if (canvasTex_) { SDL_DestroyTexture(canvasTex_); canvasTex_ = nullptr; }
     pixels_.clear();
