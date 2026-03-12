@@ -1,5 +1,6 @@
 // ─── game.cpp ─── Main game implementation ──────────────────────────────────
 #include "game.h"
+#include "update_checker.h"
 #include <cstdio>
 #include <cstring>
 #include <cmath>
@@ -9,6 +10,7 @@
 #include <set>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <thread>
 #ifdef _WIN32
 #  include <direct.h>
 #  define mkdir(p, m) _mkdir(p)
@@ -348,8 +350,12 @@ bool Game::init() {
 
     // Open all connected game controllers
     for (int i = 0; i < SDL_NumJoysticks(); i++) {
-        if (SDL_IsGameController(i))
-            SDL_GameControllerOpen(i);
+        if (SDL_IsGameController(i)) {
+            SDL_GameController* gc = SDL_GameControllerOpen(i);
+            if (gc && !activeController_) {
+                activeController_ = gc;  // Cache first controller for rumble
+            }
+        }
     }
 
     Assets::instance().init(renderer_);
@@ -377,6 +383,9 @@ bool Game::init() {
 
     // Initialize multiplayer
     initMultiplayer();
+
+    // Check for updates in background
+    checkForUpdates();
 
     // Start main menu music
     if (menuMusic_) {
@@ -593,6 +602,53 @@ void Game::shutdown() {
 #ifdef __SWITCH__
     romfsExit();
 #endif
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Controller Rumble
+// ═════════════════════════════════════════════════════════════════════════════
+
+void Game::rumble(float strength, int durationMs) {
+    // Find an active controller if we don't have one cached
+    if (!activeController_) {
+        for (int i = 0; i < SDL_NumJoysticks(); i++) {
+            if (SDL_IsGameController(i)) {
+                SDL_JoystickID jid = SDL_JoystickGetDeviceInstanceID(i);
+                activeController_ = SDL_GameControllerFromInstanceID(jid);
+                if (activeController_) break;
+            }
+        }
+    }
+    
+    if (activeController_) {
+        Uint16 intensity = (Uint16)(strength * 65535.0f);
+        SDL_GameControllerRumble(activeController_, intensity, intensity, durationMs);
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Update Checker
+// ═════════════════════════════════════════════════════════════════════════════
+
+void Game::checkForUpdates() {
+    if (updateChecked_) return;
+    updateChecked_ = true;
+    
+    // Run in background thread to avoid blocking startup
+    std::thread([this]() {
+        std::string latest = UpdateChecker::fetchLatestVersion("etonedemid", "cold-start-nx");
+        if (!latest.empty()) {
+            latestVersion_ = latest;
+            updateAvailable_ = UpdateChecker::isNewerVersion(GAME_VERSION, latest.c_str());
+            if (updateAvailable_) {
+                printf("Update available: v%s (current: v%s)\n", latest.c_str(), GAME_VERSION);
+            }
+        }
+    }).detach();
+}
+
+bool Game::isNewerVersion(const char* current, const char* latest) {
+    return UpdateChecker::isNewerVersion(current, latest);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1250,7 +1306,7 @@ void Game::handleInput() {
     // Handle menu state transitions
     if (state_ == GameState::MainMenu) {
         if (menuSelection_ < 0) menuSelection_ = 0;
-        if (menuSelection_ > 10) menuSelection_ = 10;
+        if (menuSelection_ > 11) menuSelection_ = 11;  // 0-11: 12 items (PLAY through QUIT)
         if (confirmInput_) {
             if (menuSelection_ == 0) {
                 state_ = GameState::PlayModeMenu;
@@ -1308,6 +1364,23 @@ void Game::handleInput() {
                 state_ = GameState::ConfigMenu;
                 configSelection_ = 0;
                 menuSelection_ = 0;
+            }
+            else if (menuSelection_ == 9) {
+                // UPDATE — open release page
+                #if defined(__SWITCH__)
+                    printf("Update: Please visit https://github.com/etonedemid/cold-start-nx/releases\n");
+                #elif defined(_WIN32)
+                    system("start https://github.com/etonedemid/cold-start-nx/releases/latest");
+                #elif defined(__APPLE__)
+                    system("open https://github.com/etonedemid/cold-start-nx/releases/latest");
+                #else
+                    system("xdg-open https://github.com/etonedemid/cold-start-nx/releases/latest 2>/dev/null || "
+                           "firefox https://github.com/etonedemid/cold-start-nx/releases/latest 2>/dev/null || "
+                           "google-chrome https://github.com/etonedemid/cold-start-nx/releases/latest 2>/dev/null");
+                #endif
+            }
+            else if (menuSelection_ == 10) {
+                running_ = false;  // QUIT
             }
             else running_ = false;
         }
@@ -4802,15 +4875,18 @@ void Game::resolveCollisions() {
                 bullets_.push_back(b);
                 b.alive = false;
                 camera_.addShake(2.2f);
+                rumble(0.4f, 80);  // Parry reflect rumble
                 if (sfxParry_) { int ch = Mix_PlayChannel(-1, sfxParry_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
             } else {
                 p.takeDamage(b.damage);
                 b.alive = false;
                 camera_.addShake(1.8f);
+                rumble(0.5f, 150);  // Damage rumble
                 if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
                 if (p.dead) {
                     if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
                     camera_.addShake(4.0f);
+                    rumble(0.8f, 300);  // Death rumble
                     auto& net = NetworkManager::instance();
                     if (!net.isInGame()) spawnPlayerDeathEffect(p.pos);
                     if (net.isInGame()) net.sendPlayerDied(net.localPlayerId(), 0);
@@ -4831,6 +4907,7 @@ void Game::resolveCollisions() {
                 e.vel = (e.pos - p.pos).normalized() * 500.0f;
                 e.damageFlash = 1.0f;
                 camera_.addShake(2.2f);
+                rumble(0.5f, 90);  // Parry counter rumble
                 if (sfxParry_) { int ch = Mix_PlayChannel(-1, sfxParry_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
                 if (e.hp <= 0) {
                     killEnemy(e);
@@ -4845,6 +4922,7 @@ void Game::resolveCollisions() {
                 }
             } else {
                 p.takeDamage(e.contactDamage);
+                rumble(0.5f, 140);  // Contact damage rumble
                 camera_.addShake(1.8f);
                 if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
                 if (p.dead) {
@@ -5122,6 +5200,7 @@ void Game::playerParry() {
     p.parryTimer = PARRY_WINDOW;           // Reflect/counter window
     p.parryDashTimer = PARRY_DASH_DURATION; // Dash movement duration (scout speed)
     p.parryCdTimer = PARRY_COOLDOWN;
+    rumble(0.35f, 100);  // Medium rumble on parry
 
     // Dash direction = aim direction
     if (aimInput_.lengthSq() > 0.04f)
@@ -6879,20 +6958,21 @@ void Game::renderMainMenu() {
     ui_.drawSeparator(SCREEN_W / 2, SCREEN_H / 8 + 76, 120, {0, 180, 160, 80});
 
     // Menu items
-    struct Item { const char* label; SDL_Color accent; };
+    struct Item { const char* label; SDL_Color accent; bool enabled; };
     Item items[] = {
-        {"PLAY",             UI::Color::Green},   // 0
-        {"MULTIPLAYER",      UI::Color::Blue},    // 1
-        {"EDITOR",           UI::Color::Yellow},  // 2
-        {"MAPS",             UI::Color::White},   // 3
-        {"PACKS",            UI::Color::White},   // 4
-        {"CHARACTER",        UI::Color::White},   // 5
-        {"CHARACTER EDITOR", UI::Color::White},   // 6
-        {"MODS",             UI::Color::Purple},  // 7
-        {"CONFIG",           UI::Color::White},   // 8
-        {"QUIT",             UI::Color::Red},     // 9
+        {"PLAY",             UI::Color::Green,  true},   // 0
+        {"MULTIPLAYER",      UI::Color::Blue,   true},   // 1
+        {"EDITOR",           UI::Color::Yellow, true},   // 2
+        {"MAPS",             UI::Color::White,  true},   // 3
+        {"PACKS",            UI::Color::White,  true},   // 4
+        {"CHARACTER",        UI::Color::White,  true},   // 5
+        {"CHARACTER EDITOR", UI::Color::White,  true},   // 6
+        {"MODS",             UI::Color::Purple, true},   // 7
+        {"CONFIG",           UI::Color::White,  true},   // 8
+        {"UPDATE",           updateAvailable_ ? UI::Color::Green : UI::Color::DimCyan, updateAvailable_},  // 9
+        {"QUIT",             UI::Color::Red,    true},   // 10
     };
-    constexpr int count = 10;
+    constexpr int count = 11;
     int baseY = SCREEN_H / 4 + 10;
     int stepY = 32;
     int itemW = 320;
@@ -6900,25 +6980,40 @@ void Game::renderMainMenu() {
 
     for (int i = 0; i < count; i++) {
         bool sel = (menuSelection_ == i);
+        
+        // Dim UPDATE button if no update available
+        SDL_Color color = items[i].accent;
+        if (!items[i].enabled) {
+            color = {80, 80, 90, 255};  // dim gray
+        }
 
         // Interactive menu item — handles hover, click, animation
         if (ui_.menuItem(i, items[i].label, SCREEN_W / 2, baseY + i * stepY,
-                         itemW, itemH, items[i].accent, sel, 20, 24)) {
+                         itemW, itemH, color, sel, 20, 24)) {
             // Clicked — update selection and trigger confirm
-            menuSelection_ = i;
-            confirmInput_ = true;
-            if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+            if (items[i].enabled) {
+                menuSelection_ = i;
+                confirmInput_ = true;
+                if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+            }
         }
 
         // Update selection when mouse hovers (so keyboard and mouse stay in sync)
-        if (ui_.hoveredItem == i && !usingGamepad_) {
+        if (ui_.hoveredItem == i && !usingGamepad_ && items[i].enabled) {
             menuSelection_ = i;
         }
 
         // Group separators
-        if (i == 1 || i == 2 || i == 6 || i == 7) {
+        if (i == 1 || i == 2 || i == 6 || i == 7 || i == 8) {
             ui_.drawSeparator(SCREEN_W / 2, baseY + i * stepY + 28, 80, {60, 60, 80, 60});
         }
+    }
+    
+    // Show update notification if available
+    if (updateAvailable_ && !latestVersion_.empty()) {
+        char updateMsg[64];
+        snprintf(updateMsg, sizeof(updateMsg), "New version available: v%s", latestVersion_.c_str());
+        ui_.drawTextCentered(updateMsg, baseY + 9 * stepY - 18, 12, UI::Color::Green);
     }
 
     // Selected character name
