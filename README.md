@@ -337,6 +337,7 @@ Practical notes:
 ## Changelog
 
 ### v1.3.0 (2026-03-13)
+- **P1 hotfix** — the main lobby controller now uses `A` correctly for ready/confirm again, and gameplay falls back to the last active non-subplayer pad if the preferred controller changes
 - **Splitscreen presentation cleanup** — post-processing shader composite is now disabled automatically during local and multiplayer splitscreen, keeping each viewport crisp and easier to read
 - **Primary controller routing fix** — P1 now consistently keeps the lobby-selected main gamepad instead of accidentally reading a sub-player controller during multiplayer splitscreen sessions
 - **Gamepad crosshair expansion** — the analog-stick crosshair now appears for P1 across singleplayer, custom maps, packs, and multiplayer when using a gamepad; splitscreen P1 also gets a slightly farther aim marker for better readability
