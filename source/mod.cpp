@@ -11,6 +11,9 @@
 #ifdef _WIN32
 #  include <direct.h>
 #  define mkdir(p, m) _mkdir(p)
+#  define rmdir _rmdir
+#else
+#  include <unistd.h>
 #endif
 
 // ── INI parser helper (reusable) ──
@@ -65,6 +68,26 @@ static bool toBool(const std::string& s) {
 static bool dirExists(const std::string& path) {
     struct stat st;
     return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+static void removeTree(const std::string& path) {
+    struct stat st;
+    if (stat(path.c_str(), &st) != 0) return;
+    if (S_ISDIR(st.st_mode)) {
+        DIR* d = opendir(path.c_str());
+        if (d) {
+            struct dirent* ent;
+            while ((ent = readdir(d)) != nullptr) {
+                std::string name = ent->d_name;
+                if (name == "." || name == "..") continue;
+                removeTree(path + "/" + name);
+            }
+            closedir(d);
+        }
+        rmdir(path.c_str());
+    } else {
+        remove(path.c_str());
+    }
 }
 
 // ── Path safety helpers for mod sync deserialization ──
@@ -215,9 +238,8 @@ bool Mod::loadFromFolder(const std::string& path) {
         packPaths = listFiles(path + "/packs", ".cspack");
     }
 
-    // Sprite overrides
-    if (content.sprites && dirExists(path + "/sprites")) {
-        // Walk sprites/ and for each file, map original name → mod path
+    // Sprite and tile overrides
+    if (content.sprites) {
         std::function<void(const std::string&, const std::string&)> walkSprites;
         walkSprites = [&](const std::string& dir, const std::string& relBase) {
             DIR* d = opendir(dir.c_str());
@@ -231,12 +253,13 @@ bool Mod::loadFromFolder(const std::string& path) {
                 if (stat(full.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
                     walkSprites(full, rel);
                 } else {
-                    spriteOverrides["sprites/" + rel] = full;
+                    spriteOverrides[relBase + "/" + rel] = full;
                 }
             }
             closedir(d);
         };
-        walkSprites(path + "/sprites", "");
+        if (dirExists(path + "/sprites")) walkSprites(path + "/sprites", "sprites");
+        if (dirExists(path + "/tiles"))   walkSprites(path + "/tiles", "tiles");
     }
 
     // Sound overrides
@@ -514,36 +537,34 @@ ModManager::SyncManifest ModManager::buildSyncManifest() const {
 //       uint16_t pathLen, char[pathLen] relativePath
 //       uint32_t dataLen, uint8_t[dataLen] fileData
 //
-// Skips individual files > 256KB (large sprites/sounds).
-// Skips .png/.wav/.ogg/.mp3/.bmp files entirely (cosmetic).
-
-static bool isMediaExtension(const std::string& name) {
-    auto ext = [&]() -> std::string {
-        size_t dot = name.rfind('.');
-        if (dot == std::string::npos) return "";
-        std::string e = name.substr(dot);
-        for (auto& c : e) c = tolower(c);
-        return e;
-    }();
-    return ext == ".png" || ext == ".wav" || ext == ".ogg" ||
-           ext == ".mp3" || ext == ".bmp" || ext == ".jpg" ||
-           ext == ".jpeg" || ext == ".ttf" || ext == ".otf";
-}
+static constexpr size_t MAX_MOD_SYNC_BYTES = 64u * 1024u * 1024u;
+static constexpr uint16_t MAX_MOD_SYNC_COUNT = 128;
+static constexpr uint16_t MAX_MOD_SYNC_FILES_PER_MOD = 8192;
+static constexpr uint16_t MAX_MOD_SYNC_ID_LEN = 64;
+static constexpr uint16_t MAX_MOD_SYNC_PATH_LEN = 512;
 
 std::vector<uint8_t> ModManager::serializeEnabledMods() const {
     std::vector<uint8_t> result;
 
-    // Count enabled mods
-    uint16_t numMods = 0;
-    for (auto& m : mods_) if (m.enabled) numMods++;
-    if (numMods == 0) return result;
+    bool hasEnabledMods = false;
+    for (auto& m : mods_) {
+        if (m.enabled) {
+            hasEnabledMods = true;
+            break;
+        }
+    }
+    if (!hasEnabledMods) return result;
 
-    // Write header
+    // Write header (patched with the actual serialized count later)
     result.resize(2);
-    memcpy(result.data(), &numMods, 2);
+    uint16_t numMods = 0;
 
     for (auto& m : mods_) {
         if (!m.enabled) continue;
+        if (m.id.empty() || m.id.size() > MAX_MOD_SYNC_ID_LEN || !isSafeModId(m.id)) {
+            printf("ModSync: skipping mod with unsafe sync id '%s'\n", m.id.c_str());
+            continue;
+        }
 
         // Write mod ID
         uint16_t idLen = (uint16_t)m.id.size();
@@ -552,9 +573,10 @@ std::vector<uint8_t> ModManager::serializeEnabledMods() const {
         memcpy(result.data() + pos, &idLen, 2);
         memcpy(result.data() + pos + 2, m.id.c_str(), idLen);
 
-        // Collect all files from the mod folder (skip media & large files)
+        // Collect all files from the mod folder, including media overrides.
         struct ModFile { std::string relPath; std::vector<uint8_t> data; };
         std::vector<ModFile> files;
+        size_t bytesBudget = result.size();
 
         std::function<void(const std::string&, const std::string&)> walk;
         walk = [&](const std::string& dir, const std::string& rel) {
@@ -569,7 +591,17 @@ std::vector<uint8_t> ModManager::serializeEnabledMods() const {
                 if (stat(full.c_str(), &st) == 0) {
                     if (S_ISDIR(st.st_mode)) {
                         walk(full, relFull);
-                    } else if (st.st_size <= 256 * 1024 && !isMediaExtension(full)) {
+                    } else if (S_ISREG(st.st_mode) && st.st_size >= 0) {
+                        if (relFull.empty() || relFull.size() > MAX_MOD_SYNC_PATH_LEN || !isSafeRelPath(relFull)) {
+                            printf("Mod sync: skipping unsafe path %s\n", relFull.c_str());
+                            continue;
+                        }
+                        size_t projected = bytesBudget + 2 + relFull.size() + 4 + (size_t)st.st_size;
+                        if (projected > MAX_MOD_SYNC_BYTES) {
+                            printf("Mod sync: skipping %s (%ld bytes) to stay within %zu-byte limit\n",
+                                   full.c_str(), (long)st.st_size, MAX_MOD_SYNC_BYTES);
+                            continue;
+                        }
                         ModFile mf;
                         mf.relPath = relFull;
                         FILE* f = fopen(full.c_str(), "rb");
@@ -578,6 +610,7 @@ std::vector<uint8_t> ModManager::serializeEnabledMods() const {
                             size_t nread = fread(mf.data.data(), 1, st.st_size, f);
                             fclose(f);
                             if (nread == (size_t)st.st_size) {
+                                bytesBudget = projected;
                                 files.push_back(std::move(mf));
                             } else {
                                 printf("Mod sync: short read for %s (%zu/%ld)\n",
@@ -590,6 +623,12 @@ std::vector<uint8_t> ModManager::serializeEnabledMods() const {
             closedir(d);
         };
         walk(m.folder, "");
+
+        if (files.size() > MAX_MOD_SYNC_FILES_PER_MOD) {
+            printf("ModSync: truncating mod '%s' to %u files for sync\n",
+                   m.id.c_str(), (unsigned)MAX_MOD_SYNC_FILES_PER_MOD);
+            files.resize(MAX_MOD_SYNC_FILES_PER_MOD);
+        }
 
         // Write file count
         uint16_t numFiles = (uint16_t)files.size();
@@ -611,29 +650,42 @@ std::vector<uint8_t> ModManager::serializeEnabledMods() const {
         }
 
         printf("ModSync: serialized mod '%s' — %u files\n", m.id.c_str(), numFiles);
+        numMods++;
     }
+
+    if (numMods == 0) {
+        result.clear();
+        return result;
+    }
+    memcpy(result.data(), &numMods, 2);
 
     printf("ModSync: total blob size = %zu bytes (%u mods)\n", result.size(), numMods);
     return result;
 }
 
 void ModManager::deserializeAndInstallMods(const std::vector<uint8_t>& data) {
-    if (data.size() < 2) return;
+    if (data.size() < 2 || data.size() > MAX_MOD_SYNC_BYTES) {
+        printf("ModSync: rejecting blob size %zu\n", data.size());
+        return;
+    }
 
     size_t offset = 0;
     uint16_t numMods;
     memcpy(&numMods, data.data(), 2);
     offset = 2;
 
+    if (numMods > MAX_MOD_SYNC_COUNT) {
+        printf("ModSync: rejecting blob with too many mods (%u)\n", numMods);
+        return;
+    }
+
     printf("ModSync: deserializing %u mods (%zu bytes)\n", numMods, data.size());
 
     // Create sync directory
     mkdir("mods", 0755);
     std::string syncBase = "mods/_mp_sync";
+    removeTree(syncBase);
     mkdir(syncBase.c_str(), 0755);
-
-    // Clear previous sync mods
-    // (Simple approach: just overwrite; leftover files from previous sessions are fine)
 
     for (uint16_t mi = 0; mi < numMods && offset < data.size(); mi++) {
         // Read mod ID
@@ -646,7 +698,7 @@ void ModManager::deserializeAndInstallMods(const std::vector<uint8_t>& data) {
         offset += idLen;
 
         // Validate mod ID to prevent path traversal
-        bool skipMod = !isSafeModId(modId);
+        bool skipMod = (idLen == 0 || idLen > MAX_MOD_SYNC_ID_LEN || !isSafeModId(modId));
         if (skipMod) {
             printf("ModSync: skipping mod with unsafe id (len=%u)\n", (unsigned)modId.size());
         }
@@ -660,6 +712,12 @@ void ModManager::deserializeAndInstallMods(const std::vector<uint8_t>& data) {
         uint16_t numFiles;
         memcpy(&numFiles, data.data() + offset, 2);
         offset += 2;
+
+        if (numFiles > MAX_MOD_SYNC_FILES_PER_MOD) {
+            printf("ModSync: rejecting mod '%s' with too many files (%u)\n",
+                   modId.c_str(), numFiles);
+            return;
+        }
 
         if (!skipMod)
             printf("ModSync: installing mod '%s' (%u files)\n", modId.c_str(), numFiles);
@@ -682,7 +740,7 @@ void ModManager::deserializeAndInstallMods(const std::vector<uint8_t>& data) {
             if (offset + dataLen > data.size()) break;
 
             // Validate relative path to prevent path traversal; skip write if unsafe
-            if (skipMod || !isSafeRelPath(relPath)) {
+            if (skipMod || pathLen == 0 || pathLen > MAX_MOD_SYNC_PATH_LEN || !isSafeRelPath(relPath)) {
                 if (!skipMod)
                     printf("ModSync: skipping file with unsafe path (len=%u)\n", (unsigned)relPath.size());
                 offset += dataLen;

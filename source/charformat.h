@@ -34,6 +34,8 @@ struct CharacterDef {
     int   ammo              = 10;
     float fireRate          = 10.0f;
     float reloadTime        = 1.0f;
+    float shootOffsetX      = 12.0f;
+    float shootOffsetY      = -30.0f;
 
     // Sprite counts (auto-detected from files, or overridden in config)
     int bodyFrames          = 0;
