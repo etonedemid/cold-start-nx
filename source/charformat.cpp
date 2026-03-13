@@ -83,6 +83,8 @@ bool CharacterDef::loadConfig(const std::string& path) {
         else if (key == "ammo")         ammo = atoi(value.c_str());
         else if (key == "fire_rate")    fireRate = (float)atof(value.c_str());
         else if (key == "reload_time")  reloadTime = (float)atof(value.c_str());
+        else if (key == "shoot_x")      shootOffsetX = (float)atof(value.c_str());
+        else if (key == "shoot_y")      shootOffsetY = (float)atof(value.c_str());
         else if (key == "body_frames")  bodyFrames = atoi(value.c_str());
         else if (key == "leg_frames")   legFrames = atoi(value.c_str());
         else if (key == "death_frames") deathFrames = atoi(value.c_str());

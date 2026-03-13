@@ -1,5 +1,6 @@
 // ─── assets.cpp ─── Asset management implementation ─────────────────────────
 #include "assets.h"
+#include "mod.h"
 #include <cstdio>
 #include <sys/stat.h>
 
@@ -45,6 +46,12 @@ SDL_Texture* Assets::tex(const std::string& name) {
     auto it = textures_.find(name);
     if (it != textures_.end()) return it->second;
 
+    std::string resolved = ModManager::instance().resolveSpriteAsset(name);
+    if (resolved != name) {
+        SDL_Texture* t = loadTex(resolved);
+        if (t) { textures_[name] = t; return t; }
+    }
+
     // Try platform asset path
     std::string path = assetPrefix() + name;
     SDL_Texture* t = loadTex(path);
@@ -62,6 +69,13 @@ Mix_Chunk* Assets::sfx(const std::string& name) {
     auto it = chunks_.find(name);
     if (it != chunks_.end()) return it->second;
 
+    std::string original = "sounds/" + name;
+    std::string resolved = ModManager::instance().resolveSoundAsset(original);
+    if (resolved != original) {
+        Mix_Chunk* c = Mix_LoadWAV(resolved.c_str());
+        if (c) { chunks_[name] = c; return c; }
+    }
+
     std::string path = assetPrefix() + "sounds/" + name;
     Mix_Chunk* c = Mix_LoadWAV(path.c_str());
     if (!c) {
@@ -76,6 +90,13 @@ Mix_Chunk* Assets::sfx(const std::string& name) {
 Mix_Music* Assets::music(const std::string& name) {
     auto it = musics_.find(name);
     if (it != musics_.end()) return it->second;
+
+    std::string original = "sounds/" + name;
+    std::string resolved = ModManager::instance().resolveSoundAsset(original);
+    if (resolved != original) {
+        Mix_Music* m = Mix_LoadMUS(resolved.c_str());
+        if (m) { musics_[name] = m; return m; }
+    }
 
     std::string path = assetPrefix() + "sounds/" + name;
     Mix_Music* m = Mix_LoadMUS(path.c_str());
