@@ -3,7 +3,7 @@
 #include "vec2.h"
 
 // ── Version ──
-constexpr const char* GAME_VERSION = "1.2.0";
+constexpr const char* GAME_VERSION = "1.3.0";
 
 // Screen (window resolution - runtime configurable)
 inline int SCREEN_W = 1280;
@@ -42,6 +42,7 @@ constexpr float BULLET_SIZE    = 8.0f;
 // Enemy bullet
 constexpr float ENEMY_BULLET_SPEED   = 550.0f;
 constexpr float ENEMY_BULLET_LIFETIME= 3.0f;
+constexpr float SNIPER_BULLET_SPEED_MULTI = 3.0f;
 
 // Melee enemy
 constexpr float ENEMY_SPEED      = 220.0f;

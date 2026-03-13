@@ -198,6 +198,12 @@ private:
     // ── Controller rumble ──
     SDL_GameController* activeController_ = nullptr;
     void rumble(float strength, int durationMs);
+    void rumble(float strength, int durationMs, float lowBandScale, float highBandScale);
+#ifdef __SWITCH__
+    Uint32 switchRumbleStopTick_ = 0;
+    bool switchRumbleActive_ = false;
+    void updateSwitchRumble();
+#endif
 
     // ── Update checker ──
     bool updateAvailable_ = false;
@@ -399,6 +405,11 @@ private:
     SDL_Texture* glassTileTex_   = nullptr;
     SDL_Texture* vignetteTex_    = nullptr;
     SDL_Texture* sceneTarget_    = nullptr;
+    SDL_Texture* minimapCacheTex_ = nullptr;
+    bool minimapCacheDirty_ = true;
+    int minimapCacheMapW_ = 0;
+    int minimapCacheMapH_ = 0;
+    int minimapCacheTilePx_ = 0;
     // Custom tile textures loaded from map-embedded paths (TILE_CUSTOM_0..7)
     SDL_Texture* customTileTextures_[8] = {nullptr};
 
@@ -425,6 +436,7 @@ private:
     void handleInput();
     void update();
     void render();
+    bool isSplitscreenActive() const;
     void renderPostFXComposite(bool gameplayView);
 
     // Update sub-systems
@@ -447,12 +459,18 @@ private:
 
     // Combat
     void spawnBullet(Vec2 pos, float angle);
-    void spawnEnemyBullet(Vec2 pos, Vec2 target, float angleOffset = 0.0f);
+    void spawnEnemyBullet(Vec2 pos, Vec2 target, float angleOffset = 0.0f, float speed = ENEMY_BULLET_SPEED);
     void spawnExplosion(Vec2 pos, uint8_t ownerId = 255);
     void spawnBulletExplosion(Vec2 pos, int damage, uint8_t ownerId = 255, int skipEnemyIdx = -1, bool applyDamage = true);
     void spawnPlayerDeathEffect(Vec2 pos);
+    float localFeedbackFalloff(Vec2 pos, float maxDistance) const;
+    void playExplosionFeedback(Vec2 pos, float maxDistance, float minStrength, float maxStrength,
+                               int minDurationMs, int maxDurationMs, float lowBandScale,
+                               float highBandScale, int maxVolume, int minVolume = 0);
     void spawnBomb();
     Vec2 pickSpawnPos();  // team-corner or random spawn (multiplayer)
+    bool isEnemySpawnVisibleToAnyPlayer(Vec2 pos) const;
+    Vec2 pickEnemySpawnPos(bool* foundHidden = nullptr);
     void spawnEnemy(Vec2 pos, EnemyType type);
     void killEnemy(Enemy& e, bool trackKill = true);
     void playerParry();
@@ -481,7 +499,12 @@ private:
     void renderRoofOverlay();
     void renderShadingPass();
     void renderUI();
+    SDL_GameController* getPrimaryGameplayController() const;
+    Vec2 resolveAimDirection(const Player& player, const Vec2& aimInput) const;
+    void renderAimCrosshair(const Camera& camera, const Player& player, Vec2 aimDir,
+                            float distance, SDL_Color color, int size = 10);
     void renderMinimap();
+    void invalidateMinimapCache();
     void renderMainMenu();
     void renderPlayModeMenu();
     void renderConfigMenu();

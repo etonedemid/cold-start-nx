@@ -1,7 +1,7 @@
 
 <img width="848" height="204" alt="banner" src="https://github.com/user-attachments/assets/2a0af91e-a15e-462f-aa99-d2869a311675" />
 
-# COLD START  `v1.2.0`
+# COLD START  `v1.3.0`
 
 COLD START is a top-down action shooter built in C++ with SDL2 for PC and Nintendo Switch homebrew. It combines fast combat, local content editing, multiplayer support, and a lightweight modding pipeline aimed at rapid iteration.
 
@@ -23,10 +23,10 @@ COLD START is a top-down action shooter built in C++ with SDL2 for PC and Ninten
 ## Screenshots
 
 
-![2026030516054100-FC1A835C590C06D4071528FDF96C9516](https://github.com/user-attachments/assets/dff2c7bc-5693-4395-b25a-260d1d97414a)
-![2026030522145200-99584FB39514334B3ED85316B5F4C344](https://github.com/user-attachments/assets/e466ca9d-418d-4829-acb1-30453b330efd)
-![2026030522150100-99584FB39514334B3ED85316B5F4C344](https://github.com/user-attachments/assets/1b99b04d-2426-407f-b596-bbc2cccf13f5)
-![2026030522152200-99584FB39514334B3ED85316B5F4C344](https://github.com/user-attachments/assets/63370a2a-55ec-4138-a777-9818b5b4d5f4)
+![Switch screenshot 1](Screenshots/2026031221562100-FC1A835C590C06D4071528FDF96C9516.jpg)
+![Switch screenshot 2](Screenshots/2026031221575200-FC1A835C590C06D4071528FDF96C9516.jpg)
+![Switch screenshot 3](Screenshots/2026031221593800-FC1A835C590C06D4071528FDF96C9516.jpg)
+![Switch screenshot 4](Screenshots/2026031222013700-FC1A835C590C06D4071528FDF96C9516.jpg)
 
 
 
@@ -162,11 +162,11 @@ nxlink -a <SWITCH_IP> -s cold_start.nro
 
 ## Release artifacts
 
-Current release artifacts for `v1.2.0`:
+Current release artifacts for `v1.3.0`:
 
-- `cold_start-linux-v1.2.0.zip` — Linux x86_64 (self-contained, SDL2 libs bundled)
-- `cold_start-linux-server-v1.2.0.zip` — Linux dedicated server (headless)
-- `cold_start-windows-v1.2.0.zip` — Windows x86_64 (MinGW, all DLLs bundled)
+- `cold_start-linux-v1.3.0.zip` — Linux x86_64 (self-contained, SDL2 libs bundled)
+- `cold_start-linux-server-v1.3.0.zip` — Linux dedicated server (headless)
+- `cold_start-windows-v1.3.0.zip` — Windows x86_64 (MinGW, all DLLs bundled)
 - `cold-start-nx.nro` — Nintendo Switch homebrew
 
 ## Controls
@@ -335,6 +335,12 @@ Practical notes:
 - First launch may create missing runtime content directories automatically
 
 ## Changelog
+
+### v1.3.0 (2026-03-13)
+- **Splitscreen presentation cleanup** — post-processing shader composite is now disabled automatically during local and multiplayer splitscreen, keeping each viewport crisp and easier to read
+- **Primary controller routing fix** — P1 now consistently keeps the lobby-selected main gamepad instead of accidentally reading a sub-player controller during multiplayer splitscreen sessions
+- **Gamepad crosshair expansion** — the analog-stick crosshair now appears for P1 across singleplayer, custom maps, packs, and multiplayer when using a gamepad; splitscreen P1 also gets a slightly farther aim marker for better readability
+- **Fresh media pass** — README and HB App Store package screenshots now use the latest Switch captures from the local `Screenshots/` set
 
 ### v1.2.0 (2026-03-12)
 - **Controller rumble support** — added haptic feedback via SDL_GameControllerRumble for damage, shooting, parrying, and melee attacks on all platforms with controller support (PC, Switch, Android)
