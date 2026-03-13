@@ -1258,42 +1258,44 @@ void Game::handleInput() {
                     bool isLobbyPrimaryPad = (isMultiplayerLobby && iid == lobbyPrimaryPadId_);
                     if (existingSlot < 0) {
                         if (isLobbyPrimaryPad) {
-                            // This pad opened host/join flow; treat A as ready/confirm, not local sub-player join
-                            continue;
-                        }
+                            // This pad opened host/join flow; allow A to act as normal confirm/ready,
+                            // but never treat it as a local sub-player join.
+                        } else {
 #ifdef __SWITCH__
-                        // On Switch, gamepads can join slot 0-3
-                        int startSlot = 0;
+                            // On Switch, gamepads can join slot 0-3
+                            int startSlot = 0;
 #else
-                        // On PC, slot 0 is keyboard+mouse, gamepads join 1-3
-                        int startSlot = 1;
+                            // On PC, slot 0 is keyboard+mouse, gamepads join 1-3
+                            int startSlot = 1;
 #endif
-                        for (int s = startSlot; s < 4; s++) {
-                            if (!coopSlots_[s].joined) {
-                                int gpNum = 0;
-                                for (int k = startSlot; k < 4; k++) if (coopSlots_[k].joined) gpNum++;
-                                coopSlots_[s].joined = true;
-                                coopSlots_[s].joyInstanceId = iid;
+                            for (int s = startSlot; s < 4; s++) {
+                                if (!coopSlots_[s].joined) {
+                                    int gpNum = 0;
+                                    for (int k = startSlot; k < 4; k++) if (coopSlots_[k].joined) gpNum++;
+                                    coopSlots_[s].joined = true;
+                                    coopSlots_[s].joyInstanceId = iid;
 #ifdef __SWITCH__
-                                char uname[16];
-                                if (s == 0) {
-                                    snprintf(uname, sizeof(uname), "%s", config_.username.c_str());
-                                } else {
-                                    snprintf(uname, sizeof(uname), "nx-%d", gpNum);
-                                }
+                                    char uname[16];
+                                    if (s == 0) {
+                                        snprintf(uname, sizeof(uname), "%s", config_.username.c_str());
+                                    } else {
+                                        snprintf(uname, sizeof(uname), "nx-%d", gpNum);
+                                    }
 #else
-                                char uname[16]; snprintf(uname, sizeof(uname), "pc-%d", gpNum + 1);
+                                    char uname[16]; snprintf(uname, sizeof(uname), "pc-%d", gpNum + 1);
 #endif
-                                coopSlots_[s].username = uname;
-                                if (isMultiplayerLobby) {
-                                    int localSubPlayers = 0;
-                                    for (int si = startSlot; si < 4; si++) if (coopSlots_[si].joined && si > 0) localSubPlayers++;
-                                    NetworkManager::instance().setLocalSubPlayers((uint8_t)localSubPlayers);
-                                    lobbySubPlayersSent_ = localSubPlayers;
+                                    coopSlots_[s].username = uname;
+                                    if (isMultiplayerLobby) {
+                                        int localSubPlayers = 0;
+                                        for (int si = startSlot; si < 4; si++) if (coopSlots_[si].joined && si > 0) localSubPlayers++;
+                                        NetworkManager::instance().setLocalSubPlayers((uint8_t)localSubPlayers);
+                                        lobbySubPlayersSent_ = localSubPlayers;
+                                    }
+                                    if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                                    break;
                                 }
-                                if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
-                                break;
                             }
+                            continue;
                         }
                     }
                     // In multiplayer lobby, let already joined gamepads still use A as confirm/ready.
@@ -6551,6 +6553,12 @@ SDL_GameController* Game::getPrimaryGameplayController() const {
 
     if (lobbyPrimaryPadId_ >= 0 && !isTakenBySubPlayer(lobbyPrimaryPadId_)) {
         if (SDL_GameController* preferred = SDL_GameControllerFromInstanceID(lobbyPrimaryPadId_)) {
+            return preferred;
+        }
+    }
+
+    if (lastGamepadInputId_ >= 0 && !isTakenBySubPlayer(lastGamepadInputId_)) {
+        if (SDL_GameController* preferred = SDL_GameControllerFromInstanceID(lastGamepadInputId_)) {
             return preferred;
         }
     }
