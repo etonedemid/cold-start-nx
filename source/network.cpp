@@ -111,6 +111,8 @@ static constexpr uint16_t DEFAULT_PORT = 7777;
 static constexpr int MAX_CHANNELS = NET_CHAN_COUNT;
 static constexpr uint32_t CONNECT_TIMEOUT = 5000;
 static constexpr size_t FILE_CHUNK_SIZE = 4096;
+static constexpr uint32_t MAX_CHARACTER_SYNC_BYTES = 10u * 1024u * 1024u;
+static constexpr uint32_t MAX_MOD_SYNC_BYTES = 64u * 1024u * 1024u;
 static constexpr float STATE_SEND_RATE = 1.0f / 30.0f; // 30 Hz
 
 NetworkManager& NetworkManager::instance() {
@@ -269,6 +271,8 @@ void NetworkManager::disconnect() {
 
     players_.clear();
     transfers_.clear();
+    characterTransfers_.clear();
+    modTransfer_ = ModTransfer{};
     chat_.clear();
     hostPassword_.clear();
     pendingJoinPassword_.clear();
@@ -1209,6 +1213,111 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
         break;
     }
 
+    case NetPacketType::CharacterSync: {
+        if (payloadLen < 7) break;
+
+        uint8_t ownerId = payload[0];
+        bool isDefault = (payload[1] != 0);
+        uint8_t nameLen = payload[2];
+        if (nameLen == 0 || nameLen > 63) break;
+        if (payloadLen < (size_t)(7 + nameLen)) break;
+
+        std::string characterName((char*)payload + 3, nameLen);
+        uint32_t totalSize = 0;
+        memcpy(&totalSize, payload + 3 + nameLen, 4);
+        size_t dataOffset = 3 + nameLen + 4;
+        size_t chunkSize = payloadLen - dataOffset;
+
+        if (totalSize > MAX_CHARACTER_SYNC_BYTES) {
+            printf("Network: Rejecting oversized character sync for player %u (%u bytes)\n",
+                   (unsigned)ownerId, totalSize);
+            break;
+        }
+        if (isDefault && totalSize != 0) break;
+        if (!isDefault && totalSize == 0) break;
+        if (chunkSize > totalSize) break;
+
+        if (isHost_) {
+            uint8_t senderId = (uint8_t)(uintptr_t)from->data;
+            if (senderId != ownerId) {
+                printf("Network: Rejecting spoofed character sync from %u for owner %u\n",
+                       (unsigned)senderId, (unsigned)ownerId);
+                break;
+            }
+
+            std::vector<uint8_t> relay(data, data + len);
+            for (auto& p : players_) {
+                if (p.peer && p.peer != from) sendReliable(relay, p.peer);
+            }
+        }
+
+        if (auto* p = findPlayer(ownerId)) {
+            p->characterName = characterName;
+            p->customCharacter = !isDefault;
+        }
+
+        if (isDefault) {
+            characterTransfers_.erase(
+                std::remove_if(characterTransfers_.begin(), characterTransfers_.end(),
+                    [ownerId](const CharacterTransfer& t) { return t.ownerId == ownerId; }),
+                characterTransfers_.end());
+            if (onCharacterSyncReceived) {
+                onCharacterSyncReceived(ownerId, characterName, true, {});
+            }
+            break;
+        }
+
+        CharacterTransfer* tf = nullptr;
+        for (auto& t : characterTransfers_) {
+            if (t.ownerId == ownerId) {
+                tf = &t;
+                break;
+            }
+        }
+        if (!tf) {
+            characterTransfers_.push_back({});
+            tf = &characterTransfers_.back();
+            tf->ownerId = ownerId;
+            tf->name = characterName;
+            tf->isDefault = false;
+            tf->totalSize = totalSize;
+            tf->data.reserve(totalSize);
+        }
+
+        if (tf->totalSize != totalSize || tf->name != characterName) {
+            tf->name = characterName;
+            tf->isDefault = false;
+            tf->totalSize = totalSize;
+            tf->received = 0;
+            tf->data.clear();
+            tf->data.reserve(totalSize);
+        }
+
+        if (tf->received + chunkSize > tf->totalSize || tf->totalSize > MAX_CHARACTER_SYNC_BYTES) {
+            printf("Network: Rejecting invalid character chunk for player %u\n", (unsigned)ownerId);
+            characterTransfers_.erase(
+                std::remove_if(characterTransfers_.begin(), characterTransfers_.end(),
+                    [ownerId](const CharacterTransfer& t) { return t.ownerId == ownerId; }),
+                characterTransfers_.end());
+            break;
+        }
+
+        tf->data.insert(tf->data.end(), payload + dataOffset, payload + payloadLen);
+        tf->received = (uint32_t)tf->data.size();
+
+        if (tf->received >= tf->totalSize) {
+            std::vector<uint8_t> bundle = tf->data;
+            characterTransfers_.erase(
+                std::remove_if(characterTransfers_.begin(), characterTransfers_.end(),
+                    [ownerId](const CharacterTransfer& t) { return t.ownerId == ownerId; }),
+                characterTransfers_.end());
+            if (onCharacterSyncReceived) {
+                onCharacterSyncReceived(ownerId, characterName, false, bundle);
+            }
+        }
+        break;
+    }
+
     case NetPacketType::Ready: {
         if (isHost_ && payloadLen >= 1) {
             uint8_t peerId = (uint8_t)(uintptr_t)from->data;
@@ -1268,11 +1377,40 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
     }
 
     case NetPacketType::ModSync: {
-        if (!isHost_ && payloadLen > 0) {
-            // Client received mod sync data from host
-            std::vector<uint8_t> modData(payload, payload + payloadLen);
-            printf("Network: Received mod sync data (%zu bytes)\n", modData.size());
-            if (onModSyncReceived) onModSyncReceived(modData);
+        if (!isHost_ && payloadLen >= 4) {
+            uint32_t totalSize = 0;
+            memcpy(&totalSize, payload, 4);
+            size_t chunkSize = payloadLen - 4;
+
+            if (totalSize == 0 || totalSize > MAX_MOD_SYNC_BYTES || chunkSize > totalSize) {
+                printf("Network: Rejecting invalid mod sync packet (%u total, %zu chunk)\n",
+                       totalSize, chunkSize);
+                modTransfer_ = ModTransfer{};
+                break;
+            }
+
+            if (modTransfer_.received == 0 || modTransfer_.totalSize != totalSize) {
+                modTransfer_ = ModTransfer{};
+                modTransfer_.totalSize = totalSize;
+                modTransfer_.data.reserve(totalSize);
+            }
+
+            if (modTransfer_.received + chunkSize > modTransfer_.totalSize) {
+                printf("Network: Rejecting overflowing mod sync stream (%u/%u + %zu)\n",
+                       modTransfer_.received, modTransfer_.totalSize, chunkSize);
+                modTransfer_ = ModTransfer{};
+                break;
+            }
+
+            modTransfer_.data.insert(modTransfer_.data.end(), payload + 4, payload + payloadLen);
+            modTransfer_.received = (uint32_t)modTransfer_.data.size();
+
+            if (modTransfer_.received >= modTransfer_.totalSize) {
+                std::vector<uint8_t> modData = std::move(modTransfer_.data);
+                printf("Network: Received mod sync data (%zu bytes)\n", modData.size());
+                modTransfer_ = ModTransfer{};
+                if (onModSyncReceived) onModSyncReceived(modData);
+            }
         }
         break;
     }
@@ -1933,8 +2071,22 @@ void NetworkManager::sendScoreUpdate(uint8_t playerId, int score) {
 void NetworkManager::sendModSync(const std::vector<uint8_t>& modData) {
 #if HAS_ENET
     if (!isHost_ || modData.empty()) return;
-    auto pkt = buildPacket(NetPacketType::ModSync, modData.data(), modData.size());
-    sendReliable(pkt);
+    if (modData.size() > MAX_MOD_SYNC_BYTES) {
+        printf("Network: Refusing to send oversized mod sync data (%zu bytes)\n", modData.size());
+        return;
+    }
+    for (size_t offset = 0; offset < modData.size(); offset += FILE_CHUNK_SIZE) {
+        size_t chunkSize = std::min(FILE_CHUNK_SIZE, modData.size() - offset);
+        std::vector<uint8_t> payload;
+        payload.reserve(4 + chunkSize);
+        uint32_t totalSize = (uint32_t)modData.size();
+        uint8_t sizeBytes[4];
+        memcpy(sizeBytes, &totalSize, 4);
+        payload.insert(payload.end(), sizeBytes, sizeBytes + 4);
+        payload.insert(payload.end(), modData.begin() + offset, modData.begin() + offset + chunkSize);
+        auto pkt = buildPacket(NetPacketType::ModSync, payload.data(), payload.size());
+        sendReliable(pkt);
+    }
     printf("Network: Sent mod sync data (%zu bytes)\n", modData.size());
 #endif
 }
@@ -2048,6 +2200,68 @@ void NetworkManager::sendGameEnd(uint8_t reason) {
     if (isHost_) {
         state_ = NetState::InLobby;
         if (onGameEnded) onGameEnded(reason);
+    }
+#endif
+}
+
+void NetworkManager::sendLocalCharacterSync(const std::string& characterName, bool isDefault,
+                                            const std::vector<uint8_t>& data) {
+#if HAS_ENET
+    sendCharacterSyncForPlayer(localId_, characterName, isDefault, data);
+    if (auto* p = findPlayer(localId_)) {
+        p->characterName = characterName;
+        p->customCharacter = !isDefault;
+    }
+    if (onCharacterSyncReceived) {
+        onCharacterSyncReceived(localId_, characterName, isDefault, data);
+    }
+#endif
+}
+
+void NetworkManager::sendCharacterSyncForPlayer(uint8_t ownerId, const std::string& characterName,
+                                                bool isDefault, const std::vector<uint8_t>& data,
+                                                uint8_t toPeer) {
+#if HAS_ENET
+    if (!enetHost_) return;
+    if (characterName.empty() || characterName.size() > 63) return;
+    if (data.size() > MAX_CHARACTER_SYNC_BYTES) return;
+    if (isDefault && !data.empty()) return;
+    if (!isDefault && data.empty()) return;
+
+    auto sendChunk = [&](ENetPeer* peer, size_t offset, size_t chunkSize) {
+        std::vector<uint8_t> payload;
+        payload.push_back(ownerId);
+        payload.push_back(isDefault ? 1 : 0);
+        payload.push_back((uint8_t)characterName.size());
+        payload.insert(payload.end(), characterName.begin(), characterName.end());
+        uint32_t totalSize = (uint32_t)data.size();
+        uint8_t sizeBytes[4];
+        memcpy(sizeBytes, &totalSize, 4);
+        payload.insert(payload.end(), sizeBytes, sizeBytes + 4);
+        if (chunkSize > 0) {
+            payload.insert(payload.end(), data.begin() + offset, data.begin() + offset + chunkSize);
+        }
+        auto pkt = buildPacket(NetPacketType::CharacterSync, payload.data(), payload.size());
+        sendReliable(pkt, peer);
+    };
+
+    if (isDefault) {
+        ENetPeer* peer = nullptr;
+        if (toPeer != 255) {
+            if (auto* p = findPlayer(toPeer)) peer = p->peer;
+            if (!peer) return;
+        }
+        sendChunk(peer, 0, 0);
+        return;
+    }
+
+    for (size_t offset = 0; offset < data.size(); offset += FILE_CHUNK_SIZE) {
+        size_t chunkSize = std::min(FILE_CHUNK_SIZE, data.size() - offset);
+        if (toPeer == 255) {
+            sendChunk(nullptr, offset, chunkSize);
+        } else if (auto* p = findPlayer(toPeer)) {
+            if (p->peer) sendChunk(p->peer, offset, chunkSize);
+        }
     }
 #endif
 }

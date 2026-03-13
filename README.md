@@ -11,6 +11,9 @@ COLD START is a top-down action shooter built in C++ with SDL2 for PC and Ninten
 - Arena, co-op, deathmatch, team deathmatch, playlist, and custom-map play modes
 - New `PLAY` submenu for Generated Map / Map / Pack selection
 - Host-authoritative online multiplayer with ENet-based state sync
+- Unified menu style with keyboard, controller, mouse, and touch support
+- Character creator with walk preview, frame stepping, and editable muzzle/shoot point
+- Multiplayer character bundle sync so modded players appear correctly on other devices
 - Procedural and custom maps, map packs, character content, and upgrade crates
 - In-game map editor and built-in pixel-art texture editor
 - Mod loading with support for maps, packs, characters, items, gamemodes, sprite overrides, sound overrides, and synced multiplayer mod payloads
@@ -40,6 +43,7 @@ COLD START is a top-down action shooter built in C++ with SDL2 for PC and Ninten
 ### Tools
 
 - In-game map editor
+- Character creator with local save and save-to-mod flow
 - Character and content pipeline for custom assets
 - Built-in texture editor for tiles, sprites, and UI art
 
@@ -48,8 +52,9 @@ COLD START is a top-down action shooter built in C++ with SDL2 for PC and Ninten
 - Host/join flow over ENet
 - Lobby configuration sync
 - Player state, projectile, explosion, pickup, enemy, and event replication
+- Character selection sync, including secure transfer of custom character bundles up to 10 MB
 - Support for large lobbies, with host max player configuration up to 128
-- Mod synchronization path for lightweight multiplayer content distribution
+- Full mod synchronization for maps, packs, characters, tiles, sprites, sounds, music, items, and gamemode data up to 64 MB per lobby start
 
 ## Requirements
 
@@ -157,11 +162,11 @@ nxlink -a <SWITCH_IP> -s cold_start.nro
 
 ## Release artifacts
 
-Current release artifacts for `v1.1.1`:
+Current release artifacts for `v1.2.0`:
 
-- `cold_start-linux-v1.1.1.zip` — Linux x86_64 (self-contained, SDL2 libs bundled)
-- `cold_start-linux-server-v1.1.1.zip` — Linux dedicated server (headless)
-- `cold_start-windows-v1.1.1.zip` — Windows x86_64 (MinGW, all DLLs bundled)
+- `cold_start-linux-v1.2.0.zip` — Linux x86_64 (self-contained, SDL2 libs bundled)
+- `cold_start-linux-server-v1.2.0.zip` — Linux dedicated server (headless)
+- `cold_start-windows-v1.2.0.zip` — Windows x86_64 (MinGW, all DLLs bundled)
 - `cold-start-nx.nro` — Nintendo Switch homebrew
 
 ## Controls
@@ -292,7 +297,36 @@ respawn_time=5
 
 ### Multiplayer mod sync
 
-When the host enables mods, lightweight mod data can be serialized and sent to joining clients. Large media files are intentionally skipped; gameplay-critical small files are prioritized.
+When the host starts a multiplayer match, enabled mods are serialized and sent to clients before gameplay begins.
+
+Synced content now includes:
+
+- custom maps and packs
+- character folders and configs
+- sprite and tile overrides
+- sound and music overrides
+- item and gamemode definitions
+- `mod.cfg` metadata and gameplay overrides
+
+Security and limits:
+
+- custom character sync is capped at 10 MB per player
+- multiplayer mod sync is capped at 64 MB total per lobby start
+- synced mod IDs and file paths are validated before any files are written
+- oversized, malformed, or traversal-style payloads are rejected
+- synced mods install into `mods/_mp_sync/` and that directory is rebuilt on each fresh sync
+
+Trust model:
+
+- clients should only join hosts they trust
+- synced mods are treated as content, not native code, but they can still replace gameplay assets and override balance values
+- the host decides which enabled mods are active for that session
+
+Practical notes:
+
+- large synced media can make match start take longer on slower devices
+- if a file would push the sync over the 64 MB cap, it is skipped from the transfer
+- local non-network mods remain separate from the temporary `mods/_mp_sync/` install area
 
 ## Notes
 
@@ -305,6 +339,10 @@ When the host enables mods, lightweight mod data can be serialized and sent to j
 ### v1.2.0 (2026-03-12)
 - **Controller rumble support** — added haptic feedback via SDL_GameControllerRumble for damage, shooting, parrying, and melee attacks on all platforms with controller support (PC, Switch, Android)
 - **Automatic update checker** — game checks GitHub API for new releases on startup; UPDATE button appears in main menu (before QUIT) when newer version is available, opening release page in browser when clicked
+- **Unified menu + creator overhaul** — menus now share the same visual style and support keyboard, controller, mouse, and touch input; the character creator gained walking preview, frame stepping, click-to-place muzzle offsets, and save-local/save-to-mod flows through the shared on-screen keyboard
+- **Multiplayer character sync completed** — remote players now render with their own selected default or modded characters, and hosts resend synced character bundles to late joiners
+- **Full multiplayer mod sync** — lobby start can now sync full enabled mods including maps, packs, tiles, sprites, sound and music overrides, with runtime asset resolution honoring synced mod replacements
+- **Mod sync hardening** — multiplayer mod payloads are chunked, capped at 64 MB, validated before install, and written only through sanitized IDs and relative paths into `mods/_mp_sync/`
 
 ### v1.1.1 (2026-03-12)
 - **Security: mod sync path traversal fix** — `deserializeAndInstallMods` now validates both the mod ID and each file's relative path before touching the filesystem; crafted payloads containing `..` components, absolute paths, backslashes, or null bytes are rejected and skipped, preventing arbitrary file writes outside the mod sync directory

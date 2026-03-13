@@ -24,6 +24,7 @@
 #include <string>
 #include <set>
 #include <functional>
+#include <unordered_map>
 
 enum class GameState {
     MainMenu,
@@ -297,7 +298,9 @@ private:
         int   previewSection = 0;  // 0=idle, 1=body anim, 2=legs, 3=death, 4=detail
         float animTime = 0.0f;
         int   previewFrame = 0;
-        bool  playAnimation = true;
+        bool  playAnimation = false;
+        float shootOffsetX = 12.0f;
+        float shootOffsetY = -30.0f;
 
         // Character being edited (loaded from folder)
         CharacterDef charDef;
@@ -365,6 +368,9 @@ private:
     std::vector<SDL_Texture*> playerSprites_;
     std::vector<SDL_Texture*> playerDeathSprites_;
     std::vector<SDL_Texture*> legSprites_;
+    std::vector<SDL_Texture*> defaultPlayerSprites_;
+    std::vector<SDL_Texture*> defaultPlayerDeathSprites_;
+    std::vector<SDL_Texture*> defaultLegSprites_;
     std::vector<SDL_Texture*> bombSprites_;
     SDL_Texture* enemySprite_   = nullptr;
     SDL_Texture* shooterSprite_ = nullptr;
@@ -569,6 +575,14 @@ private:
         Uint32   repeatAt   = 0;
         std::string* target = nullptr;
         std::function<void(bool confirmed)> onDone;
+        int      renderX    = 0;
+        int      renderY    = 0;
+        int      cellW      = 0;
+        int      cellH      = 0;
+        int      rows       = 0;
+        SDL_Rect delRect    = {0, 0, 0, 0};
+        SDL_Rect okRect     = {0, 0, 0, 0};
+        SDL_Rect cancelRect = {0, 0, 0, 0};
 
         void open(const char* pal, int c, std::string* tgt, int max,
                   std::function<void(bool confirmed)> done = nullptr);
@@ -652,6 +666,17 @@ private:
     std::vector<ServerPreset> serverPresets_;
     int presetSelection_ = 0;
 
+    struct SyncedCharacterState {
+        std::string name = "Default";
+        bool isDefault = true;
+        std::vector<uint8_t> data;
+        CharacterDef visual;
+        bool visualLoaded = false;
+        std::string cacheFolder;
+    };
+    std::unordered_map<uint8_t, SyncedCharacterState> syncedCharacters_;
+    std::string lastCharacterSyncKey_;
+
     void initMultiplayer();
     void shutdownMultiplayer();
     void updateMultiplayer(float dt);
@@ -693,6 +718,12 @@ private:
     void renderModMenu();
     void renderRemotePlayers();
     void setupNetworkCallbacks();
+    void clearSyncedCharacters();
+    void clearSyncedCharacter(uint8_t playerId);
+    std::vector<uint8_t> buildCharacterSyncBundle(const CharacterDef& cd) const;
+    bool installSyncedCharacterVisual(uint8_t playerId, const std::string& characterName,
+                                      const std::vector<uint8_t>& data);
+    void syncLocalCharacterSelection(bool force = false);
     void hostGame();
     void joinGame();
     void startMultiplayerGame();  // host only
@@ -715,5 +746,6 @@ private:
 
     // ── Mod system ──
     void initMods();
+    void reloadModdedContent();
     void applyModOverrides();
 };
