@@ -95,6 +95,8 @@ enum class NetPacketType : uint8_t {
     LobbyStartRequest = 0x5E, // lobby host -> server: request game start
     MeleeHitRequest = 0x5F,  // client→host: attacker hit target with melee
     CharacterSync   = 0x60,  // reliable chunked sync of selected character bundle
+    SubPlayerDied   = 0x61,  // host→all: authoritative death of a local splitscreen sub-player
+    SubPlayerHpSync = 0x62,  // host→all: authoritative HP update of a local splitscreen sub-player
 };
 
 // ── Network channels ──
@@ -294,9 +296,11 @@ public:
     void sendPlayerRespawn(uint8_t playerId, Vec2 pos);
     void sendEnemyKilled(uint32_t enemyIdx, uint8_t killerId);
     // PvP host-authoritative hit validation
-    void sendHitRequest(uint32_t bulletNetId, int damage, uint8_t ownerId); // client→host
-    void sendMeleeHitRequest(uint8_t targetId, int damage);                  // client→host
+    void sendHitRequest(uint32_t bulletNetId, int damage, uint8_t ownerId, uint8_t targetSlot = 0); // client→host
+    void sendMeleeHitRequest(uint8_t targetId, int damage, uint8_t targetSlot = 0);                  // client→host
     void sendPlayerHpSync(uint8_t playerId, int hp, int maxHp, uint8_t killerId); // host→all
+    void sendSubPlayerDied(uint8_t ownerId, uint8_t slot, uint8_t killerId);
+    void sendSubPlayerHpSync(uint8_t ownerId, uint8_t slot, int hp, int maxHp, uint8_t killerId);
     void sendWaveStart(int waveNum);
     void sendScoreUpdate(uint8_t playerId, int score);
 
@@ -347,10 +351,12 @@ public:
     std::function<void(uint8_t playerId, Vec2 pos)> onPlayerRespawned;
     // PvP: host sends authoritative HP; called on all peers including host
     std::function<void(uint8_t playerId, int hp, int maxHp, uint8_t killerId)> onPlayerHpSync;
+    std::function<void(uint8_t ownerId, uint8_t slot, uint8_t killerId)> onSubPlayerDied;
+    std::function<void(uint8_t ownerId, uint8_t slot, int hp, int maxHp, uint8_t killerId)> onSubPlayerHpSync;
     // PvP: host receives a hit request from a client; return true to accept
-    std::function<bool(uint32_t bulletNetId, int damage, uint8_t ownerId, uint8_t senderPlayerId)> onHitRequest;
+    std::function<bool(uint32_t bulletNetId, int damage, uint8_t ownerId, uint8_t senderPlayerId, uint8_t targetSlot)> onHitRequest;
     // PvP: host receives a melee hit request from a client
-    std::function<void(uint8_t attackerId, uint8_t targetId, int damage)> onMeleeHitRequest;
+    std::function<void(uint8_t attackerId, uint8_t targetId, int damage, uint8_t targetSlot)> onMeleeHitRequest;
     std::function<void(int waveNum)> onWaveStarted;
     std::function<void(const std::string& sender, const std::string& text)> onChatMessage;
     std::function<void(uint32_t mapSeed, int mapW, int mapH, const std::vector<uint8_t>& customMapData)> onGameStarted;

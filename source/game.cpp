@@ -3568,7 +3568,30 @@ void Game::updatePlayer(float dt) {
                             }
                         }
                     } else {
-                        net.sendMeleeHitRequest(rp.id, meleePlayerDamage);
+                        net.sendMeleeHitRequest(rp.id, meleePlayerDamage, 0);
+                    }
+                    for (int spi = 0; spi < (int)rp.subPlayers.size(); spi++) {
+                        auto& sp = rp.subPlayers[spi];
+                        if (!sp.alive) continue;
+                        Vec2 toSub = {sp.targetPos.x - p.pos.x, sp.targetPos.y - p.pos.y};
+                        float distSub = toSub.length();
+                        if (distSub > meleeRange + PLAYER_SIZE) continue;
+                        if (!angleDiffOk(toSub)) continue;
+                        if (net.isHost()) {
+                            NetPlayer* rpM = net.findPlayer(rp.id);
+                            if (!rpM || spi >= (int)rpM->subPlayers.size()) continue;
+                            auto& target = rpM->subPlayers[spi];
+                            target.hp -= meleePlayerDamage;
+                            if (target.hp <= 0) {
+                                target.hp = 0;
+                                target.alive = false;
+                                net.sendSubPlayerDied(rp.id, (uint8_t)(spi + 1), localId);
+                            } else {
+                                net.sendSubPlayerHpSync(rp.id, (uint8_t)(spi + 1), target.hp, target.maxHp, localId);
+                            }
+                        } else {
+                            net.sendMeleeHitRequest(rp.id, meleePlayerDamage, (uint8_t)(spi + 1));
+                        }
                     }
                 }
             }
@@ -5425,6 +5448,19 @@ void Game::resolveCollisions() {
                     camera_.addShake(1.5f);
                     break;
                 }
+                for (auto& sp : rp.subPlayers) {
+                    if (!b.alive || !sp.alive) continue;
+                    Vec2 spPos = {
+                        sp.prevPos.x + (sp.targetPos.x - sp.prevPos.x) * sp.interpT,
+                        sp.prevPos.y + (sp.targetPos.y - sp.prevPos.y) * sp.interpT
+                    };
+                    if (circleOverlap(b.pos, b.size, spPos, PLAYER_SIZE * 0.5f)) {
+                        b.alive = false;
+                        camera_.addShake(1.5f);
+                        break;
+                    }
+                }
+                if (!b.alive) break;
             }
         }
 
@@ -5465,6 +5501,48 @@ void Game::resolveCollisions() {
                         net.sendHitRequest(b.netId, b.damage, b.ownerId);
                         // Optimistic visual feedback only (no HP deducted yet)
                         camera_.addShake(1.5f);
+                        if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                    }
+                    break;
+                }
+            }
+        }
+
+        bool mpSplitscreen = coopPlayerCount_ > 1 &&
+            (state_ == GameState::MultiplayerGame || state_ == GameState::MultiplayerPaused ||
+             state_ == GameState::MultiplayerDead || state_ == GameState::MultiplayerSpectator);
+        if (mpSplitscreen) {
+            for (int ci = 1; ci < 4; ci++) {
+                if (!coopSlots_[ci].joined) continue;
+                Player& cp = coopSlots_[ci].player;
+                if (cp.dead) continue;
+                for (auto& b : bullets_) {
+                    if (!b.alive) continue;
+                    if (b.ownerId == net.localPlayerId() || b.ownerId == 255) continue;
+                    if (currentRules_.teamCount >= 2 && !currentRules_.friendlyFire) {
+                        NetPlayer* shooter = net.findPlayer(b.ownerId);
+                        if (shooter && shooter->team == localTeam_ && localTeam_ >= 0) continue;
+                    }
+                    float hitRadius = b.size + PLAYER_SIZE * 0.6f;
+                    bool pointHit = circleOverlap(b.pos, b.size, cp.pos, PLAYER_SIZE * 0.6f);
+                    bool sweptHit = sweptCircleOverlap(b.pos, b.vel, 1.0f / 30.0f, cp.pos, hitRadius);
+                    if (!pointHit && !sweptHit) continue;
+
+                    b.alive = false;
+                    if (net.isHost() || net.isConnectedToDedicated()) {
+                        cp.hp = std::max(0, cp.hp - b.damage);
+                        coopSlots_[ci].camera.addShake(cp.hp <= 0 ? 4.0f : 2.0f);
+                        if (cp.hp <= 0) {
+                            cp.dead = true;
+                            if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
+                            net.sendSubPlayerDied(net.localPlayerId(), (uint8_t)ci, b.ownerId);
+                        } else {
+                            if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                            net.sendSubPlayerHpSync(net.localPlayerId(), (uint8_t)ci, cp.hp, cp.maxHp, b.ownerId);
+                        }
+                    } else {
+                        net.sendHitRequest(b.netId, b.damage, b.ownerId, (uint8_t)ci);
+                        coopSlots_[ci].camera.addShake(1.5f);
                         if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
                     }
                     break;
@@ -6553,6 +6631,12 @@ SDL_GameController* Game::getPrimaryGameplayController() const {
 
     if (lobbyPrimaryPadId_ >= 0 && !isTakenBySubPlayer(lobbyPrimaryPadId_)) {
         if (SDL_GameController* preferred = SDL_GameControllerFromInstanceID(lobbyPrimaryPadId_)) {
+            return preferred;
+        }
+    }
+
+    if (coopSlots_[0].joined && coopSlots_[0].joyInstanceId >= 0 && !isTakenBySubPlayer(coopSlots_[0].joyInstanceId)) {
+        if (SDL_GameController* preferred = SDL_GameControllerFromInstanceID(coopSlots_[0].joyInstanceId)) {
             return preferred;
         }
     }
@@ -10189,22 +10273,9 @@ void Game::handleLocalCoopInput() {
         }
     }
 #else
-    // On PC: Slot 0 = keyboard+mouse, slots 1-3 = gamepads
-    // Slot 0 = keyboard+mouse: mirrors the global input state
-    coopSlots_[0].moveInput  = moveInput_;
-    coopSlots_[0].aimInput   = aimInput_;
-    coopSlots_[0].fireInput  = fireInput_;
-    coopSlots_[0].bombInput  = bombInput_;
-    coopSlots_[0].parryInput = parryInput_;
-    coopSlots_[0].meleeInput = meleeInput_;
-    coopSlots_[0].weaponSwitchInput = weaponSwitchDelta_;
-
     const float dead = 0.18f;
-    // Slots 1-3 = gamepads: read from their assigned controller by joystick instance ID
-    for (int i = 1; i < 4; i++) {
-        if (!coopSlots_[i].joined) continue;
-        SDL_GameController* gc = SDL_GameControllerFromInstanceID(coopSlots_[i].joyInstanceId);
-        if (!gc) continue;
+    auto readPadIntoSlot = [&](int i, SDL_GameController* gc) {
+        if (!gc) return false;
         float lx = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTX)      / 32767.f;
         float ly = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTY)      / 32767.f;
         float rx = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_RIGHTX)     / 32767.f;
@@ -10217,13 +10288,34 @@ void Game::handleLocalCoopInput() {
         coopSlots_[i].fireInput  = (rt > 0.25f);
         coopSlots_[i].bombInput  = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_X);
         coopSlots_[i].parryInput = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_LEFTSHOULDER);
-        coopSlots_[i].meleeInput = false;  // no dedicated quick-melee on gamepad; use axe slot
+        coopSlots_[i].meleeInput = false;
         coopSlots_[i].weaponSwitchInput = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) ? 1 : 0;
         coopSlots_[i].pauseInput = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_START);
         if (coopSlots_[i].pauseInput && state_ == GameState::LocalCoopGame) {
             state_ = GameState::LocalCoopPaused;
             menuSelection_ = 0;
         }
+        return true;
+    };
+
+    bool slot0PadRead = false;
+    if (coopSlots_[0].joined && coopSlots_[0].joyInstanceId >= 0) {
+        slot0PadRead = readPadIntoSlot(0, SDL_GameControllerFromInstanceID(coopSlots_[0].joyInstanceId));
+    }
+    if (!slot0PadRead) {
+        coopSlots_[0].moveInput  = moveInput_;
+        coopSlots_[0].aimInput   = aimInput_;
+        coopSlots_[0].fireInput  = fireInput_;
+        coopSlots_[0].bombInput  = bombInput_;
+        coopSlots_[0].parryInput = parryInput_;
+        coopSlots_[0].meleeInput = meleeInput_;
+        coopSlots_[0].weaponSwitchInput = weaponSwitchDelta_;
+    }
+
+    // Slots 1-3 = gamepads: read from their assigned controller by joystick instance ID
+    for (int i = 1; i < 4; i++) {
+        if (!coopSlots_[i].joined) continue;
+        readPadIntoSlot(i, SDL_GameControllerFromInstanceID(coopSlots_[i].joyInstanceId));
     }
 #endif
 }
@@ -11501,6 +11593,29 @@ void Game::setupNetworkCallbacks() {
         (void)killerId;
     };
 
+    net.onSubPlayerDied = [this](uint8_t ownerId, uint8_t slot, uint8_t /*killerId*/) {
+        auto& net2 = NetworkManager::instance();
+        if (ownerId != net2.localPlayerId()) return;
+        if (slot == 0 || slot >= 4 || !coopSlots_[slot].joined) return;
+        Player& target = coopSlots_[slot].player;
+        if (!target.dead) {
+            target.dead = true;
+            target.hp = 0;
+            coopSlots_[slot].camera.addShake(4.0f);
+            if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
+        }
+    };
+
+    net.onSubPlayerHpSync = [this](uint8_t ownerId, uint8_t slot, int hp, int maxHp, uint8_t /*killerId*/) {
+        auto& net2 = NetworkManager::instance();
+        if (ownerId != net2.localPlayerId()) return;
+        if (slot == 0 || slot >= 4 || !coopSlots_[slot].joined) return;
+        Player& target = coopSlots_[slot].player;
+        target.maxHp = maxHp;
+        target.hp = hp;
+        if (hp <= 0) target.dead = true;
+    };
+
     net.onPlayerRespawned = [this](uint8_t playerId, Vec2 pos) {
         auto& net = NetworkManager::instance();
         NetPlayer* p = net.findPlayer(playerId);
@@ -11520,7 +11635,7 @@ void Game::setupNetworkCallbacks() {
 
     // ── PvP host-authoritative damage ──
     // Host validates a bullet-hit reported by a client and applies authoritative damage
-    net.onHitRequest = [this](uint32_t bulletNetId, int damage, uint8_t ownerId, uint8_t senderPlayerId) -> bool {
+    net.onHitRequest = [this](uint32_t bulletNetId, int damage, uint8_t ownerId, uint8_t senderPlayerId, uint8_t targetSlot) -> bool {
         auto& net = NetworkManager::instance();
         // Remove bullet from host's list (prevents double-hit)
         bool bulletFound = false;
@@ -11532,36 +11647,90 @@ void Game::setupNetworkCallbacks() {
             }
         }
         // Allow even if bullet wasn't found locally — network ordering may differ
-        NetPlayer* victim = net.findPlayer(senderPlayerId);
-        if (!victim || !victim->alive) return false;
-        victim->hp -= damage;
-        if (victim->hp <= 0) {
-            victim->hp = 0;
-            victim->alive = false;
-            net.sendPlayerDied(senderPlayerId, ownerId);
+        if (targetSlot == 0) {
+            NetPlayer* victim = net.findPlayer(senderPlayerId);
+            if (!victim || !victim->alive) return false;
+            victim->hp -= damage;
+            if (victim->hp <= 0) {
+                victim->hp = 0;
+                victim->alive = false;
+                net.sendPlayerDied(senderPlayerId, ownerId);
+            } else {
+                net.sendPlayerHpSync(senderPlayerId, victim->hp, victim->maxHp, ownerId);
+            }
         } else {
-            net.sendPlayerHpSync(senderPlayerId, victim->hp, victim->maxHp, ownerId);
+            if (senderPlayerId == net.localPlayerId()) {
+                if (targetSlot >= 4 || !coopSlots_[targetSlot].joined || coopSlots_[targetSlot].player.dead) return false;
+                Player& victim = coopSlots_[targetSlot].player;
+                victim.hp = std::max(0, victim.hp - damage);
+                if (victim.hp <= 0) {
+                    victim.dead = true;
+                    net.sendSubPlayerDied(senderPlayerId, targetSlot, ownerId);
+                } else {
+                    net.sendSubPlayerHpSync(senderPlayerId, targetSlot, victim.hp, victim.maxHp, ownerId);
+                }
+            } else {
+                NetPlayer* owner = net.findPlayer(senderPlayerId);
+                size_t idx = (targetSlot > 0) ? (size_t)(targetSlot - 1) : (size_t)-1;
+                if (!owner || idx >= owner->subPlayers.size() || !owner->subPlayers[idx].alive) return false;
+                auto& victim = owner->subPlayers[idx];
+                victim.hp = std::max(0, victim.hp - damage);
+                if (victim.hp <= 0) {
+                    victim.alive = false;
+                    net.sendSubPlayerDied(senderPlayerId, targetSlot, ownerId);
+                } else {
+                    net.sendSubPlayerHpSync(senderPlayerId, targetSlot, victim.hp, victim.maxHp, ownerId);
+                }
+            }
         }
         (void)bulletFound;
         return true;
     };
 
     // PvP melee: host applies authoritative damage for a client melee hit
-    net.onMeleeHitRequest = [this](uint8_t attackerId, uint8_t targetId, int damage) {
+    net.onMeleeHitRequest = [this](uint8_t attackerId, uint8_t targetId, int damage, uint8_t targetSlot) {
         auto& net = NetworkManager::instance();
-        NetPlayer* target = net.findPlayer(targetId);
-        if (!target || !target->alive) return;
-        // Friendly-fire guard
-        if (attackerId != 255 && target->team >= 0) {
-            NetPlayer* attacker = net.findPlayer(attackerId);
-            if (attacker && attacker->team == target->team) return;
-        }
-        target->hp -= std::max(1, damage);
-        if (target->hp <= 0) {
-            target->hp = 0; target->alive = false;
-            net.sendPlayerDied(targetId, attackerId);
+        if (targetSlot == 0) {
+            NetPlayer* target = net.findPlayer(targetId);
+            if (!target || !target->alive) return;
+            // Friendly-fire guard
+            if (attackerId != 255 && target->team >= 0) {
+                NetPlayer* attacker = net.findPlayer(attackerId);
+                if (attacker && attacker->team == target->team) return;
+            }
+            target->hp -= std::max(1, damage);
+            if (target->hp <= 0) {
+                target->hp = 0; target->alive = false;
+                net.sendPlayerDied(targetId, attackerId);
+            } else {
+                net.sendPlayerHpSync(targetId, target->hp, target->maxHp, attackerId);
+            }
         } else {
-            net.sendPlayerHpSync(targetId, target->hp, target->maxHp, attackerId);
+            if (targetId == net.localPlayerId()) {
+                if (targetSlot >= 4 || !coopSlots_[targetSlot].joined) return;
+                Player& target = coopSlots_[targetSlot].player;
+                if (target.dead) return;
+                target.hp -= std::max(1, damage);
+                if (target.hp <= 0) {
+                    target.hp = 0; target.dead = true;
+                    net.sendSubPlayerDied(targetId, targetSlot, attackerId);
+                } else {
+                    net.sendSubPlayerHpSync(targetId, targetSlot, target.hp, target.maxHp, attackerId);
+                }
+            } else {
+                NetPlayer* owner = net.findPlayer(targetId);
+                size_t idx = (targetSlot > 0) ? (size_t)(targetSlot - 1) : (size_t)-1;
+                if (!owner || idx >= owner->subPlayers.size()) return;
+                auto& target = owner->subPlayers[idx];
+                if (!target.alive) return;
+                target.hp -= std::max(1, damage);
+                if (target.hp <= 0) {
+                    target.hp = 0; target.alive = false;
+                    net.sendSubPlayerDied(targetId, targetSlot, attackerId);
+                } else {
+                    net.sendSubPlayerHpSync(targetId, targetSlot, target.hp, target.maxHp, attackerId);
+                }
+            }
         }
     };
 
@@ -12184,7 +12353,7 @@ void Game::hostGame() {
         bannedPlayerIds_.clear();
         for (int i = 0; i < 4; i++) coopSlots_[i] = CoopSlot{};
         coopSlots_[0].joined = true;
-        coopSlots_[0].joyInstanceId = -1;
+        coopSlots_[0].joyInstanceId = lobbyPrimaryPadId_;
         coopSlots_[0].username = config_.username;
         lobbySubPlayersSent_ = 0;
         net.setLocalSubPlayers(0);
@@ -12270,7 +12439,7 @@ void Game::joinGame() {
         lobbyKickCursor_ = -1;
         for (int i = 0; i < 4; i++) coopSlots_[i] = CoopSlot{};
         coopSlots_[0].joined = true;
-        coopSlots_[0].joyInstanceId = -1;
+        coopSlots_[0].joyInstanceId = lobbyPrimaryPadId_;
         coopSlots_[0].username = config_.username;
         lobbySubPlayersSent_ = -1;
         connectTimer_ = 5.0f; // 5 second timeout
