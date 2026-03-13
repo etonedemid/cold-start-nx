@@ -94,6 +94,7 @@ enum class NetPacketType : uint8_t {
     LobbyHostChanged  = 0x5D, // server -> all: current lobby host id
     LobbyStartRequest = 0x5E, // lobby host -> server: request game start
     MeleeHitRequest = 0x5F,  // client→host: attacker hit target with melee
+    CharacterSync   = 0x60,  // reliable chunked sync of selected character bundle
 };
 
 // ── Network channels ──
@@ -140,6 +141,8 @@ struct NetPlayer {
     uint8_t     localSubPlayers = 0; // additional local players on this client (0..3)
     bool        moving = false;
     float       speed = 520.0f;
+    std::string characterName = "Default";
+    bool        customCharacter = false;
     int8_t      team = -1;         // -1 = no team, 0..3 = team index
     int         lives = -1;        // -1 = infinite, >=0 = remaining lives
     bool        spectating = false; // player exhausted lives, now spectating
@@ -165,6 +168,21 @@ struct FileTransfer {
     uint32_t received = 0;
     bool     complete = false;
     uint8_t  peerId = 0;
+};
+
+struct CharacterTransfer {
+    uint8_t ownerId = 0;
+    std::string name;
+    bool isDefault = true;
+    std::vector<uint8_t> data;
+    uint32_t totalSize = 0;
+    uint32_t received = 0;
+};
+
+struct ModTransfer {
+    std::vector<uint8_t> data;
+    uint32_t totalSize = 0;
+    uint32_t received = 0;
 };
 
 // ── Network session state ──
@@ -292,6 +310,10 @@ public:
     void sendAdminTeamMove(uint8_t targetId, int8_t newTeam); // host only
     void sendLivesUpdate(uint8_t playerId, int lives); // host only
     void sendGameEnd(uint8_t reason = 0);  // host only — ends game; reason: 0=HostEnded,1=WavesCleared,2=TeamWiped,3=LastAlive,4=TimeUp
+    void sendLocalCharacterSync(const std::string& characterName, bool isDefault, const std::vector<uint8_t>& data);
+    void sendCharacterSyncForPlayer(uint8_t ownerId, const std::string& characterName,
+                                    bool isDefault, const std::vector<uint8_t>& data,
+                                    uint8_t toPeer = 255);
 
     // File sync
     void requestFile(const std::string& filename, uint8_t fromPeer = 0);
@@ -338,6 +360,8 @@ public:
     std::function<void(const std::vector<uint8_t>& modData)> onModSyncReceived;
     std::function<void(const std::string& filename)> onFileSyncComplete;
     std::function<void()> onAllSyncsComplete;
+    std::function<void(uint8_t playerId, const std::string& characterName, bool isDefault,
+                       const std::vector<uint8_t>& data)> onCharacterSyncReceived;
 
 private:
     NetworkManager() = default;
@@ -363,6 +387,8 @@ private:
 
     // File transfers
     std::vector<FileTransfer> transfers_;
+    std::vector<CharacterTransfer> characterTransfers_;
+    ModTransfer modTransfer_;
 
     // Packet handling
     void processEvent(ENetEvent& event);
