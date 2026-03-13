@@ -43,6 +43,33 @@ inline Uint8 remapButton(Uint8 btn) {
 #endif
 }
 
+static bool hasSuffix(const std::string& value, const char* suffix) {
+    size_t suffixLen = strlen(suffix);
+    return value.size() >= suffixLen &&
+           value.compare(value.size() - suffixLen, suffixLen, suffix) == 0;
+}
+
+static bool isAllowedSyncedCharacterFile(const std::string& name) {
+    if (name.empty() || name.find('/') != std::string::npos || name.find('\\') != std::string::npos)
+        return false;
+    if (name == "." || name == "..") return false;
+    return hasSuffix(name, ".png") || hasSuffix(name, ".cfg") || hasSuffix(name, ".cschar");
+}
+
+static std::string sanitizeNetCharacterName(const std::string& name) {
+    std::string out = name;
+    for (char& c : out) {
+        if (!((c >= '0' && c <= '9') ||
+              (c >= 'a' && c <= 'z') ||
+              (c >= 'A' && c <= 'Z') ||
+              c == '_' || c == '-')) {
+            c = '_';
+        }
+    }
+    if (out.empty()) out = "character";
+    return out;
+}
+
 bool isMeleeEnemyType(EnemyType type) {
     return type == EnemyType::Melee || type == EnemyType::Brute || type == EnemyType::Scout;
 }
@@ -384,8 +411,10 @@ bool Game::init() {
     // Initialize multiplayer
     initMultiplayer();
 
-    // Check for updates in background
+    // Check for updates in background (skip on Switch - network conflicts with nxlink)
+#ifndef __SWITCH__
     checkForUpdates();
+#endif
 
     // Start main menu music
     if (menuMusic_) {
@@ -428,6 +457,10 @@ void Game::SoftKeyboard::open(const char* pal, int c, std::string* tgt, int max,
     active = true; palette = pal; cols = c; charIdx = 0;
     heldButton = -1; repeatAt = 0; target = tgt; maxLen = max;
     onDone = done;
+    renderX = renderY = cellW = cellH = rows = 0;
+    delRect = {0, 0, 0, 0};
+    okRect = {0, 0, 0, 0};
+    cancelRect = {0, 0, 0, 0};
 #ifndef __SWITCH__
     SDL_StartTextInput();
 #endif
@@ -464,6 +497,40 @@ bool Game::handleSoftKBEvent(SDL_Event& e) {
     if (!kb.active || !kb.target || !kb.palette) return false;
     int palLen = (int)strlen(kb.palette);
 
+    auto logicalPointFromMouse = [&](int px, int py, int& lx, int& ly) {
+        float fx = (float)px;
+        float fy = (float)py;
+        SDL_RenderWindowToLogical(renderer_, px, py, &fx, &fy);
+        lx = (int)fx;
+        ly = (int)fy;
+    };
+
+    auto handlePointer = [&](int x, int y) -> bool {
+        if (kb.delRect.w > 0 && ui_.pointInRect(x, y, kb.delRect.x, kb.delRect.y, kb.delRect.w, kb.delRect.h)) {
+            if (!kb.target->empty()) kb.target->pop_back();
+            return true;
+        }
+        if (kb.okRect.w > 0 && ui_.pointInRect(x, y, kb.okRect.x, kb.okRect.y, kb.okRect.w, kb.okRect.h)) {
+            kb.close(true);
+            return true;
+        }
+        if (kb.cancelRect.w > 0 && ui_.pointInRect(x, y, kb.cancelRect.x, kb.cancelRect.y, kb.cancelRect.w, kb.cancelRect.h)) {
+            kb.close(false);
+            return true;
+        }
+        if (kb.cellW <= 0 || kb.cellH <= 0 || kb.rows <= 0) return false;
+        int totalW = kb.cols * kb.cellW;
+        int totalH = kb.rows * kb.cellH;
+        if (!ui_.pointInRect(x, y, kb.renderX, kb.renderY, totalW, totalH)) return false;
+        int col = (x - kb.renderX) / kb.cellW;
+        int row = (y - kb.renderY) / kb.cellH;
+        int idx = row * kb.cols + col;
+        if (idx < 0 || idx >= palLen) return true;
+        kb.charIdx = idx;
+        if ((int)kb.target->size() < kb.maxLen) *kb.target += kb.palette[idx];
+        return true;
+    };
+
     if (e.type == SDL_TEXTINPUT) {
         for (const char* p = e.text.text; *p; p++) {
             if (*p >= ' ' && *p <= '~' && *p != '=' && *p != '\n')
@@ -491,6 +558,16 @@ bool Game::handleSoftKBEvent(SDL_Event& e) {
             return true;
         }
         return true; // consume all keydowns while keyboard active
+    }
+    if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+        int x = 0, y = 0;
+        logicalPointFromMouse(e.button.x, e.button.y, x, y);
+        return handlePointer(x, y);
+    }
+    if (e.type == SDL_FINGERDOWN) {
+        int x = (int)(e.tfinger.x * SCREEN_W);
+        int y = (int)(e.tfinger.y * SCREEN_H);
+        return handlePointer(x, y);
     }
     if (e.type == SDL_CONTROLLERBUTTONDOWN) {
         Uint8 btn = remapButton(e.cbutton.button);
@@ -537,7 +614,7 @@ bool Game::handleSoftKBEvent(SDL_Event& e) {
 
 void Game::renderSoftKB(int centerY) {
 #ifndef __SWITCH__
-    if (!usingGamepad_) return;
+    if (!usingGamepad_ && !ui_.touchActive) return;
 #endif
     auto& kb = softKB_;
     if (!kb.active || !kb.palette) return;
@@ -554,11 +631,16 @@ void Game::renderSoftKB(int centerY) {
     int totalW = cols * cellW;
     int startX = (SCREEN_W - totalW) / 2;
     int palY = centerY;
+    kb.renderX = startX;
+    kb.renderY = palY;
+    kb.cellW = cellW;
+    kb.cellH = cellH;
+    kb.rows = rows;
 
     // Opaque background
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(renderer_, 15, 16, 28, 255);
-    SDL_Rect palBg = {startX - 8, palY - 8, totalW + 16, rows * cellH + 40};
+    SDL_Rect palBg = {startX - 8, palY - 8, totalW + 16, rows * cellH + 80};
     SDL_RenderFillRect(renderer_, &palBg);
     SDL_SetRenderDrawColor(renderer_, 0, 120, 110, 180);
     SDL_RenderDrawRect(renderer_, &palBg);
@@ -580,6 +662,22 @@ void Game::renderSoftKB(int centerY) {
         drawText(ch, cx + ox, cy + oy, fontSize, sel ? white : gray);
     }
 
+    int btnY = palY + rows * cellH + 12;
+    auto drawKbButton = [&](SDL_Rect rect, const char* label, SDL_Color color) {
+        bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, rect.x, rect.y, rect.w, rect.h);
+        SDL_SetRenderDrawColor(renderer_, 18, 24, 34, 255);
+        SDL_RenderFillRect(renderer_, &rect);
+        SDL_SetRenderDrawColor(renderer_, color.r, color.g, color.b, hovered ? 220 : 170);
+        SDL_RenderDrawRect(renderer_, &rect);
+        drawText(label, rect.x + 12, rect.y + 6, 14, color);
+    };
+    kb.delRect = {startX, btnY, 88, 28};
+    kb.okRect = {startX + totalW / 2 - 44, btnY, 88, 28};
+    kb.cancelRect = {startX + totalW - 88, btnY, 88, 28};
+    drawKbButton(kb.delRect, "DEL", UI::Color::Yellow);
+    drawKbButton(kb.okRect, "OK", UI::Color::Green);
+    drawKbButton(kb.cancelRect, "CANCEL", {255, 120, 120, 255});
+
     { UI::HintPair hints[] = { {UI::Action::Navigate, "Navigate"}, {UI::Action::Confirm, "Insert"}, {UI::Action::Tab, "Delete"}, {UI::Action::Back, "Close"}, {UI::Action::Bomb, "Confirm"} };
       ui_.drawHintBar(hints, 5, palY + rows * cellH + 8); }
 }
@@ -588,6 +686,7 @@ void Game::shutdown() {
     shutdownMultiplayer();
     editor_.shutdown();
     for (auto& cd : availableChars_) cd.unload();
+    clearSyncedCharacters();
     ui_.shutdown();
     Assets::instance().shutdown();
     if (sceneTarget_) SDL_DestroyTexture(sceneTarget_);
@@ -659,19 +758,22 @@ void Game::loadAssets() {
     auto& a = Assets::instance();
 
     // Player body frames (body-01..10)
-    playerSprites_ = a.loadAnim("sprites/player/body-", 10, 1);
+    defaultPlayerSprites_ = a.loadAnim("sprites/player/body-", 10, 1);
+    playerSprites_ = defaultPlayerSprites_;
 
     // Player death frames
     char buf[128];
-    playerDeathSprites_.clear();
+    defaultPlayerDeathSprites_.clear();
     for (int i = 1; i <= 12; i++) {
         snprintf(buf, sizeof(buf), "sprites/player/death-%d.png", i);
         auto* t = a.tex(buf);
-        if (t) playerDeathSprites_.push_back(t);
+        if (t) defaultPlayerDeathSprites_.push_back(t);
     }
+    playerDeathSprites_ = defaultPlayerDeathSprites_;
 
     // Leg frames (legs-01..08)
-    legSprites_ = a.loadAnim("sprites/player/legs-", 8, 1);
+    defaultLegSprites_ = a.loadAnim("sprites/player/legs-", 8, 1);
+    legSprites_ = defaultLegSprites_;
 
     // Bomb anim
     bombSprites_.clear();
@@ -985,6 +1087,16 @@ void Game::handleInput() {
 
         // Mod-save dialog gets first pick of all events when open
         if (modSaveDialog_.isOpen()) {
+            if (modSaveDialog_.phase == ModSaveDialogState::NameNewMod && e.type == SDL_KEYDOWN) {
+                SDL_Keycode sym = e.key.keysym.sym;
+                if ((sym == SDLK_RETURN || sym == SDLK_KP_ENTER) && !modSaveDialog_.newModId.empty()) {
+                    modSaveDialog_.confirmedModFolder = modBuildFolder(modSaveDialog_.newModId, modSaveDialog_.newModId);
+                    modSaveDialog_.confirmed = true;
+                    if (softKB_.active) softKB_.close(false);
+                    continue;
+                }
+            }
+            if (softKB_.active && handleSoftKBEvent(e)) continue;
             handleModSaveDialogEvent(e);
             continue;
         }
@@ -1175,7 +1287,7 @@ void Game::handleInput() {
         // Mouse click — set confirmInput_ if clicking over a known UI item
         if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
             usingGamepad_ = false;
-            if (ui_.prevHoveredItem >= 0) {
+            if (state_ != GameState::CharCreator && ui_.prevHoveredItem >= 0) {
                 confirmInput_ = true;
                 if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
             }
@@ -1185,14 +1297,27 @@ void Game::handleInput() {
         if (e.type == SDL_FINGERDOWN) {
             usingGamepad_ = false;
             ui_.touchActive = true;
+            ui_.mouseX = (int)(e.tfinger.x * SCREEN_W);
+            ui_.mouseY = (int)(e.tfinger.y * SCREEN_H);
+            ui_.mouseDown = true;
+            ui_.mouseClicked = true;
             // Touch tap over a UI item = confirm
-            if (ui_.prevHoveredItem >= 0) {
+            if (state_ != GameState::CharCreator && ui_.prevHoveredItem >= 0) {
                 confirmInput_ = true;
                 if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
             }
         }
+        if (e.type == SDL_FINGERMOTION) {
+            ui_.touchActive = true;
+            ui_.mouseX = (int)(e.tfinger.x * SCREEN_W);
+            ui_.mouseY = (int)(e.tfinger.y * SCREEN_H);
+        }
         if (e.type == SDL_FINGERUP) {
             ui_.touchActive = false;
+            ui_.mouseX = (int)(e.tfinger.x * SCREEN_W);
+            ui_.mouseY = (int)(e.tfinger.y * SCREEN_H);
+            ui_.mouseDown = false;
+            ui_.mouseReleased = true;
         }
     }
 
@@ -1306,7 +1431,7 @@ void Game::handleInput() {
     // Handle menu state transitions
     if (state_ == GameState::MainMenu) {
         if (menuSelection_ < 0) menuSelection_ = 0;
-        if (menuSelection_ > 11) menuSelection_ = 11;  // 0-11: 12 items (PLAY through QUIT)
+        if (menuSelection_ > 10) menuSelection_ = 10;  // 0-10: 11 items (PLAY through QUIT)
         if (confirmInput_) {
             if (menuSelection_ == 0) {
                 state_ = GameState::PlayModeMenu;
@@ -1791,12 +1916,15 @@ void Game::handleInput() {
     }
     else if (state_ == GameState::CharCreator) {
         auto& cc = charCreator_;
-        if (cc.textEditing) {
+        if (modSaveDialog_.isOpen()) {
+            if (cc.statusTimer > 0) cc.statusTimer -= dt_;
+        }
+        else if (cc.textEditing) {
             // Text input handled via SDL_TEXTINPUT events already processed
         } else {
             cc.field = menuSelection_;
             if (cc.field < 0) cc.field = 0;
-            if (cc.field > 9) cc.field = 9;
+            if (cc.field > 10) cc.field = 10;
             menuSelection_ = cc.field;
             
             // Tab/Shift+Tab for preview sections
@@ -1863,6 +1991,34 @@ void Game::handleInput() {
                 if (cc.reloadTime > 5.0f) cc.reloadTime = 5.0f;
             }
 
+            auto previewFrameCount = [&]() -> int {
+                switch (cc.previewSection) {
+                    case 1: return cc.loaded ? (int)cc.charDef.bodySprites.size() : (int)playerSprites_.size();
+                    case 2: return cc.loaded ? (int)cc.charDef.legSprites.size() : (int)legSprites_.size();
+                    case 3: return cc.loaded ? (int)cc.charDef.deathSprites.size() : (int)playerDeathSprites_.size();
+                    default: return 1;
+                }
+            };
+            if ((cc.field == 0 || cc.field >= 6) && (leftInput_ || rightInput_)) {
+                int frameCount = previewFrameCount();
+                if (frameCount > 1) {
+                    cc.playAnimation = false;
+                    cc.previewFrame += rightInput_ ? 1 : -1;
+                    if (cc.previewFrame < 0) cc.previewFrame = frameCount - 1;
+                    if (cc.previewFrame >= frameCount) cc.previewFrame = 0;
+                }
+            }
+
+            // Mouse click handling for buttons (must happen before keyboard confirmInput_ check)
+            if (ui_.mouseClicked && !usingGamepad_) {
+                // Check if any button was clicked
+                if (ui_.prevHoveredItem == 6) { cc.field = 6; confirmInput_ = true; }
+                if (ui_.prevHoveredItem == 7) { cc.field = 7; confirmInput_ = true; }
+                if (ui_.prevHoveredItem == 8) { cc.field = 8; confirmInput_ = true; }
+                if (ui_.prevHoveredItem == 9) { cc.field = 9; confirmInput_ = true; }
+                if (ui_.prevHoveredItem == 10) { cc.field = 10; confirmInput_ = true; }
+            }
+
             // Name field: start text editing on confirm
             if (cc.field == 0 && confirmInput_) {
                 cc.textEditing = true;
@@ -1894,6 +2050,12 @@ void Game::handleInput() {
             }
             // Save button
             if (cc.field == 8 && confirmInput_) {
+                if (!modSaveDialog_.isOpen()) {
+                    openModSaveDialog(ModSaveDialogState::AssetCharacter);
+                }
+            }
+            // Save local button
+            if (cc.field == 9 && confirmInput_) {
                 std::string folder = cc.folderPath.empty() ? 
                     "characters/" + cc.name : cc.folderPath;
                 saveCharacterToFolder(folder);
@@ -1901,7 +2063,7 @@ void Game::handleInput() {
                 cc.statusTimer = 3.0f;
             }
             // Back button
-            if (cc.field == 9 && confirmInput_) {
+            if (cc.field == 10 && confirmInput_) {
                 cc.clearPreviews(renderer_);
                 state_ = GameState::MainMenu;
                 menuSelection_ = 0;
@@ -2684,6 +2846,7 @@ void Game::handleInput() {
                     auto& mods = mm.mods();
                     std::string id = mods[modMenuSelection_].id;
                     mm.setEnabled(id, !mods[modMenuSelection_].enabled);
+                    applyModOverrides();
                 } else {
                     mm.saveModConfig();
                     state_ = GameState::MainMenu;
@@ -2825,10 +2988,29 @@ void Game::update() {
                 editor_.performModSave(folder);
                 break;
             case ModSaveDialogState::AssetCharacter:
-                // Legacy mod-save path (kept for backward compat)
+                if (!folder.empty()) {
+                    auto& cc = charCreator_;
+                    std::string safeName = cc.name;
+                    for (char& ch : safeName) {
+                        if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+                            (ch >= '0' && ch <= '9') || ch == '_' || ch == '-') {
+                            continue;
+                        }
+                        if (ch == ' ') ch = '_';
+                        else ch = '_';
+                    }
+                    if (safeName.empty()) safeName = "NewChar";
+                    std::string charFolder = folder + "/characters/" + safeName;
+                    saveCharacterToFolder(charFolder);
+                    cc.folderPath = charFolder;
+                    cc.isEditing = true;
+                    cc.statusMsg = "Saved to " + charFolder;
+                    cc.statusTimer = 3.0f;
+                }
                 break;
         }
         ModManager::instance().scanMods();
+        scanCharacters();
         modSaveDialog_.close();
     }
 }
@@ -3879,7 +4061,9 @@ void Game::spawnBullet(Vec2 pos, float angle) {
     // Offset forward + slightly right (gun side)
     Vec2 fwd = Vec2::fromAngle(angle);
     Vec2 right = {-fwd.y, fwd.x}; // perpendicular right
-    b.pos = pos + fwd * 30.0f + right * GUN_OFFSET_RIGHT;
+    float shootOffsetX = hasActiveChar_ ? activeCharDef_.shootOffsetX : GUN_OFFSET_RIGHT;
+    float shootOffsetY = hasActiveChar_ ? activeCharDef_.shootOffsetY : -30.0f;
+    b.pos = pos + right * shootOffsetX + fwd * (-shootOffsetY);
     b.vel = Vec2::fromAngle(angle) * (BULLET_SPEED * upgrades_.bulletSpeedMulti);
     b.rotation = angle;
     b.size = BULLET_SIZE + upgrades_.bulletSizeBonus;
@@ -7766,12 +7950,15 @@ void Game::applyCharacter(const CharacterDef& cd) {
 
     // Store active character for stat application
     activeCharDef_ = CharacterDef{};
+    activeCharDef_.folder = cd.folder;
     activeCharDef_.name = cd.name;
     activeCharDef_.speed = cd.speed;
     activeCharDef_.hp = cd.hp;
     activeCharDef_.ammo = cd.ammo;
     activeCharDef_.fireRate = cd.fireRate;
     activeCharDef_.reloadTime = cd.reloadTime;
+    activeCharDef_.shootOffsetX = cd.shootOffsetX;
+    activeCharDef_.shootOffsetY = cd.shootOffsetY;
     hasActiveChar_ = true;
     printf("Applied character: %s (spd:%.0f hp:%d ammo:%d)\n",
            cd.name.c_str(), cd.speed, cd.hp, cd.ammo);
@@ -7791,41 +7978,207 @@ void Game::applyCharacterStatsToPlayer(Player& p) {
 void Game::resetToDefaultCharacter() {
     hasActiveChar_ = false;
     selectedChar_ = -1;
-    // Reload default player sprites
-    playerSprites_ = Assets::instance().loadAnim("sprites/player/body-", 10, 1);
-    legSprites_    = Assets::instance().loadAnim("sprites/player/legs-", 8, 1);
-    // Death sprites use different naming
-    playerDeathSprites_.clear();
-    for (int i = 1; i <= 12; i++) {
-        char buf[256];
-        snprintf(buf, sizeof(buf), "sprites/player/death-%d.png", i);
-        SDL_Texture* t = Assets::instance().tex(buf);
-        if (t) playerDeathSprites_.push_back(t);
+    activeCharDef_ = CharacterDef{};
+    playerSprites_ = defaultPlayerSprites_;
+    legSprites_ = defaultLegSprites_;
+    playerDeathSprites_ = defaultPlayerDeathSprites_;
+}
+
+void Game::clearSyncedCharacter(uint8_t playerId) {
+    auto it = syncedCharacters_.find(playerId);
+    if (it == syncedCharacters_.end()) return;
+    if (it->second.visualLoaded) {
+        it->second.visual.unload();
+        it->second.visualLoaded = false;
     }
+    syncedCharacters_.erase(it);
+}
+
+void Game::clearSyncedCharacters() {
+    for (auto& entry : syncedCharacters_) {
+        if (entry.second.visualLoaded) entry.second.visual.unload();
+    }
+    syncedCharacters_.clear();
+    lastCharacterSyncKey_.clear();
+}
+
+std::vector<uint8_t> Game::buildCharacterSyncBundle(const CharacterDef& cd) const {
+    std::vector<uint8_t> bundle;
+    if (cd.folder.empty()) return bundle;
+
+    DIR* dir = opendir(cd.folder.c_str());
+    if (!dir) return bundle;
+
+    std::vector<std::pair<std::string, std::vector<uint8_t>>> files;
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != nullptr) {
+        std::string name(entry->d_name);
+        if (!isAllowedSyncedCharacterFile(name)) continue;
+
+        std::string path = cd.folder;
+        if (!path.empty() && path.back() != '/') path += '/';
+        path += name;
+
+        struct stat st;
+        if (stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode) || st.st_size < 0) continue;
+
+        FILE* f = fopen(path.c_str(), "rb");
+        if (!f) continue;
+        std::vector<uint8_t> bytes((size_t)st.st_size);
+        size_t got = bytes.empty() ? 0 : fread(bytes.data(), 1, bytes.size(), f);
+        fclose(f);
+        if (got != bytes.size()) continue;
+        files.push_back({name, std::move(bytes)});
+    }
+    closedir(dir);
+
+    if (files.empty()) return {};
+    std::sort(files.begin(), files.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    auto appendU16 = [&](uint16_t value) {
+        bundle.push_back((uint8_t)(value & 0xFF));
+        bundle.push_back((uint8_t)((value >> 8) & 0xFF));
+    };
+    auto appendU32 = [&](uint32_t value) {
+        bundle.push_back((uint8_t)(value & 0xFF));
+        bundle.push_back((uint8_t)((value >> 8) & 0xFF));
+        bundle.push_back((uint8_t)((value >> 16) & 0xFF));
+        bundle.push_back((uint8_t)((value >> 24) & 0xFF));
+    };
+
+    bundle.push_back('C');
+    bundle.push_back('S');
+    bundle.push_back('C');
+    bundle.push_back('B');
+    appendU16((uint16_t)files.size());
+    for (const auto& file : files) {
+        appendU16((uint16_t)file.first.size());
+        appendU32((uint32_t)file.second.size());
+        bundle.insert(bundle.end(), file.first.begin(), file.first.end());
+        bundle.insert(bundle.end(), file.second.begin(), file.second.end());
+    }
+    return bundle;
+}
+
+bool Game::installSyncedCharacterVisual(uint8_t playerId, const std::string& characterName,
+                                        const std::vector<uint8_t>& data) {
+    if (data.size() < 6) return false;
+    if (!(data[0] == 'C' && data[1] == 'S' && data[2] == 'C' && data[3] == 'B')) return false;
+
+    auto readU16 = [&](size_t off) -> uint16_t {
+        return (uint16_t)data[off] | ((uint16_t)data[off + 1] << 8);
+    };
+    auto readU32 = [&](size_t off) -> uint32_t {
+        return (uint32_t)data[off] |
+               ((uint32_t)data[off + 1] << 8) |
+               ((uint32_t)data[off + 2] << 16) |
+               ((uint32_t)data[off + 3] << 24);
+    };
+
+    size_t offset = 4;
+    uint16_t fileCount = readU16(offset);
+    offset += 2;
+    if (fileCount == 0) return false;
+
+    mkdir("cache", 0755);
+    mkdir("cache/remote_chars", 0755);
+    std::string cacheFolder = "cache/remote_chars/p" + std::to_string((int)playerId) + "_" + sanitizeNetCharacterName(characterName);
+    mkdir(cacheFolder.c_str(), 0755);
+
+    DIR* dir = opendir(cacheFolder.c_str());
+    if (dir) {
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != nullptr) {
+            std::string name(entry->d_name);
+            if (name == "." || name == "..") continue;
+            std::string path = cacheFolder + "/" + name;
+            struct stat st;
+            if (stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode)) remove(path.c_str());
+        }
+        closedir(dir);
+    }
+
+    for (uint16_t i = 0; i < fileCount; i++) {
+        if (offset + 6 > data.size()) return false;
+        uint16_t nameLen = readU16(offset);
+        offset += 2;
+        uint32_t fileSize = readU32(offset);
+        offset += 4;
+        if (nameLen == 0 || offset + nameLen > data.size()) return false;
+
+        std::string fileName((const char*)data.data() + offset, nameLen);
+        offset += nameLen;
+        if (!isAllowedSyncedCharacterFile(fileName) || offset + fileSize > data.size()) return false;
+
+        std::string outPath = cacheFolder + "/" + fileName;
+        FILE* out = fopen(outPath.c_str(), "wb");
+        if (!out) return false;
+        if (fileSize > 0) fwrite(data.data() + offset, 1, fileSize, out);
+        fclose(out);
+        offset += fileSize;
+    }
+
+    CharacterDef loaded;
+    if (!loaded.loadFromFolder(cacheFolder, renderer_)) return false;
+    loaded.name = characterName;
+
+    auto& synced = syncedCharacters_[playerId];
+    if (synced.visualLoaded) synced.visual.unload();
+    synced.visual = std::move(loaded);
+    synced.visualLoaded = true;
+    synced.cacheFolder = cacheFolder;
+    return true;
+}
+
+void Game::syncLocalCharacterSelection(bool force) {
+    auto& net = NetworkManager::instance();
+    if (!net.isOnline() || net.state() == NetState::Connecting) return;
+
+    bool isDefault = true;
+    std::string characterName = "Default";
+    std::vector<uint8_t> bundle;
+
+    if (selectedChar_ >= 0 && selectedChar_ < (int)availableChars_.size()) {
+        const CharacterDef& cd = availableChars_[selectedChar_];
+        isDefault = false;
+        characterName = cd.name;
+        bundle = buildCharacterSyncBundle(cd);
+        if (bundle.empty()) {
+            printf("[NET] Character sync bundle empty for %s, using default instead\n", cd.name.c_str());
+            isDefault = true;
+            characterName = "Default";
+        }
+    }
+
+    std::string key = std::string(isDefault ? "D:" : "C:") + characterName + ":" + std::to_string(bundle.size());
+    if (!force && key == lastCharacterSyncKey_) return;
+
+    net.sendLocalCharacterSync(characterName, isDefault, bundle);
+    lastCharacterSyncKey_ = key;
 }
 
 void Game::renderMapSelectMenu() {
-    SDL_SetRenderDrawColor(renderer_, 6, 8, 16, 255);
-    SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
-    SDL_RenderFillRect(renderer_, &full);
+    ui_.drawDarkOverlay(235, 6, 8, 16);
 
     SDL_Color cyan   = {0, 255, 228, 255};
-    SDL_Color white  = {255, 255, 255, 255};
     SDL_Color gray   = {120, 120, 130, 255};
     SDL_Color yellow = {255, 220, 60, 255};
+    int panelW = 620;
+    int panelH = SCREEN_H - 120;
+    int panelX = (SCREEN_W - panelW) / 2;
+    int panelY = 70;
+    ui_.drawPanel(panelX, panelY, panelW, panelH, {10, 12, 24, 240}, {0, 180, 160, 90});
 
-    drawTextCentered("SELECT MAP", SCREEN_H / 8, 36, cyan);
-    SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 60);
-    SDL_Rect tl = {SCREEN_W / 2 - 100, SCREEN_H / 8 + 44, 200, 1};
-    SDL_RenderFillRect(renderer_, &tl);
+    drawTextCentered("SELECT MAP", panelY + 18, 36, cyan);
+    ui_.drawSeparator(SCREEN_W / 2, panelY + 62, 100);
 
     if (mapFiles_.empty()) {
         drawTextCentered("No .csm maps found in maps/ folder", SCREEN_H / 2 - 10, 20, gray);
         drawTextCentered("Use the Editor to create maps!", SCREEN_H / 2 + 20, 14, {80, 80, 90, 255});
     } else {
-        int baseY = SCREEN_H / 4 + 10;
+        int baseY = panelY + 96;
         int stepY = 38;
-        int maxVisible = (SCREEN_H - baseY - 120) / stepY;
+        int maxVisible = (panelH - 150) / stepY;
         if (maxVisible < 3) maxVisible = 3;
         int scrollOff = std::max(0, menuSelection_ - maxVisible + 1);
         for (int i = scrollOff; i < (int)mapFiles_.size() && (i - scrollOff) < maxVisible; i++) {
@@ -7846,10 +8199,11 @@ void Game::renderMapSelectMenu() {
         if ((int)mapFiles_.size() > maxVisible) {
             float ratio = (float)maxVisible / mapFiles_.size();
             float scrollRatio = mapFiles_.size() > 1 ? (float)scrollOff / (mapFiles_.size() - maxVisible) : 0;
-            int barH = std::max(20, (int)((SCREEN_H - baseY - 130) * ratio));
-            int barY = baseY + (int)((SCREEN_H - baseY - 130 - barH) * scrollRatio);
+            int trackH = panelH - 160;
+            int barH = std::max(20, (int)(trackH * ratio));
+            int barY = baseY + (int)((trackH - barH) * scrollRatio);
             SDL_SetRenderDrawColor(renderer_, 0, 120, 110, 60);
-            SDL_Rect sb = {SCREEN_W - 60, barY, 4, barH};
+            SDL_Rect sb = {panelX + panelW - 24, barY, 4, barH};
             SDL_RenderFillRect(renderer_, &sb);
         }
     }
@@ -7919,28 +8273,104 @@ void Game::renderMapConfigMenu() {
 }
 
 void Game::renderCharSelectMenu() {
-    SDL_SetRenderDrawColor(renderer_, 6, 8, 16, 255);
-    SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
-    SDL_RenderFillRect(renderer_, &full);
+    ui_.drawDarkOverlay(235, 6, 8, 16);
 
     SDL_Color cyan   = {0, 255, 228, 255};
     SDL_Color white  = {255, 255, 255, 255};
     SDL_Color gray   = {120, 120, 130, 255};
     SDL_Color yellow = {255, 220, 60, 255};
     SDL_Color dimCyan= {0, 140, 130, 255};
+    SDL_Rect listPanel = {90, 90, 440, SCREEN_H - 180};
+    SDL_Rect detailPanel = {570, 90, 620, SCREEN_H - 180};
+    ui_.drawPanel(listPanel.x, listPanel.y, listPanel.w, listPanel.h, {10, 12, 24, 240}, {0, 180, 160, 90});
+    ui_.drawPanel(detailPanel.x, detailPanel.y, detailPanel.w, detailPanel.h, {10, 12, 24, 240}, {0, 180, 160, 90});
 
-    drawTextCentered("SELECT CHARACTER", SCREEN_H / 8, 36, cyan);
-    SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 60);
-    SDL_Rect tl = {SCREEN_W / 2 - 120, SCREEN_H / 8 + 44, 240, 1};
-    SDL_RenderFillRect(renderer_, &tl);
+    drawTextCentered("SELECT CHARACTER", 28, 36, cyan);
+    ui_.drawSeparator(SCREEN_W / 2, 72, 120);
 
-    int baseY = SCREEN_H / 4 + 10;
+    auto drawWalkPreview = [&](const CharacterDef* cd, bool useDefault) {
+        const std::vector<SDL_Texture*>* bodyFrames = nullptr;
+        const std::vector<SDL_Texture*>* legFrames = nullptr;
+        const char* previewName = "Default";
+        int hp = config_.playerMaxHp;
+        float speed = 520.0f;
+        int ammo = 10;
+
+        if (!useDefault && cd) {
+            bodyFrames = &cd->bodySprites;
+            legFrames = &cd->legSprites;
+            previewName = cd->name.c_str();
+            hp = cd->hp;
+            speed = cd->speed;
+            ammo = cd->ammo;
+        } else {
+            bodyFrames = &defaultPlayerSprites_;
+            legFrames = &defaultLegSprites_;
+        }
+
+        drawText("WALK PREVIEW", detailPanel.x + 24, detailPanel.y + 20, 18, cyan);
+        drawText(previewName, detailPanel.x + 24, detailPanel.y + 48, 14, white);
+
+        SDL_Rect previewBox = {detailPanel.x + 32, detailPanel.y + 82, detailPanel.w - 64, 320};
+        ui_.drawPanel(previewBox.x, previewBox.y, previewBox.w, previewBox.h, {10, 14, 24, 255}, {0, 150, 140, 60});
+
+        SDL_Rect previewGrid = {previewBox.x + 18, previewBox.y + 18, previewBox.w - 36, previewBox.h - 36};
+        SDL_SetRenderDrawColor(renderer_, 16, 20, 32, 255);
+        SDL_RenderFillRect(renderer_, &previewGrid);
+        SDL_SetRenderDrawColor(renderer_, 28, 34, 48, 255);
+        for (int gx = 0; gx <= previewGrid.w; gx += 36)
+            SDL_RenderDrawLine(renderer_, previewGrid.x + gx, previewGrid.y, previewGrid.x + gx, previewGrid.y + previewGrid.h);
+        for (int gy = 0; gy <= previewGrid.h; gy += 36)
+            SDL_RenderDrawLine(renderer_, previewGrid.x, previewGrid.y + gy, previewGrid.x + previewGrid.w, previewGrid.y + gy);
+        SDL_SetRenderDrawColor(renderer_, 0, 100, 95, 110);
+        SDL_RenderDrawLine(renderer_, previewGrid.x + previewGrid.w / 2, previewGrid.y, previewGrid.x + previewGrid.w / 2, previewGrid.y + previewGrid.h);
+        SDL_RenderDrawLine(renderer_, previewGrid.x, previewGrid.y + previewGrid.h / 2, previewGrid.x + previewGrid.w, previewGrid.y + previewGrid.h / 2);
+
+        SDL_Texture* bodyTex = nullptr;
+        SDL_Texture* legTex = nullptr;
+        if (bodyFrames && !bodyFrames->empty()) {
+            int idx = ((int)(gameTime_ * 8.0f)) % std::max(1, (int)bodyFrames->size());
+            bodyTex = (*bodyFrames)[idx];
+        }
+        if (legFrames && !legFrames->empty()) {
+            int idx = ((int)(gameTime_ * 10.0f)) % std::max(1, (int)legFrames->size());
+            legTex = (*legFrames)[idx];
+        }
+
+        auto drawCenteredTex = [&](SDL_Texture* tex, float scaleMul, int yOffset) {
+            if (!tex) return;
+            int tw = 0, th = 0;
+            SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+            float scale = std::min((float)previewGrid.w / (float)std::max(1, tw),
+                                   (float)previewGrid.h / (float)std::max(1, th)) * scaleMul;
+            SDL_Rect dst;
+            dst.w = (int)(tw * scale);
+            dst.h = (int)(th * scale);
+            dst.x = previewGrid.x + (previewGrid.w - dst.w) / 2;
+            dst.y = previewGrid.y + (previewGrid.h - dst.h) / 2 + yOffset;
+            SDL_RenderCopy(renderer_, tex, nullptr, &dst);
+        };
+
+        drawCenteredTex(legTex, 0.88f, 12);
+        drawCenteredTex(bodyTex, 0.88f, -8);
+
+        char stats[128];
+        snprintf(stats, sizeof(stats), "HP:%d   SPD:%.0f   AMMO:%d", hp, speed, ammo);
+        drawTextCentered(stats, detailPanel.y + detailPanel.h - 96, 14, dimCyan);
+        drawTextCentered("Animated body + leg frames preview the walk cycle.", detailPanel.y + detailPanel.h - 68, 12, gray);
+    };
+
+    int baseY = listPanel.y + 54;
     int stepY = 42;
+
+    if (menuSelection_ == 0) {
+        drawWalkPreview(nullptr, true);
+    }
 
     // Default option
     {
         bool sel = (menuSelection_ == 0);
-        if (ui_.menuItem(0, "Default", SCREEN_W / 2, baseY, 360, 34,
+        if (ui_.menuItem(0, "Default", listPanel.x + listPanel.w / 2, baseY, 360, 34,
                          yellow, sel, 20, 22)) {
             menuSelection_ = 0;
             confirmInput_ = true;
@@ -7952,31 +8382,26 @@ void Game::renderCharSelectMenu() {
         int y = baseY + (i + 1) * stepY;
         bool sel = (menuSelection_ == i + 1);
         int animIdx = i + 1;
-        if (ui_.menuItem(animIdx, availableChars_[i].name.c_str(), SCREEN_W / 2, y, 360, 34,
+        if (ui_.menuItem(animIdx, availableChars_[i].name.c_str(), listPanel.x + listPanel.w / 2, y, 360, 34,
                          yellow, sel, 20, 22)) {
             menuSelection_ = i + 1;
             confirmInput_ = true;
         }
         if (ui_.hoveredItem == animIdx && !usingGamepad_) menuSelection_ = i + 1;
 
-        // Show character detail sprite if selected
         if (sel && availableChars_[i].detailSprite) {
-            SDL_Rect detDst = {SCREEN_W - 300, 120, 200, 400};
+            SDL_Rect detDst = {detailPanel.x + 120, detailPanel.y + 70, 320, 420};
             SDL_RenderCopy(renderer_, availableChars_[i].detailSprite, nullptr, &detDst);
         }
-        // Show stats
         if (sel) {
-            char stats[128];
-            snprintf(stats, sizeof(stats), "HP:%d  SPD:%.0f  AMMO:%d",
-                availableChars_[i].hp, availableChars_[i].speed, availableChars_[i].ammo);
-            drawTextCentered(stats, SCREEN_H - 100, 14, dimCyan);
+            drawWalkPreview(&availableChars_[i], false);
         }
     }
 
     int backIdx = (int)availableChars_.size() + 1;
     bool backSel = (menuSelection_ == backIdx);
     int backY = baseY + backIdx * stepY;
-    if (ui_.menuItem(63, "BACK", SCREEN_W / 2, backY, 200, 32,
+    if (ui_.menuItem(63, "BACK", listPanel.x + listPanel.w / 2, backY, 200, 32,
                      UI::Color::White, backSel, 20, 22)) {
         menuSelection_ = backIdx;
         confirmInput_ = true;
@@ -8037,206 +8462,224 @@ void Game::renderCustomWinScreen() {
 // ═════════════════════════════════════════════════════════════════════════════
 
 void Game::renderCharCreator() {
-    SDL_SetRenderDrawColor(renderer_, 6, 8, 16, 255);
+    SDL_SetRenderDrawColor(renderer_, 4, 6, 14, 255);
     SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
     SDL_RenderFillRect(renderer_, &full);
 
-    SDL_Color title  = {0, 255, 228, 255};
-    SDL_Color white  = {255, 255, 255, 255};
-    SDL_Color gray   = {120, 120, 130, 255};
-    SDL_Color cyan   = {0, 255, 228, 255};
-    SDL_Color yellow = {255, 220, 50, 255};
-    SDL_Color green  = {0, 255, 100, 255};
-    SDL_Color red    = {255, 80, 80, 255};
-
-    const char* heading = charCreator_.isEditing ? "EDIT CHARACTER" : "CHARACTER CREATOR";
-    drawTextCentered(heading, 30, 36, title);
-    SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 60);
-    SDL_Rect tl = {SCREEN_W / 2 - 120, 72, 240, 1};
-    SDL_RenderFillRect(renderer_, &tl);
-
     auto& cc = charCreator_;
-    int leftX = 60;
-    int y = 90;
-    int step = 32;
+    bool modalOpen = modSaveDialog_.isOpen();
+    SDL_Color title  = UI::Color::Cyan;
+    SDL_Color white  = UI::Color::White;
+    SDL_Color gray   = UI::Color::Gray;
+    SDL_Color cyan   = UI::Color::Cyan;
+    SDL_Color yellow = UI::Color::Yellow;
+    SDL_Color green  = UI::Color::Green;
+    SDL_Color red    = UI::Color::Red;
+    SDL_Color blue   = UI::Color::Blue;
     char buf[256];
 
-    // ── Left panel: Name + Stats ──
+    const char* heading = cc.isEditing ? "CHARACTER WORKBENCH" : "CHARACTER CREATOR";
+    drawTextCentered(heading, 24, 34, title);
+    drawTextCentered("Edit stats, preview exact frames, and click the sprite to place the shooting point.", 60, 14, {120, 160, 170, 255});
 
-    auto drawField = [&](int idx, const char* label, const char* value) {
-        SDL_Color c  = (cc.field == idx) ? white : gray;
-        SDL_Color vc = (cc.field == idx) ? cyan : gray;
-        drawText(label, leftX, y, 18, c);
-        if (cc.field == idx && idx >= 1 && idx <= 5) {
-            drawText("<", leftX + 210, y, 18, yellow);
-            drawText(value, leftX + 250, y, 18, vc);
-            drawText(">", leftX + 380, y, 18, yellow);
-        } else {
-            drawText(value, leftX + 250, y, 18, vc);
+    const SDL_Rect leftPanel = {36, 92, 420, 590};
+    const SDL_Rect rightPanel = {480, 92, 764, 590};
+    ui_.drawPanel(leftPanel.x, leftPanel.y, leftPanel.w, leftPanel.h, {8, 12, 24, 235}, {0, 180, 160, 70});
+    ui_.drawPanel(rightPanel.x, rightPanel.y, rightPanel.w, rightPanel.h, {8, 12, 24, 235}, {0, 180, 160, 70});
+
+    drawText("PROFILE", leftPanel.x + 22, leftPanel.y + 18, 20, title);
+    drawText("PREVIEW + MUZZLE", rightPanel.x + 22, rightPanel.y + 18, 20, title);
+
+    int contentX = leftPanel.x + 18;
+    int contentY = leftPanel.y + 56;
+    const int rowW = leftPanel.w - 36;
+    const int rowH = 36;
+    const int rowGap = 8;
+
+    auto drawField = [&](int idx, const char* label, const char* value, bool adjustable, const char* hint) {
+        SDL_Rect row = {contentX, contentY, rowW, rowH};
+        bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, row.x, row.y, row.w, row.h);
+        bool selected = (cc.field == idx);
+        SDL_SetRenderDrawColor(renderer_, selected ? 18 : 12, selected ? 34 : 18, selected ? 44 : 28, 255);
+        SDL_RenderFillRect(renderer_, &row);
+        SDL_SetRenderDrawColor(renderer_, selected ? 0 : 40, selected ? 210 : 80, selected ? 190 : 90, hovered ? 180 : 110);
+        SDL_RenderDrawRect(renderer_, &row);
+
+        drawText(label, row.x + 14, row.y + 7, 16, selected ? white : gray);
+        drawText(value, row.x + 178, row.y + 7, 18, selected ? cyan : white);
+        if (adjustable) {
+            drawText("<", row.x + row.w - 66, row.y + 7, 18, yellow);
+            drawText(">", row.x + row.w - 28, row.y + 7, 18, yellow);
         }
-        bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, leftX, y - 2, 450, step - 4);
-        if (hovered && !usingGamepad_) cc.field = idx;
+        if (hint && *hint) drawText(hint, row.x + 14, row.y + 25, 11, {90, 110, 120, 255});
+
+        if (!modalOpen && hovered && !usingGamepad_) cc.field = idx;
         if (hovered) ui_.hoveredItem = idx;
-        if (hovered && ui_.mouseClicked) { cc.field = idx; confirmInput_ = true; }
-        y += step;
+        if (!modalOpen && hovered && ui_.mouseClicked) {
+            cc.field = idx;
+            if (idx == 0) confirmInput_ = true;
+        }
+        contentY += rowH + rowGap;
     };
 
-    // Field 0: Name
     if (cc.textEditing) {
-        drawText("NAME:", leftX, y, 18, yellow);
-        static float ccBlink = 0; ccBlink += 0.016f;
-        std::string display = cc.textBuf + ((int)(ccBlink * 1.5f) % 2 == 0 ? '_' : ' ');
-        drawText(display.c_str(), leftX + 250, y, 18, yellow);
-        renderSoftKB(y + 30);
+        SDL_Rect row = {contentX, contentY, rowW, rowH};
+        SDL_SetRenderDrawColor(renderer_, 20, 26, 32, 255);
+        SDL_RenderFillRect(renderer_, &row);
+        SDL_SetRenderDrawColor(renderer_, 255, 220, 60, 200);
+        SDL_RenderDrawRect(renderer_, &row);
+        drawText("NAME", row.x + 14, row.y + 7, 16, yellow);
+        static float ccBlink = 0.0f;
+        ccBlink += 0.016f;
+        std::string display = cc.textBuf + (((int)(ccBlink * 1.5f) % 2) == 0 ? "_" : " ");
+        drawText(display.c_str(), row.x + 178, row.y + 7, 18, yellow);
+        drawText("Type and press Enter", row.x + 14, row.y + 25, 11, {120, 120, 90, 255});
+        contentY += rowH + rowGap;
+        renderSoftKB(contentY + 2);
+        contentY += 150;
     } else {
-        SDL_Color nc = (cc.field == 0) ? white : gray;
-        drawText("NAME:", leftX, y, 18, nc);
-        drawText(cc.name.c_str(), leftX + 250, y, 18, (cc.field == 0) ? cyan : gray);
-        if (cc.field == 0) drawText("[ENTER]", leftX + 420, y, 12, gray);
+        drawField(0, "NAME", cc.name.c_str(), false, "Press Enter to rename");
     }
-    y += step;
-    y += step / 2;
 
-    // Fields 1-5: Character stats
     snprintf(buf, sizeof(buf), "%.0f", cc.speed);
-    drawField(1, "SPEED:", buf);
-
+    drawField(1, "SPEED", buf, true, "Move speed");
     snprintf(buf, sizeof(buf), "%d", cc.hp);
-    drawField(2, "HP:", buf);
-
+    drawField(2, "HP", buf, true, "Starting health");
     snprintf(buf, sizeof(buf), "%d", cc.ammo);
-    drawField(3, "AMMO:", buf);
-
+    drawField(3, "AMMO", buf, true, "Magazine size");
     snprintf(buf, sizeof(buf), "%.1f", cc.fireRate);
-    drawField(4, "FIRE RATE:", buf);
-
+    drawField(4, "FIRE RATE", buf, true, "Shots per second");
     snprintf(buf, sizeof(buf), "%.1f", cc.reloadTime);
-    drawField(5, "RELOAD:", buf);
+    drawField(5, "RELOAD", buf, true, "Seconds to reload");
 
-    y += 8;
-
-    // — Sprite info (auto-detected, read-only) —
-    drawText("SPRITES:", leftX, y, 14, title);
-    y += 20;
+    SDL_Rect spriteInfo = {contentX, contentY + 4, rowW, 88};
+    ui_.drawPanel(spriteInfo.x, spriteInfo.y, spriteInfo.w, spriteInfo.h, {10, 16, 28, 220}, {0, 150, 140, 60});
+    drawText("SPRITE SET", spriteInfo.x + 12, spriteInfo.y + 10, 16, title);
     if (cc.loaded) {
-        SDL_Color bodyC = cc.charDef.bodySprites.empty() ? red : green;
-        snprintf(buf, sizeof(buf), "Body: %d frames", (int)cc.charDef.bodySprites.size());
-        drawText(buf, leftX + 10, y, 12, bodyC); y += 16;
-        
-        SDL_Color legC = cc.charDef.legSprites.empty() ? yellow : green;
-        snprintf(buf, sizeof(buf), "Legs: %d frames", (int)cc.charDef.legSprites.size());
-        drawText(buf, leftX + 10, y, 12, legC); y += 16;
-        
-        SDL_Color deathC = cc.charDef.deathSprites.empty() ? yellow : green;
-        snprintf(buf, sizeof(buf), "Death: %d frames", (int)cc.charDef.deathSprites.size());
-        drawText(buf, leftX + 10, y, 12, deathC); y += 16;
-        
-        SDL_Color detC = cc.charDef.hasDetail ? green : gray;
-        drawText(cc.charDef.hasDetail ? "Detail: yes" : "Detail: no", leftX + 10, y, 12, detC);
-        y += 20;
+        snprintf(buf, sizeof(buf), "Body: %d   Legs: %d   Death: %d", (int)cc.charDef.bodySprites.size(), (int)cc.charDef.legSprites.size(), (int)cc.charDef.deathSprites.size());
+        drawText(buf, spriteInfo.x + 14, spriteInfo.y + 38, 13, cc.charDef.bodySprites.empty() ? red : green);
+        drawText(cc.charDef.hasDetail ? "Detail sprite loaded" : "No detail sprite", spriteInfo.x + 14, spriteInfo.y + 58, 13, cc.charDef.hasDetail ? green : gray);
     } else {
-        drawText("No sprites loaded yet", leftX + 10, y, 12, gray);
-        y += 20;
-        drawText("Put PNGs in characters/<name>/", leftX + 10, y, 12, {80, 80, 90, 255});
-        y += 16;
-        drawText("  body-0001.png, legs-0001.png, ...", leftX + 10, y, 12, {80, 80, 90, 255});
-        y += 24;
+        drawText("No character folder loaded yet.", spriteInfo.x + 14, spriteInfo.y + 40, 13, gray);
+        drawText("Sprites are taken from characters/<name>/", spriteInfo.x + 14, spriteInfo.y + 58, 11, {90, 110, 120, 255});
     }
 
-    // ── Action buttons ──
-
-    // Reload button
-    const char* reloadLabel = cc.loaded ? "RELOAD SPRITES [R]" : "LOAD SPRITES";
-    SDL_Color reloadColor = cc.loaded ? UI::Color::Blue : UI::Color::Yellow;
-    if (ui_.menuItem(6, reloadLabel, leftX + 225, y, 200, 28,
-                     reloadColor, cc.field == 6, 16, 20)) {
-        cc.field = 6; confirmInput_ = true;
-    }
-    if (ui_.hoveredItem == 6 && !usingGamepad_) cc.field = 6;
-    y += 35;
-
-    // Test Play button
-    if (ui_.menuItem(7, "TEST PLAY", leftX + 225, y, 200, 28,
-                     UI::Color::Green, cc.field == 7, 18, 20)) {
-        cc.field = 7; confirmInput_ = true;
-    }
-    if (ui_.hoveredItem == 7 && !usingGamepad_) cc.field = 7;
-    if (cc.field == 7) {
-        drawText("Sandbox with this character", leftX + 30, y + 24, 11, {80, 80, 90, 255});
-    }
-    y += 35;
-
-    // Save button
-    if (ui_.menuItem(8, "SAVE", leftX + 225, y, 200, 28,
-                     UI::Color::Green, cc.field == 8, 18, 20)) {
-        cc.field = 8; confirmInput_ = true;
-    }
-    if (ui_.hoveredItem == 8 && !usingGamepad_) cc.field = 8;
-    y += 35;
-
-    // Back button
-    if (ui_.menuItem(9, "BACK", leftX + 225, y, 200, 28,
-                     UI::Color::White, cc.field == 9, 18, 20)) {
-        cc.field = 9; confirmInput_ = true;
-    }
-    if (ui_.hoveredItem == 9 && !usingGamepad_) cc.field = 9;
-
-    // ── Right panel: Sprite Preview ──
-    int previewX = 600;
-    int previewY = 90;
-    
-    drawText("SPRITE PREVIEW", previewX + 90, previewY, 20, title);
-    SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 40);
-    SDL_Rect previewLine = {previewX + 80, previewY + 26, 120, 1};
-    SDL_RenderFillRect(renderer_, &previewLine);
-    previewY += 45;
-
-    // Section tabs
-    const char* sections[] = {"IDLE", "BODY", "LEGS", "DEATH", "DETAIL"};
-    int tabY = previewY;
-    for (int i = 0; i < 5; i++) {
-        bool selected = (cc.previewSection == i);
-        SDL_Color tabColor = selected ? cyan : gray;
-        if (selected) {
-            SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 40);
-            SDL_Rect tabBg = {previewX - 5, tabY - 2, 120, 22};
-            SDL_RenderFillRect(renderer_, &tabBg);
+    SDL_Rect existingPanel = {contentX, spriteInfo.y + spriteInfo.h + 12, rowW, 72};
+    ui_.drawPanel(existingPanel.x, existingPanel.y, existingPanel.w, existingPanel.h, {10, 16, 28, 220}, {0, 150, 140, 60});
+    drawText("EXISTING CHARACTERS", existingPanel.x + 12, existingPanel.y + 8, 14, title);
+    if (availableChars_.empty()) {
+        drawText("No saved characters found.", existingPanel.x + 12, existingPanel.y + 36, 12, gray);
+    } else {
+        int chipX = existingPanel.x + 12;
+        int chipY = existingPanel.y + 34;
+        int shown = std::min((int)availableChars_.size(), 4);
+        for (int i = 0; i < shown; i++) {
+            SDL_Rect chip = {chipX, chipY, 88, 22};
+            bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, chip.x, chip.y, chip.w, chip.h);
+            if (hovered) {
+                SDL_SetRenderDrawColor(renderer_, 0, 160, 150, 40);
+                SDL_RenderFillRect(renderer_, &chip);
+            }
+            drawText(availableChars_[i].name.c_str(), chip.x + 5, chip.y + 4, 11, hovered ? white : gray);
+            if (!modalOpen && hovered && ui_.mouseClicked) loadCharacterIntoCreator(availableChars_[i].folder);
+            chipX += 98;
         }
-        drawText(sections[i], previewX + 5, tabY, 14, tabColor);
-        bool tabHovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, previewX - 5, tabY - 2, 120, 22);
-        if (tabHovered && ui_.mouseClicked) cc.previewSection = i;
-        tabY += 26;
     }
 
-    // Preview area
-    int pvX = previewX + 130;
-    int pvY = previewY + 20;
-    int pvSize = 256;
+    int buttonY = existingPanel.y + existingPanel.h + 12;
+    int buttonCX1 = leftPanel.x + 80;
+    int buttonCX2 = leftPanel.x + 210;
+    int buttonCX3 = leftPanel.x + 340;
+    const char* reloadLabel = cc.loaded ? "RELOAD" : "LOAD SPRITES";
+    bool reloadPressed = ui_.menuItem(6, reloadLabel, buttonCX1, buttonY, 116, 30, cc.loaded ? blue : yellow, cc.field == 6, 15, 18);
+    bool testPressed   = ui_.menuItem(7, "TEST PLAY", buttonCX2, buttonY, 116, 30, green, cc.field == 7, 15, 18);
+    bool modSavePressed= ui_.menuItem(8, "SAVE TO MOD", buttonCX3, buttonY, 132, 30, green, cc.field == 8, 13, 15);
+    if (ui_.hoveredItem == 6 && !usingGamepad_) cc.field = 6;
+    if (ui_.hoveredItem == 7 && !usingGamepad_) cc.field = 7;
+    if (ui_.hoveredItem == 8 && !usingGamepad_) cc.field = 8;
+    buttonY += 38;
+    bool localSavePressed = ui_.menuItem(9, "SAVE LOCAL", leftPanel.x + 118, buttonY, 150, 30, yellow, cc.field == 9, 15, 18);
+    bool backPressed      = ui_.menuItem(10, "BACK", leftPanel.x + 304, buttonY, 150, 30, white, cc.field == 10, 15, 18);
+    if (ui_.hoveredItem == 9 && !usingGamepad_) cc.field = 9;
+    if (ui_.hoveredItem == 10 && !usingGamepad_) cc.field = 10;
 
-    SDL_SetRenderDrawColor(renderer_, 20, 24, 32, 255);
-    SDL_Rect pvPanel = {pvX, pvY, pvSize, pvSize};
-    SDL_RenderFillRect(renderer_, &pvPanel);
-    SDL_SetRenderDrawColor(renderer_, 60, 80, 100, 255);
-    SDL_RenderDrawRect(renderer_, &pvPanel);
+    if (!modalOpen && ui_.mouseClicked) {
+        if (reloadPressed) {
+            cc.field = 6;
+            if (cc.loaded) {
+                cc.charDef.reloadSprites(renderer_);
+                cc.warnings = cc.charDef.validate();
+                cc.statusMsg = "Sprites reloaded!";
+                cc.statusTimer = 2.0f;
+            } else if (!cc.folderPath.empty()) {
+                loadCharacterIntoCreator(cc.folderPath);
+            } else {
+                loadCharacterIntoCreator("characters/" + cc.name);
+            }
+        } else if (testPressed) {
+            cc.field = 7;
+            testCharacter();
+        } else if (modSavePressed) {
+            cc.field = 8;
+            if (!modSaveDialog_.isOpen()) {
+                openModSaveDialog(ModSaveDialogState::AssetCharacter);
+            }
+        } else if (localSavePressed) {
+            cc.field = 9;
+            std::string folder = cc.folderPath.empty() ? "characters/" + cc.name : cc.folderPath;
+            saveCharacterToFolder(folder);
+            cc.statusMsg = "Saved to " + folder + "/";
+            cc.statusTimer = 3.0f;
+        } else if (backPressed) {
+            cc.field = 10;
+            cc.clearPreviews(renderer_);
+            state_ = GameState::MainMenu;
+            menuSelection_ = 0;
+        }
+    }
 
-    // Grid
-    SDL_SetRenderDrawColor(renderer_, 30, 34, 42, 255);
-    for (int gx = 0; gx < pvSize; gx += 32)
-        SDL_RenderDrawLine(renderer_, pvX + gx, pvY, pvX + gx, pvY + pvSize);
-    for (int gy = 0; gy < pvSize; gy += 32)
-        SDL_RenderDrawLine(renderer_, pvX, pvY + gy, pvX + pvSize, pvY + gy);
+    const char* sections[] = {"IDLE", "BODY", "LEGS", "DEATH", "DETAIL"};
+    int tabX = rightPanel.x + 22;
+    int tabY = rightPanel.y + 54;
+    for (int i = 0; i < 5; i++) {
+        SDL_Rect tab = {tabX + i * 92, tabY, 82, 28};
+        bool selected = (cc.previewSection == i);
+        bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, tab.x, tab.y, tab.w, tab.h);
+        SDL_SetRenderDrawColor(renderer_, selected ? 0 : 12, selected ? 120 : 35, selected ? 110 : 45, selected ? 120 : 80);
+        SDL_RenderFillRect(renderer_, &tab);
+        SDL_SetRenderDrawColor(renderer_, selected ? 0 : 60, selected ? 220 : 90, selected ? 190 : 110, hovered ? 180 : 120);
+        SDL_RenderDrawRect(renderer_, &tab);
+        drawText(sections[i], tab.x + 12, tab.y + 6, 14, selected ? cyan : gray);
+        if (!modalOpen && hovered && ui_.mouseClicked) {
+            cc.previewSection = i;
+            cc.previewFrame = 0;
+            cc.playAnimation = false;
+        }
+    }
 
-    // Render current preview sprite
+    SDL_Rect previewArea = {rightPanel.x + 24, rightPanel.y + 98, 420, 420};
+    ui_.drawPanel(previewArea.x, previewArea.y, previewArea.w, previewArea.h, {10, 14, 24, 255}, {70, 90, 110, 120});
+    SDL_Rect previewGrid = {previewArea.x + 20, previewArea.y + 20, 380, 380};
+    SDL_SetRenderDrawColor(renderer_, 18, 22, 34, 255);
+    SDL_RenderFillRect(renderer_, &previewGrid);
+    SDL_SetRenderDrawColor(renderer_, 32, 38, 50, 255);
+    for (int gx = 0; gx <= previewGrid.w; gx += 38)
+        SDL_RenderDrawLine(renderer_, previewGrid.x + gx, previewGrid.y, previewGrid.x + gx, previewGrid.y + previewGrid.h);
+    for (int gy = 0; gy <= previewGrid.h; gy += 38)
+        SDL_RenderDrawLine(renderer_, previewGrid.x, previewGrid.y + gy, previewGrid.x + previewGrid.w, previewGrid.y + gy);
+    SDL_SetRenderDrawColor(renderer_, 0, 100, 95, 100);
+    SDL_RenderDrawLine(renderer_, previewGrid.x + previewGrid.w / 2, previewGrid.y, previewGrid.x + previewGrid.w / 2, previewGrid.y + previewGrid.h);
+    SDL_RenderDrawLine(renderer_, previewGrid.x, previewGrid.y + previewGrid.h / 2, previewGrid.x + previewGrid.w, previewGrid.y + previewGrid.h / 2);
+
     SDL_Texture* previewTex = nullptr;
-    int frameCount = 0;
-
+    int frameCount = 1;
     auto& ccd = cc.charDef;
     switch (cc.previewSection) {
-        case 0: // IDLE
+        case 0:
             if (cc.loaded && !ccd.bodySprites.empty()) previewTex = ccd.bodySprites[0];
             else if (!playerSprites_.empty()) previewTex = playerSprites_[0];
             break;
-        case 1: // BODY anim
+        case 1:
             if (cc.loaded && !ccd.bodySprites.empty()) {
                 frameCount = (int)ccd.bodySprites.size();
                 previewTex = ccd.bodySprites[cc.previewFrame % frameCount];
@@ -8245,7 +8688,7 @@ void Game::renderCharCreator() {
                 previewTex = playerSprites_[cc.previewFrame % frameCount];
             }
             break;
-        case 2: // LEGS anim
+        case 2:
             if (cc.loaded && !ccd.legSprites.empty()) {
                 frameCount = (int)ccd.legSprites.size();
                 previewTex = ccd.legSprites[cc.previewFrame % frameCount];
@@ -8254,7 +8697,7 @@ void Game::renderCharCreator() {
                 previewTex = legSprites_[cc.previewFrame % frameCount];
             }
             break;
-        case 3: // DEATH anim
+        case 3:
             if (cc.loaded && !ccd.deathSprites.empty()) {
                 frameCount = (int)ccd.deathSprites.size();
                 previewTex = ccd.deathSprites[cc.previewFrame % frameCount];
@@ -8263,93 +8706,108 @@ void Game::renderCharCreator() {
                 previewTex = playerDeathSprites_[cc.previewFrame % frameCount];
             }
             break;
-        case 4: // DETAIL
+        case 4:
             if (cc.loaded && ccd.detailSprite) previewTex = ccd.detailSprite;
             break;
     }
 
+    SDL_Rect spriteDst = {0, 0, 0, 0};
+    float spriteScale = 1.0f;
+    int texW = 0, texH = 0;
     if (previewTex) {
-        int w, h;
-        SDL_QueryTexture(previewTex, nullptr, nullptr, &w, &h);
-        float scale = std::min((float)pvSize / w, (float)pvSize / h) * 0.8f;
-        int sw = (int)(w * scale);
-        int sh = (int)(h * scale);
-        SDL_Rect dst = {pvX + (pvSize - sw) / 2, pvY + (pvSize - sh) / 2, sw, sh};
-        SDL_RenderCopy(renderer_, previewTex, nullptr, &dst);
+        SDL_QueryTexture(previewTex, nullptr, nullptr, &texW, &texH);
+        spriteScale = std::min((float)previewGrid.w / texW, (float)previewGrid.h / texH) * 0.78f;
+        spriteDst.w = (int)(texW * spriteScale);
+        spriteDst.h = (int)(texH * spriteScale);
+        spriteDst.x = previewGrid.x + (previewGrid.w - spriteDst.w) / 2;
+        spriteDst.y = previewGrid.y + (previewGrid.h - spriteDst.h) / 2;
+        SDL_RenderCopy(renderer_, previewTex, nullptr, &spriteDst);
+
+        if (!modalOpen && ui_.mouseClicked && ui_.pointInRect(ui_.mouseX, ui_.mouseY, spriteDst.x, spriteDst.y, spriteDst.w, spriteDst.h)) {
+            cc.shootOffsetX = roundf(((float)(ui_.mouseX - spriteDst.x) / spriteScale) - texW * 0.5f);
+            cc.shootOffsetY = roundf(((float)(ui_.mouseY - spriteDst.y) / spriteScale) - texH * 0.5f);
+            cc.statusMsg = "Shoot point updated";
+            cc.statusTimer = 1.5f;
+        }
+
+        int shootX = spriteDst.x + (int)((cc.shootOffsetX + texW * 0.5f) * spriteScale);
+        int shootY = spriteDst.y + (int)((cc.shootOffsetY + texH * 0.5f) * spriteScale);
+        SDL_SetRenderDrawColor(renderer_, 255, 220, 60, 230);
+        SDL_RenderDrawLine(renderer_, shootX - 10, shootY, shootX + 10, shootY);
+        SDL_RenderDrawLine(renderer_, shootX, shootY - 10, shootX, shootY + 10);
+        SDL_Rect dot = {shootX - 2, shootY - 2, 5, 5};
+        SDL_RenderFillRect(renderer_, &dot);
+        SDL_SetRenderDrawColor(renderer_, 0, 255, 228, 120);
+        SDL_RenderDrawLine(renderer_, previewGrid.x + previewGrid.w / 2, previewGrid.y + previewGrid.h / 2, shootX, shootY);
     } else {
-        drawText("NO SPRITE", pvX + pvSize / 2 - 50, pvY + pvSize / 2 - 10, 16, gray);
-        drawText("Drop PNGs in folder", pvX + pvSize / 2 - 70, pvY + pvSize / 2 + 10, 12, {80, 80, 90, 255});
+        drawText("NO SPRITE PREVIEW", previewGrid.x + 105, previewGrid.y + 162, 18, gray);
+        drawText("Load a character folder to preview exact art.", previewGrid.x + 58, previewGrid.y + 190, 12, {90, 110, 120, 255});
     }
 
-    // Animation controls
-    int ctrlY = pvY + pvSize + 15;
-    if (frameCount > 1) {
-        const char* playLabel = cc.playAnimation ? "[PAUSE]" : "[PLAY]";
-        drawText(playLabel, pvX + pvSize / 2 - 28, ctrlY, 14, yellow);
-        bool playHovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, pvX + pvSize/2 - 40, ctrlY - 2, 80, 18);
-        if (playHovered && ui_.mouseClicked) cc.playAnimation = !cc.playAnimation;
-        
-        snprintf(buf, sizeof(buf), "Frame %d / %d", cc.previewFrame + 1, frameCount);
-        drawText(buf, pvX + pvSize / 2 - 40, ctrlY + 22, 12, gray);
-    }
+    SDL_Rect sideCard = {rightPanel.x + 468, rightPanel.y + 98, 272, 420};
+    ui_.drawPanel(sideCard.x, sideCard.y, sideCard.w, sideCard.h, {10, 16, 28, 220}, {0, 150, 140, 60});
+    drawText("FRAME CONTROL", sideCard.x + 14, sideCard.y + 14, 16, title);
+    snprintf(buf, sizeof(buf), "Frame %d / %d", frameCount > 0 ? cc.previewFrame + 1 : 1, std::max(1, frameCount));
+    drawText(buf, sideCard.x + 14, sideCard.y + 42, 18, white);
+    drawText("Left/Right steps frames when a button row is focused.", sideCard.x + 14, sideCard.y + 66, 11, {90, 110, 120, 255});
 
-    // Folder path info
-    int infoY = ctrlY + 50;
-    drawText("FOLDER:", pvX, infoY, 14, title);
-    infoY += 20;
-    if (!cc.folderPath.empty()) {
-        drawText(cc.folderPath.c_str(), pvX, infoY, 11, green);
+    SDL_Rect prevBtn = {sideCard.x + 14, sideCard.y + 96, 52, 30};
+    SDL_Rect toggleBtn = {sideCard.x + 76, sideCard.y + 96, 118, 30};
+    SDL_Rect nextBtn = {sideCard.x + 204, sideCard.y + 96, 52, 30};
+    auto drawMiniButton = [&](const SDL_Rect& r, const char* label, SDL_Color c) -> bool {
+        bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, r.x, r.y, r.w, r.h);
+        SDL_SetRenderDrawColor(renderer_, 18, 24, 34, 255);
+        SDL_RenderFillRect(renderer_, &r);
+        SDL_SetRenderDrawColor(renderer_, c.r, c.g, c.b, hovered ? 220 : 150);
+        SDL_RenderDrawRect(renderer_, &r);
+        drawText(label, r.x + 12, r.y + 6, 16, c);
+        return hovered;
+    };
+    bool prevHovered = drawMiniButton(prevBtn, "<", yellow);
+    bool toggleHovered = drawMiniButton(toggleBtn, cc.playAnimation ? "ANIM ON" : "ANIM OFF", cc.playAnimation ? green : gray);
+    bool nextHovered = drawMiniButton(nextBtn, ">", yellow);
+    if (!modalOpen && ui_.mouseClicked && frameCount > 1) {
+        if (prevHovered) { cc.playAnimation = false; cc.previewFrame = (cc.previewFrame + frameCount - 1) % frameCount; }
+        if (nextHovered) { cc.playAnimation = false; cc.previewFrame = (cc.previewFrame + 1) % frameCount; }
+    }
+    if (!modalOpen && ui_.mouseClicked && toggleHovered) cc.playAnimation = !cc.playAnimation;
+
+    drawText("SHOOT POINT", sideCard.x + 14, sideCard.y + 150, 16, title);
+    snprintf(buf, sizeof(buf), "X: %.0f px", cc.shootOffsetX);
+    drawText(buf, sideCard.x + 14, sideCard.y + 180, 16, white);
+    snprintf(buf, sizeof(buf), "Y: %.0f px", cc.shootOffsetY);
+    drawText(buf, sideCard.x + 14, sideCard.y + 204, 16, white);
+    drawText("Click directly on the sprite to place the bullet spawn point.", sideCard.x + 14, sideCard.y + 232, 12, {90, 110, 120, 255});
+    drawText("Negative Y is forward/up. Positive X is to the right.", sideCard.x + 14, sideCard.y + 252, 11, {90, 110, 120, 255});
+    drawText("The yellow cross is exactly what gets saved to character.cfg.", sideCard.x + 14, sideCard.y + 280, 11, {90, 110, 120, 255});
+
+    std::string folderLabel = cc.folderPath.empty() ? ("mods/<choose>/characters/" + cc.name + "/") : cc.folderPath;
+    drawText("OUTPUT FOLDER", sideCard.x + 14, sideCard.y + 322, 14, title);
+    drawText(folderLabel.c_str(), sideCard.x + 14, sideCard.y + 344, 11, green);
+    drawText(cc.loaded ? "Editing an existing character folder" : "SAVE TO MOD exports into a mod's characters/ folder", sideCard.x + 14, sideCard.y + 366, 11, gray);
+
+    SDL_Rect warnPanel = {rightPanel.x + 24, rightPanel.y + 528, rightPanel.w - 48, 124};
+    ui_.drawPanel(warnPanel.x, warnPanel.y, warnPanel.w, warnPanel.h, {10, 16, 28, 220}, {0, 150, 140, 60});
+    drawText(cc.warnings.empty() ? "READY" : "WARNINGS", warnPanel.x + 12, warnPanel.y + 10, 14, cc.warnings.empty() ? green : yellow);
+    if (cc.warnings.empty()) {
+        drawText("Looks good. Save writes stats and the shooting point into character.cfg.", warnPanel.x + 12, warnPanel.y + 34, 12, gray);
+        drawText("Tips: Tab changes preview set, R reloads sprites, P toggles animation.", warnPanel.x + 12, warnPanel.y + 54, 12, {90, 110, 120, 255});
     } else {
-        snprintf(buf, sizeof(buf), "characters/%s/", cc.name.c_str());
-        drawText(buf, pvX, infoY, 11, gray);
-    }
-
-    // Warnings
-    if (!cc.warnings.empty()) {
-        infoY += 25;
-        drawText("WARNINGS:", pvX, infoY, 12, yellow);
-        infoY += 16;
-        for (const auto& w : cc.warnings) {
-            drawText(w.c_str(), pvX, infoY, 10, yellow);
-            infoY += 14;
+        int wy = warnPanel.y + 32;
+        for (size_t i = 0; i < cc.warnings.size() && i < 3; i++) {
+            drawText(cc.warnings[i].c_str(), warnPanel.x + 12, wy, 12, yellow);
+            wy += 18;
         }
     }
 
-    // Status message
-    if (cc.statusTimer > 0) {
-        SDL_Color statusC = green;
-        drawTextCentered(cc.statusMsg.c_str(), SCREEN_H - 65, 16, statusC);
-    }
+    if (cc.statusTimer > 0) drawTextCentered(cc.statusMsg.c_str(), SCREEN_H - 44, 16, green);
 
-    // Existing characters list (bottom-left for quick edit)
-    if (!availableChars_.empty() && !cc.isEditing) {
-        int listY = SCREEN_H - 140;
-        drawText("EXISTING:", leftX, listY, 12, title);
-        listY += 16;
-        int shown = std::min((int)availableChars_.size(), 4);
-        for (int i = 0; i < shown; i++) {
-            drawText(availableChars_[i].name.c_str(), leftX + 10, listY, 11, gray);
-            bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, leftX, listY - 2, 200, 14);
-            if (hovered && ui_.mouseClicked) {
-                // Edit this character
-                loadCharacterIntoCreator(availableChars_[i].folder);
-            }
-            listY += 14;
-        }
-        if ((int)availableChars_.size() > 4) {
-            snprintf(buf, sizeof(buf), "... and %d more", (int)availableChars_.size() - 4);
-            drawText(buf, leftX + 10, listY, 10, gray);
-        }
-    }
-
-    // Hint bar
-    { UI::HintPair hints[] = { 
-        {UI::Action::Navigate, "Navigate/Adjust"}, 
-        {UI::Action::Confirm, "Confirm"},
+    { UI::HintPair hints[] = {
+        {UI::Action::Navigate, "Move/Adjust"},
+        {UI::Action::Confirm, "Select"},
         {UI::Action::Back, "Back"}
     };
-    ui_.drawHintBar(hints, 3, SCREEN_H - 30); }
-    drawText("[TAB] Preview  [R] Reload  [P] Play/Pause", 10, SCREEN_H - 35, 12, {100, 100, 110, 255});
+            ui_.drawHintBar(hints, 3, SCREEN_H - 22); }
 }
 
 // ── Mod build folder helper ──────────────────────────────────────────────────
@@ -8415,6 +8873,8 @@ void Game::saveCharacterToFolder(const std::string& folderPath) {
     fprintf(f, "ammo=%d\n",          cc.ammo);
     fprintf(f, "fire_rate=%.1f\n",   cc.fireRate);
     fprintf(f, "reload_time=%.1f\n", cc.reloadTime);
+    fprintf(f, "shoot_x=%.0f\n",     cc.shootOffsetX);
+    fprintf(f, "shoot_y=%.0f\n",     cc.shootOffsetY);
     fclose(f);
 
     // If no sprites exist, copy default templates
@@ -8468,6 +8928,8 @@ void Game::loadCharacterIntoCreator(const std::string& folderPath) {
         cc.ammo = cc.charDef.ammo;
         cc.fireRate = cc.charDef.fireRate;
         cc.reloadTime = cc.charDef.reloadTime;
+        cc.shootOffsetX = cc.charDef.shootOffsetX;
+        cc.shootOffsetY = cc.charDef.shootOffsetY;
         cc.isEditing = true;
         cc.warnings = cc.charDef.validate();
         cc.previewFrame = 0;
@@ -8502,6 +8964,8 @@ void Game::testCharacter() {
     testDef.ammo = cc.ammo;
     testDef.fireRate = cc.fireRate;
     testDef.reloadTime = cc.reloadTime;
+    testDef.shootOffsetX = cc.shootOffsetX;
+    testDef.shootOffsetY = cc.shootOffsetY;
     if (cc.loaded) {
         testDef.bodySprites = cc.charDef.bodySprites;
         testDef.legSprites = cc.charDef.legSprites;
@@ -8570,19 +9034,28 @@ void Game::openModSaveDialog(ModSaveDialogState::Asset asset) {
         d.modIds.push_back(m.id);
         d.modNames.push_back(m.name.empty() ? m.id : m.name);
     }
-#ifndef __SWITCH__
-    if (d.phase == ModSaveDialogState::ChooseMod ||
-        d.phase == ModSaveDialogState::NameNewMod) {
-        SDL_StartTextInput();
-    }
-#endif
+    if (softKB_.active) softKB_.close(false);
 }
 
 void Game::handleModSaveDialogEvent(const SDL_Event& e) {
     auto& d = modSaveDialog_;
-    // ── Alphabet for new-mod-name input ──
     static const char modNamePal[] = "abcdefghijklmnopqrstuvwxyz0123456789_-";
-    const int palLen = (int)strlen(modNamePal);
+    auto beginNewModName = [&]() {
+        d.phase = ModSaveDialogState::NameNewMod;
+        d.textEditing = true;
+        d.gpCharIdx = 0;
+        softKB_.open(modNamePal, 8, &d.newModId, 24, [this](bool confirmed) {
+            auto& dialog = modSaveDialog_;
+            dialog.textEditing = false;
+            if (!dialog.isOpen()) return;
+            if (confirmed && !dialog.newModId.empty()) {
+                dialog.confirmedModFolder = modBuildFolder(dialog.newModId, dialog.newModId);
+                dialog.confirmed = true;
+            } else {
+                dialog.phase = ModSaveDialogState::ChooseMod;
+            }
+        });
+    };
     // Total entries in ChooseMod list = "New Mod" + existing mods
     int total = 1 + (int)d.modIds.size();
 
@@ -8592,8 +9065,9 @@ void Game::handleModSaveDialogEvent(const SDL_Event& e) {
                 case SDLK_UP:    d.selIdx = (d.selIdx - 1 + total) % total; break;
                 case SDLK_DOWN:  d.selIdx = (d.selIdx + 1) % total; break;
                 case SDLK_RETURN:
+                case SDLK_KP_ENTER:
                     if (d.selIdx == 0) {
-                        d.phase = ModSaveDialogState::NameNewMod;
+                        beginNewModName();
                     } else {
                         // Existing mod selected
                         d.confirmedModFolder = "mods/" + d.modIds[d.selIdx - 1];
@@ -8615,7 +9089,7 @@ void Game::handleModSaveDialogEvent(const SDL_Event& e) {
                     d.selIdx = (d.selIdx + 1) % total; break;
                 case SDL_CONTROLLER_BUTTON_A:
                     if (d.selIdx == 0) {
-                        d.phase = ModSaveDialogState::NameNewMod;
+                        beginNewModName();
                     } else {
                         d.confirmedModFolder = "mods/" + d.modIds[d.selIdx - 1];
                         if (false)
@@ -8630,80 +9104,23 @@ void Game::handleModSaveDialogEvent(const SDL_Event& e) {
         }
     }
     else if (d.phase == ModSaveDialogState::NameNewMod) {
-        if (d.textEditing) {
-            // Gamepad char picker held-repeat
-        }
-        if (e.type == SDL_TEXTINPUT) {
-            for (const char* p = e.text.text; *p; p++) {
-                char c = *p;
-                // Only allow alphanumeric, dash, underscore — lowercase it
-                if (c >= 'A' && c <= 'Z') c += 32;
-                bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
-                if (ok && d.newModId.size() < 24) d.newModId += c;
-            }
-        }
         if (e.type == SDL_KEYDOWN) {
             switch (e.key.keysym.sym) {
                 case SDLK_BACKSPACE:
                     if (!d.newModId.empty()) d.newModId.pop_back(); break;
-                case SDLK_RETURN: {
-                    if (d.newModId.empty()) break;
-                    d.confirmedModFolder = modBuildFolder(d.newModId, d.newModId);
-                    if (false)
-                        d.phase = ModSaveDialogState::ChooseCategory;
-                    else
-                        d.confirmed = true;
-                    break;
-                }
                 case SDLK_ESCAPE:
-                    d.phase = ModSaveDialogState::ChooseMod; break;
-                case SDLK_v:
-                    if (e.key.keysym.mod & KMOD_CTRL) {
-                        if (SDL_HasClipboardText()) {
-                            char* clip = SDL_GetClipboardText();
-                            if (clip) {
-                                for (const char* p = clip; *p; p++) {
-                                    char c = *p;
-                                    if (c >= 'A' && c <= 'Z') c += 32;
-                                    bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
-                                    if (ok && d.newModId.size() < 24) d.newModId += c;
-                                }
-                                SDL_free(clip);
-                            }
-                        }
-                    }
+                    if (softKB_.active) softKB_.close(false);
+                    else d.phase = ModSaveDialogState::ChooseMod;
                     break;
             }
         }
         if (e.type == SDL_CONTROLLERBUTTONDOWN) {
             Uint8 btn = remapButton(e.cbutton.button);
             switch (btn) {
-                case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
-                    d.gpCharIdx = (d.gpCharIdx - 1 + palLen) % palLen; break;
-                case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-                    d.gpCharIdx = (d.gpCharIdx + 1) % palLen; break;
-                case SDL_CONTROLLER_BUTTON_DPAD_UP:
-                    d.gpCharIdx = (d.gpCharIdx - 8 + palLen) % palLen; break;
-                case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
-                    d.gpCharIdx = (d.gpCharIdx + 8) % palLen; break;
-                case SDL_CONTROLLER_BUTTON_A:
-                    if (d.newModId.size() < 24)
-                        d.newModId += modNamePal[d.gpCharIdx];
-                    break;
-                case SDL_CONTROLLER_BUTTON_Y:
-                    if (!d.newModId.empty()) d.newModId.pop_back(); break;
-                case SDL_CONTROLLER_BUTTON_X:
-                case SDL_CONTROLLER_BUTTON_START: {
-                    if (d.newModId.empty()) break;
-                    d.confirmedModFolder = modBuildFolder(d.newModId, d.newModId);
-                    if (false)
-                        d.phase = ModSaveDialogState::ChooseCategory;
-                    else
-                        d.confirmed = true;
-                    break;
-                }
                 case SDL_CONTROLLER_BUTTON_B:
-                    d.phase = ModSaveDialogState::ChooseMod; break;
+                    if (softKB_.active) softKB_.close(false);
+                    else d.phase = ModSaveDialogState::ChooseMod;
+                    break;
             }
         }
     }
@@ -8713,6 +9130,7 @@ void Game::handleModSaveDialogEvent(const SDL_Event& e) {
                 case SDLK_UP:   d.catIdx = (d.catIdx - 1 + ModSaveDialogState::CAT_COUNT) % ModSaveDialogState::CAT_COUNT; break;
                 case SDLK_DOWN: d.catIdx = (d.catIdx + 1) % ModSaveDialogState::CAT_COUNT; break;
                 case SDLK_RETURN:
+                case SDLK_KP_ENTER:
                     d.confirmedCat = d.catIdx;
                     d.confirmed    = true;
                     break;
@@ -8740,30 +9158,21 @@ void Game::handleModSaveDialogEvent(const SDL_Event& e) {
 
 void Game::renderModSaveDialog() {
     auto& d = modSaveDialog_;
-    SDL_Color white  = {255, 255, 255, 255};
-    SDL_Color cyan   = {0,   220, 200, 255};
-    SDL_Color yellow = {255, 220,  50, 255};
-    SDL_Color gray   = {120, 120, 130, 255};
-    SDL_Color selBg  = {0,   140, 120, 255};
+    static const char modNamePal[] = "abcdefghijklmnopqrstuvwxyz0123456789_-";
+    SDL_Color white  = UI::Color::White;
+    SDL_Color cyan   = UI::Color::Cyan;
+    SDL_Color yellow = UI::Color::Yellow;
+    SDL_Color gray   = UI::Color::Gray;
+    SDL_Color selBg  = {0, 140, 120, 255};
 
     // Dim overlay
-    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 180);
-    SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
-    SDL_RenderFillRect(renderer_, &full);
+    ui_.drawDarkOverlay(190, 0, 0, 0);
 
     // Panel
     int panW = 640, panH = 420;
     int panX = (SCREEN_W - panW) / 2;
     int panY = (SCREEN_H - panH) / 2;
-    SDL_SetRenderDrawColor(renderer_, 10, 12, 24, 240);
-    SDL_Rect pan = {panX, panY, panW, panH};
-    SDL_RenderFillRect(renderer_, &pan);
-    SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 200);
-    SDL_Rect border = {panX, panY, panW, 2};
-    SDL_RenderFillRect(renderer_, &border);
-    border = {panX, panY + panH - 2, panW, 2};
-    SDL_RenderFillRect(renderer_, &border);
+    ui_.drawPanel(panX, panY, panW, panH, {10, 12, 24, 245}, {0, 180, 160, 110});
 
     int cx = panX + panW / 2;
     int y  = panY + 18;
@@ -8771,7 +9180,8 @@ void Game::renderModSaveDialog() {
     static const char* ASSET_NAMES[] = {"MAP", "CHARACTER"};
     char title[64];
     snprintf(title, sizeof(title), "SAVE %s TO MOD", ASSET_NAMES[(int)d.asset]);
-    drawTextCentered(title, y, 24, cyan);
+    ui_.drawTextCentered(title, y, 24, cyan);
+    ui_.drawSeparator(cx, y + 34, 110);
     y += 38;
 
     // ── Phase: choose mod ──────────────────────────────────────────────
@@ -8782,37 +9192,33 @@ void Game::renderModSaveDialog() {
         int total = 1 + (int)d.modIds.size();
         for (int i = 0; i < total; i++) {
             bool sel = (i == d.selIdx);
-
-            // Click detection
-            bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, panX + 20, y - 2, panW - 40, 26);
-            if (hovered) ui_.hoveredItem = i;
-            if (hovered && !usingGamepad_) d.selIdx = i;
-            if (hovered && ui_.mouseClicked) {
-                d.selIdx = i;
-                // Simulate confirm for this item
-                if (i == 0) {
-                    d.phase = ModSaveDialogState::NameNewMod;
-                } else {
-                    d.confirmedModFolder = "mods/" + d.modIds[i - 1];
-                    if (false)
-                        d.phase = ModSaveDialogState::ChooseCategory;
-                    else
-                        d.confirmed = true;
-                }
-            }
-
-            if (sel) {
-                SDL_SetRenderDrawColor(renderer_, selBg.r, selBg.g, selBg.b, selBg.a);
-                SDL_Rect bg = {panX + 20, y - 2, panW - 40, 26};
-                SDL_RenderFillRect(renderer_, &bg);
-            }
             if (i == 0) {
-                drawTextCentered("[ + New Mod ]", y + 3, sel ? 18 : 16, sel ? yellow : gray);
+                if (ui_.menuItem(40 + i, "[ + NEW MOD ]", cx, y, panW - 40, 30, yellow, sel, 16, 18)) {
+                    d.selIdx = i;
+                    d.phase = ModSaveDialogState::NameNewMod;
+                    d.textEditing = true;
+                    softKB_.open(modNamePal, 8, &d.newModId, 24, [this](bool confirmed) {
+                        auto& dialog = modSaveDialog_;
+                        dialog.textEditing = false;
+                        if (!dialog.isOpen()) return;
+                        if (confirmed && !dialog.newModId.empty()) {
+                            dialog.confirmedModFolder = modBuildFolder(dialog.newModId, dialog.newModId);
+                            dialog.confirmed = true;
+                        } else {
+                            dialog.phase = ModSaveDialogState::ChooseMod;
+                        }
+                    });
+                }
             } else {
                 char buf[80];
                 snprintf(buf, sizeof(buf), "%s  (%s)", d.modNames[i-1].c_str(), d.modIds[i-1].c_str());
-                drawTextCentered(buf, y + 3, sel ? 18 : 16, sel ? white : gray);
+                if (ui_.menuItem(40 + i, buf, cx, y, panW - 40, 30, cyan, sel, 16, 18)) {
+                    d.selIdx = i;
+                    d.confirmedModFolder = "mods/" + d.modIds[i - 1];
+                    d.confirmed = true;
+                }
             }
+            if (ui_.hoveredItem == 40 + i && !usingGamepad_) d.selIdx = i;
             y += 30;
         }
 
@@ -8828,31 +9234,14 @@ void Game::renderModSaveDialog() {
         // Text box
         std::string display = d.newModId + "_";
         int bx = panX + 80, bw = panW - 160, bh = 36;
-        SDL_SetRenderDrawColor(renderer_, 20, 22, 40, 255);
-        SDL_Rect box = {bx, y, bw, bh};
-        SDL_RenderFillRect(renderer_, &box);
-        SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 255);
-        SDL_Rect boxBorder = {bx, y + bh - 2, bw, 2};
-        SDL_RenderFillRect(renderer_, &boxBorder);
+        ui_.drawPanel(bx, y, bw, bh, {18, 22, 40, 255}, {0, 180, 160, 160});
         drawText(display.c_str(), bx + 8, y + 8, 20, yellow);
         y += bh + 16;
 
-        // Gamepad char picker
-        static const char palStr[] = "abcdefghijklmnopqrstuvwxyz0123456789_-";
-        const int pl = (int)strlen(palStr);
-        char row[120]; int rx = 0;
-        for (int dd = -6; dd <= 6; dd++) {
-            int idx = (d.gpCharIdx + dd + pl) % pl;
-            row[rx++] = (dd == 0) ? '[' : ' ';
-            row[rx++] = palStr[idx];
-            row[rx++] = (dd == 0) ? ']' : ' ';
-        }
-        row[rx] = 0;
-        drawTextCentered(row, y, 16, cyan);
-        y += 30;
-
+        drawTextCentered("The shared on-screen keyboard now handles naming here too.", y, 12, gray);
+        renderSoftKB(y + 24);
         y = panY + panH - 40;
-        drawTextCentered("Type mod name   X/START confirm   A append char   Y delete   B back", y, 11, gray);
+        drawTextCentered("ENTER / OK confirms   ESC / CANCEL goes back", y, 11, gray);
     }
     // ── Phase: choose sprite category ─────────────────────────────────
     else if (d.phase == ModSaveDialogState::ChooseCategory) {
@@ -10356,14 +10745,56 @@ void Game::renderMultiplayerSplitscreen() {
 
 void Game::initMods() {
     auto& mm = ModManager::instance();
-    mm.loadModConfig();
     mm.scanMods();
+    mm.loadModConfig();
     mm.loadAllEnabled();
     applyModOverrides();
     printf("Mods initialized (%d loaded)\n", (int)mm.mods().size());
 }
 
+void Game::reloadModdedContent() {
+    std::string activeCharName = hasActiveChar_ ? activeCharDef_.name : "";
+    bool hadActiveChar = hasActiveChar_;
+
+    Mix_HaltMusic();
+    for (auto& cd : availableChars_) cd.unload();
+    availableChars_.clear();
+
+    Assets::instance().shutdown();
+    Assets::instance().init(renderer_);
+    loadAssets();
+
+    scanCharacters();
+    scanMapFiles();
+    scanMapPacks();
+
+    if (hadActiveChar) {
+        bool reapplied = false;
+        for (int i = 0; i < (int)availableChars_.size(); i++) {
+            if (availableChars_[i].name != activeCharName) continue;
+            selectedChar_ = i;
+            applyCharacter(availableChars_[i]);
+            reapplied = true;
+            break;
+        }
+        if (!reapplied) resetToDefaultCharacter();
+    } else {
+        resetToDefaultCharacter();
+    }
+
+    if (state_ == GameState::MainMenu || state_ == GameState::PlayModeMenu ||
+        state_ == GameState::ConfigMenu || state_ == GameState::MultiplayerMenu ||
+        state_ == GameState::HostSetup || state_ == GameState::JoinMenu ||
+        state_ == GameState::Lobby || state_ == GameState::ModMenu ||
+        state_ == GameState::CharSelect || state_ == GameState::MapSelect ||
+        state_ == GameState::PackSelect || state_ == GameState::MapConfig) {
+        playMenuMusic();
+    }
+}
+
 void Game::applyModOverrides() {
+    reloadModdedContent();
+
     auto overrides = ModManager::instance().mergedOverrides();
     if (overrides.has("player_speed")) {
         player_.speed = overrides.getFloat("player_speed", PLAYER_SPEED);
@@ -10408,6 +10839,7 @@ void Game::initMultiplayer() {
 }
 
 void Game::shutdownMultiplayer() {
+    clearSyncedCharacters();
     NetworkManager::instance().shutdown();
 }
 
@@ -10426,11 +10858,17 @@ void Game::setupNetworkCallbacks() {
             }
             // Send current lobby settings to the new player
             net2.sendConfigSync(lobbySettings_);
+            for (const auto& entry : syncedCharacters_) {
+                if (entry.first == id) continue;
+                const auto& synced = entry.second;
+                net2.sendCharacterSyncForPlayer(entry.first, synced.name, synced.isDefault, synced.data, id);
+            }
         }
     };
 
     net.onPlayerLeft = [this](uint8_t id) {
         printf("[NET] Player left (id=%d)\n", id);
+        clearSyncedCharacter(id);
         // If we're the host and all clients disconnected during a game,
         // end the game and go to scoreboard
         auto& net2 = NetworkManager::instance();
@@ -11192,11 +11630,34 @@ void Game::setupNetworkCallbacks() {
     net.onLivesUpdated = [this](uint8_t /*playerId*/, int lives) {
         if (currentRules_.sharedLives) sharedLives_ = lives;
     };
+
+    net.onCharacterSyncReceived = [this](uint8_t playerId, const std::string& characterName,
+                                         bool isDefault, const std::vector<uint8_t>& data) {
+        auto& synced = syncedCharacters_[playerId];
+        synced.name = characterName;
+        synced.isDefault = isDefault;
+        synced.data = data;
+
+        if (isDefault) {
+            if (synced.visualLoaded) synced.visual.unload();
+            synced.visualLoaded = false;
+            synced.cacheFolder.clear();
+            return;
+        }
+
+        if (playerId == NetworkManager::instance().localPlayerId()) return;
+
+        if (!installSyncedCharacterVisual(playerId, characterName, data)) {
+            printf("[NET] Failed to install synced character '%s' for player %u\n",
+                   characterName.c_str(), (unsigned)playerId);
+        }
+    };
 }
 
 void Game::updateMultiplayer(float dt) {
     auto& net = NetworkManager::instance();
     if (!net.isOnline()) {
+        clearSyncedCharacters();
         // Connection lost — return to main menu
         if (state_ == GameState::MultiplayerGame ||
             state_ == GameState::MultiplayerPaused ||
@@ -11209,6 +11670,8 @@ void Game::updateMultiplayer(float dt) {
         }
         return;
     }
+
+    syncLocalCharacterSelection();
 
     // NOTE: net.update(dt) is already called in run() every frame — do NOT call again here
 
@@ -11390,6 +11853,7 @@ void Game::updateMultiplayer(float dt) {
 
 void Game::hostGame() {
     auto& net = NetworkManager::instance();
+    clearSyncedCharacters();
     int maxClients = dedicatedMode_ ? hostMaxPlayers_ : (hostMaxPlayers_ - 1);
     if (net.host(hostPort_, maxClients)) {
         net.setHostPassword(lobbyPassword_);
@@ -11420,6 +11884,7 @@ void Game::hostGame() {
         lobbyGamemodeIdx_ = gamemodeSelectIdx_;
         lobbyMapIdx_      = hostMapSelectIdx_;
         lobbySettingsSel_ = 0;
+        syncLocalCharacterSelection(true);
         printf("Hosting game on port %d\n", hostPort_);
     } else {
         printf("Failed to host game!\n");
@@ -11476,6 +11941,7 @@ std::string Game::getLocalIP() {
 
 void Game::joinGame() {
     auto& net = NetworkManager::instance();
+    clearSyncedCharacters();
     connectStatus_.clear();
     if (net.join(joinAddress_, joinPort_, joinPassword_)) {
         lobbyPrimaryPadId_ = usingGamepad_ ? lastGamepadInputId_ : -1;
@@ -11944,9 +12410,7 @@ void Game::renderPickups() {
 // ═════════════════════════════════════════════════════════════════════════════
 
 void Game::renderMultiplayerMenu() {
-    SDL_SetRenderDrawColor(renderer_, 6, 8, 16, 255);
-    SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
-    SDL_RenderFillRect(renderer_, &full);
+    ui_.drawDarkOverlay(235, 6, 8, 16);
 
     SDL_Color cyan   = {0, 255, 228, 255};
     SDL_Color white  = {255, 255, 255, 255};
@@ -11955,15 +12419,12 @@ void Game::renderMultiplayerMenu() {
     SDL_Color dimCyan = {0, 140, 130, 255};
 
     drawTextCentered("MULTIPLAYER", SCREEN_H / 8, 38, cyan);
-
-    // Decorative line
-    SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 60);
-    SDL_Rect tl = {SCREEN_W / 2 - 100, SCREEN_H / 8 + 48, 200, 1};
-    SDL_RenderFillRect(renderer_, &tl);
+    ui_.drawSeparator(SCREEN_W / 2, SCREEN_H / 8 + 48, 100);
 
     // ── Left column: Main actions ──
     int leftX = SCREEN_W / 4;
     int actionY = SCREEN_H / 4 + 20;
+    ui_.drawPanel(leftX - 170, actionY - 40, 340, 220, {10, 12, 24, 240}, {0, 180, 160, 90});
 
     struct MenuItem { const char* label; const char* desc; SDL_Color accent; };
     MenuItem items[] = {
@@ -11994,11 +12455,7 @@ void Game::renderMultiplayerMenu() {
     int serverStartY = SCREEN_H / 4 - 10;
 
     // Panel background
-    SDL_SetRenderDrawColor(renderer_, 12, 14, 26, 200);
-    SDL_Rect serverPanel = {rightX - 20, serverStartY - 30, 350, SCREEN_H / 2 + 60};
-    SDL_RenderFillRect(renderer_, &serverPanel);
-    SDL_SetRenderDrawColor(renderer_, 0, 120, 110, 60);
-    SDL_RenderDrawRect(renderer_, &serverPanel);
+    ui_.drawPanel(rightX - 20, serverStartY - 30, 350, SCREEN_H / 2 + 60, {10, 12, 24, 240}, {0, 180, 160, 90});
 
     drawText("SAVED SERVERS", rightX, serverStartY - 20, 16, dimCyan);
     SDL_SetRenderDrawColor(renderer_, 0, 120, 110, 40);
@@ -13403,6 +13860,28 @@ void Game::renderRemotePlayers() {
         if (rp.id == net.localPlayerId()) continue;
         if (!rp.alive) continue;
 
+        const std::vector<SDL_Texture*>* bodyFrames = &defaultPlayerSprites_;
+        const std::vector<SDL_Texture*>* legFrames = &defaultLegSprites_;
+        bool usingCustomFrames = false;
+        auto syncedIt = syncedCharacters_.find(rp.id);
+        if (syncedIt != syncedCharacters_.end() && !syncedIt->second.isDefault && syncedIt->second.visualLoaded) {
+            if (!syncedIt->second.visual.bodySprites.empty()) {
+                bodyFrames = &syncedIt->second.visual.bodySprites;
+                usingCustomFrames = true;
+            }
+            if (!syncedIt->second.visual.legSprites.empty()) legFrames = &syncedIt->second.visual.legSprites;
+        } else if (rp.customCharacter) {
+            for (auto& cd : availableChars_) {
+                if (cd.name != rp.characterName) continue;
+                if (!cd.bodySprites.empty()) {
+                    bodyFrames = &cd.bodySprites;
+                    usingCustomFrames = true;
+                }
+                if (!cd.legSprites.empty()) legFrames = &cd.legSprites;
+                break;
+            }
+        }
+
         // Position/rotation are already interpolated in network.cpp
         Vec2 drawPos = rp.pos;
         float drawRot = rp.rotation;
@@ -13411,23 +13890,26 @@ void Game::renderRemotePlayers() {
         const bool isGhost = rp.spectating;
 
         // Legs
-        if (rp.moving && !legSprites_.empty()) {
-            int idx = rp.legFrame % (int)legSprites_.size();
-            if (isGhost) SDL_SetTextureAlphaMod(legSprites_[idx], ghostAlpha);
-            renderSprite(legSprites_[idx], drawPos, rp.legRotation + (float)M_PI / 2, 1.5f);
-            if (isGhost) SDL_SetTextureAlphaMod(legSprites_[idx], 255);
+        if (rp.moving && !legFrames->empty()) {
+            int idx = rp.legFrame % (int)legFrames->size();
+            SDL_Texture* legTex = (*legFrames)[idx];
+            if (isGhost) SDL_SetTextureAlphaMod(legTex, ghostAlpha);
+            renderSprite(legTex, drawPos, rp.legRotation + (float)M_PI / 2, 1.5f);
+            if (isGhost) SDL_SetTextureAlphaMod(legTex, 255);
         }
 
         // Body — tint by team color or default blue
-        if (!playerSprites_.empty()) {
-            int idx = rp.animFrame % (int)playerSprites_.size();
+        if (!bodyFrames->empty()) {
+            int idx = rp.animFrame % (int)bodyFrames->size();
+            SDL_Texture* bodyTex = (*bodyFrames)[idx];
             Vec2 bodyPos = drawPos + Vec2::fromAngle(drawRot) * 6.0f;
-            SDL_Color tint = {180, 200, 255, 255}; // default slight blue
+            SDL_Color tint = usingCustomFrames ? SDL_Color{255, 255, 255, 255}
+                                               : SDL_Color{180, 200, 255, 255};
             if (isGhost) tint = {140, 180, 255, ghostAlpha};
             else if (rp.team >= 0 && rp.team < 4) tint = teamTints[rp.team];
-            if (isGhost) SDL_SetTextureAlphaMod(playerSprites_[idx], ghostAlpha);
-            renderSpriteEx(playerSprites_[idx], bodyPos, drawRot + (float)M_PI / 2, 1.5f, tint);
-            if (isGhost) SDL_SetTextureAlphaMod(playerSprites_[idx], 255);
+            if (isGhost) SDL_SetTextureAlphaMod(bodyTex, ghostAlpha);
+            renderSpriteEx(bodyTex, bodyPos, drawRot + (float)M_PI / 2, 1.5f, tint);
+            if (isGhost) SDL_SetTextureAlphaMod(bodyTex, 255);
         }
 
         // ── Render this client's sub-players (splitscreen partners) ──
@@ -13440,17 +13922,18 @@ void Game::renderRemotePlayers() {
             Vec2 spPos = sp.pos;
             float spRot = sp.rotation;
             // Legs
-            if (sp.moving && !legSprites_.empty()) {
-                int idx = sp.legFrame % (int)legSprites_.size();
-                renderSprite(legSprites_[idx], spPos, sp.legRotation + (float)M_PI / 2, 1.5f);
+            if (sp.moving && !legFrames->empty()) {
+                int idx = sp.legFrame % (int)legFrames->size();
+                renderSprite((*legFrames)[idx], spPos, sp.legRotation + (float)M_PI / 2, 1.5f);
             }
             // Body — slightly different tint from primary
-            if (!playerSprites_.empty()) {
-                int idx = sp.animFrame % (int)playerSprites_.size();
+            if (!bodyFrames->empty()) {
+                int idx = sp.animFrame % (int)bodyFrames->size();
                 Vec2 bodyPos = spPos + Vec2::fromAngle(spRot) * 6.0f;
-                SDL_Color tint = subTints[si % 3];
+                SDL_Color tint = usingCustomFrames ? SDL_Color{255, 255, 255, 255}
+                                                   : subTints[si % 3];
                 if (rp.team >= 0 && rp.team < 4) tint = teamTints[rp.team]; // use team color if teams
-                renderSpriteEx(playerSprites_[idx], bodyPos, spRot + (float)M_PI / 2, 1.5f, tint);
+                renderSpriteEx((*bodyFrames)[idx], bodyPos, spRot + (float)M_PI / 2, 1.5f, tint);
             }
         }
     }
@@ -13599,9 +14082,7 @@ void Game::renderTeamSelect() {
 // ═════════════════════════════════════════════════════════════════════════════
 
 void Game::renderModMenu() {
-    SDL_SetRenderDrawColor(renderer_, 6, 8, 16, 255);
-    SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
-    SDL_RenderFillRect(renderer_, &full);
+    ui_.drawDarkOverlay(235, 6, 8, 16);
 
     SDL_Color cyan   = {0, 255, 228, 255};
     SDL_Color white  = {255, 255, 255, 255};
@@ -13613,9 +14094,7 @@ void Game::renderModMenu() {
 
     // Title
     drawTextCentered("MODS & CONTENT", SCREEN_H / 12, 32, cyan);
-    SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 60);
-    SDL_Rect tl = {SCREEN_W / 2 - 100, SCREEN_H / 12 + 40, 200, 1};
-    SDL_RenderFillRect(renderer_, &tl);
+    ui_.drawSeparator(SCREEN_W / 2, SCREEN_H / 12 + 40, 100);
 
     // ── Tab bar ──
     static const char* tabNames[] = { "MODS", "CHARACTERS", "MAPS", "PLAYLISTS" };
