@@ -70,6 +70,57 @@ static std::string sanitizeNetCharacterName(const std::string& name) {
     return out;
 }
 
+#ifdef __SWITCH__
+static HidVibrationValue makeSwitchVibrationValue(float strength, float lowBandScale, float highBandScale) {
+    strength = std::clamp(strength, 0.0f, 1.0f);
+    lowBandScale = std::clamp(lowBandScale, 0.2f, 1.8f);
+    highBandScale = std::clamp(highBandScale, 0.2f, 1.8f);
+
+    HidVibrationValue value{};
+    value.amp_low = std::clamp((0.16f + strength * 0.74f) * lowBandScale, 0.0f, 1.0f);
+    value.freq_low = std::clamp(85.0f + strength * 65.0f - (lowBandScale - 1.0f) * 20.0f, 40.0f, 160.0f);
+    value.amp_high = std::clamp((0.08f + strength * 0.88f) * highBandScale, 0.0f, 1.0f);
+    value.freq_high = std::clamp(180.0f + strength * 135.0f + (highBandScale - 1.0f) * 80.0f, 120.0f, 640.0f);
+    return value;
+}
+
+static void appendSwitchVibrationHandles(std::vector<HidVibrationDeviceHandle>& handles,
+                                         HidNpadIdType id, HidNpadStyleTag style, s32 count) {
+    HidVibrationDeviceHandle tmp[2] = {};
+    if (R_SUCCEEDED(hidInitializeVibrationDevices(tmp, count, id, style))) {
+        handles.insert(handles.end(), tmp, tmp + count);
+    }
+}
+
+static void sendSwitchVibrationNow(const HidVibrationValue& value) {
+    static const HidNpadIdType ids[] = {
+        HidNpadIdType_Handheld,
+        HidNpadIdType_No1,
+        HidNpadIdType_No2,
+        HidNpadIdType_No3,
+        HidNpadIdType_No4,
+    };
+
+    std::vector<HidVibrationDeviceHandle> handles;
+    handles.reserve(10);
+
+    for (HidNpadIdType id : ids) {
+        u32 styles = hidGetNpadStyleSet(id);
+        if (styles & HidNpadStyleTag_NpadHandheld)  appendSwitchVibrationHandles(handles, id, HidNpadStyleTag_NpadHandheld, 2);
+        if (styles & HidNpadStyleTag_NpadJoyDual)   appendSwitchVibrationHandles(handles, id, HidNpadStyleTag_NpadJoyDual, 2);
+        if (styles & HidNpadStyleTag_NpadFullKey)   appendSwitchVibrationHandles(handles, id, HidNpadStyleTag_NpadFullKey, 2);
+        if (styles & HidNpadStyleTag_NpadJoyLeft)   appendSwitchVibrationHandles(handles, id, HidNpadStyleTag_NpadJoyLeft, 1);
+        if (styles & HidNpadStyleTag_NpadJoyRight)  appendSwitchVibrationHandles(handles, id, HidNpadStyleTag_NpadJoyRight, 1);
+    }
+
+    if (handles.empty()) return;
+
+    std::vector<HidVibrationValue> values(handles.size(), value);
+    hidPermitVibration(true);
+    hidSendVibrationValues(handles.data(), values.data(), (s32)handles.size());
+}
+#endif
+
 bool isMeleeEnemyType(EnemyType type) {
     return type == EnemyType::Melee || type == EnemyType::Brute || type == EnemyType::Scout;
 }
@@ -215,6 +266,14 @@ bool Game::rebuildScreenTextures() {
         SDL_DestroyTexture(vignetteTex_);
         vignetteTex_ = nullptr;
     }
+    if (minimapCacheTex_) {
+        SDL_DestroyTexture(minimapCacheTex_);
+        minimapCacheTex_ = nullptr;
+    }
+    minimapCacheDirty_ = true;
+    minimapCacheMapW_ = 0;
+    minimapCacheMapH_ = 0;
+    minimapCacheTilePx_ = 0;
 
     // Use base viewport dimensions for render targets
     SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, SCREEN_W, SCREEN_H, 32, SDL_PIXELFORMAT_RGBA8888);
@@ -691,6 +750,7 @@ void Game::shutdown() {
     Assets::instance().shutdown();
     if (sceneTarget_) SDL_DestroyTexture(sceneTarget_);
     if (vignetteTex_) SDL_DestroyTexture(vignetteTex_);
+    if (minimapCacheTex_) SDL_DestroyTexture(minimapCacheTex_);
     Mix_HaltMusic();
     if (customMapMusic_) { Mix_FreeMusic(customMapMusic_); customMapMusic_ = nullptr; }
     Mix_CloseAudio();
@@ -708,6 +768,15 @@ void Game::shutdown() {
 // ═════════════════════════════════════════════════════════════════════════════
 
 void Game::rumble(float strength, int durationMs) {
+    rumble(strength, durationMs, 1.0f, 1.0f);
+}
+
+void Game::rumble(float strength, int durationMs, float lowBandScale, float highBandScale) {
+    strength = std::clamp(strength, 0.0f, 1.0f);
+    lowBandScale = std::clamp(lowBandScale, 0.2f, 1.8f);
+    highBandScale = std::clamp(highBandScale, 0.2f, 1.8f);
+    if (strength <= 0.0f || durationMs <= 0) return;
+
     // Find an active controller if we don't have one cached
     if (!activeController_) {
         for (int i = 0; i < SDL_NumJoysticks(); i++) {
@@ -718,12 +787,60 @@ void Game::rumble(float strength, int durationMs) {
             }
         }
     }
-    
+
+#ifdef __SWITCH__
+    HidVibrationValue value = makeSwitchVibrationValue(strength, lowBandScale, highBandScale);
+    sendSwitchVibrationNow(value);
+    switchRumbleStopTick_ = SDL_GetTicks() + (Uint32)std::max(16, durationMs);
+    switchRumbleActive_ = true;
+#endif
+
     if (activeController_) {
-        Uint16 intensity = (Uint16)(strength * 65535.0f);
-        SDL_GameControllerRumble(activeController_, intensity, intensity, durationMs);
+        Uint16 lowIntensity  = (Uint16)(std::clamp((0.18f + strength * 0.72f) * lowBandScale, 0.0f, 1.0f) * 65535.0f);
+        Uint16 highIntensity = (Uint16)(std::clamp((0.08f + strength * 0.92f) * highBandScale, 0.0f, 1.0f) * 65535.0f);
+        SDL_GameControllerRumble(activeController_, lowIntensity, highIntensity, durationMs);
+        SDL_GameControllerRumbleTriggers(activeController_, highIntensity / 2, lowIntensity / 3, durationMs);
     }
 }
+
+float Game::localFeedbackFalloff(Vec2 pos, float maxDistance) const {
+    if (maxDistance <= 0.0f) return 0.0f;
+    float dist = Vec2::dist(pos, player_.pos);
+    return std::clamp(1.0f - dist / maxDistance, 0.0f, 1.0f);
+}
+
+void Game::playExplosionFeedback(Vec2 pos, float maxDistance, float minStrength, float maxStrength,
+                                 int minDurationMs, int maxDurationMs, float lowBandScale,
+                                 float highBandScale, int maxVolume, int minVolume) {
+    float falloff = localFeedbackFalloff(pos, maxDistance);
+    if (falloff <= 0.01f) return;
+
+    float strength = minStrength + (maxStrength - minStrength) * falloff;
+    int durationMs = minDurationMs + (int)((maxDurationMs - minDurationMs) * falloff);
+    rumble(strength, durationMs, lowBandScale, highBandScale);
+
+    if (sfxExplosion_) {
+        int volume = minVolume + (int)((maxVolume - minVolume) * falloff);
+        volume = std::clamp(volume, 0, MIX_MAX_VOLUME);
+        if (volume > 0) {
+            int ch = Mix_PlayChannel(-1, sfxExplosion_, 0);
+            if (ch >= 0) Mix_Volume(ch, volume);
+        }
+    }
+}
+
+#ifdef __SWITCH__
+void Game::updateSwitchRumble() {
+    if (!switchRumbleActive_) return;
+
+    Sint32 remaining = (Sint32)(switchRumbleStopTick_ - SDL_GetTicks());
+    if (remaining > 0) return;
+
+    sendSwitchVibrationNow(HidVibrationValue{});
+    switchRumbleActive_ = false;
+    switchRumbleStopTick_ = 0;
+}
+#endif
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  Update Checker
@@ -862,6 +979,7 @@ void Game::startGame() {
     crateSpawnTimer_ = 0;
     sandboxMode_ = false;  // regular play is always arena
     map_.generate(config_.mapWidth, config_.mapHeight);
+    invalidateMinimapCache();
 
     // Reset player
     player_ = Player{};
@@ -914,6 +1032,10 @@ void Game::run() {
         // Update UI system at the start of each frame so both handleInput()
         // and render() see consistent mouse/touch state.
         ui_.beginFrame(dt_, usingGamepad_);
+
+    #ifdef __SWITCH__
+        updateSwitchRumble();
+    #endif
 
         handleInput();
 
@@ -1329,24 +1451,8 @@ void Game::handleInput() {
     if (keys[SDL_SCANCODE_A]) moveInput_.x -= 1;
     if (keys[SDL_SCANCODE_D]) moveInput_.x += 1;
 
-    // Controller left stick — find a gamepad for P1
-    // In local co-op, skip gamepads assigned to co-op slots (P1 uses kb+mouse)
-    SDL_GameController* gc = nullptr;
-    bool isCoopState = (state_ == GameState::LocalCoopLobby || state_ == GameState::LocalCoopGame ||
-                        state_ == GameState::LocalCoopPaused || state_ == GameState::LocalCoopDead);
-    for (int i = 0; i < SDL_NumJoysticks(); i++) {
-        if (!SDL_IsGameController(i)) continue;
-        SDL_JoystickID jid = SDL_JoystickGetDeviceInstanceID(i);
-        // In co-op, skip gamepads owned by co-op slots
-        if (isCoopState) {
-            bool taken = false;
-            for (int s = 1; s < 4; s++)
-                if (coopSlots_[s].joined && coopSlots_[s].joyInstanceId == jid) { taken = true; break; }
-            if (taken) continue;
-        }
-        gc = SDL_GameControllerFromInstanceID(jid);
-        break;
-    }
+    // Controller left stick — use the primary gameplay pad and avoid pads owned by local sub-players.
+    SDL_GameController* gc = getPrimaryGameplayController();
 
     // Gamepad stick input (movement + aim)
     bool gcAimActive = false;
@@ -1354,13 +1460,17 @@ void Game::handleInput() {
     if (gc) {
         float lx = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0f;
         float ly = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTY) / 32767.0f;
-        if (fabsf(lx) > 0.15f || fabsf(ly) > 0.15f) moveInput_ = {lx, ly};
+        if (fabsf(lx) > 0.15f || fabsf(ly) > 0.15f) {
+            moveInput_ = {lx, ly};
+            usingGamepad_ = true;
+        }
 
         // Right stick for aiming
         float rx = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_RIGHTX) / 32767.0f;
         float ry = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_RIGHTY) / 32767.0f;
         if (fabsf(rx) > 0.2f || fabsf(ry) > 0.2f) {
             gcAimActive = true;
+            usingGamepad_ = true;
             aimInput_ = {rx, ry};
 
             // Aim-assist: slight lock-on to closest enemy within a cone
@@ -1409,7 +1519,11 @@ void Game::handleInput() {
     {
         int mx, my;
         Uint32 mb = SDL_GetMouseState(&mx, &my);
-        if (!gcAimActive) {
+        bool allowMouseAim = (!gc || !usingGamepad_);
+    #ifdef __SWITCH__
+        allowMouseAim = false;
+    #endif
+        if (!gcAimActive && allowMouseAim) {
             Vec2 mouseWorld = camera_.screenToWorld({(float)mx, (float)my});
             Vec2 diff = mouseWorld - player_.pos;
             if (diff.length() > 5.0f) {
@@ -3200,6 +3314,7 @@ void Game::updatePlayer(float dt) {
         p.hasFiredOnce = true;
         p.shootAnimTimer = 0.12f;
         camera_.addShake(1.2f);
+        rumble(0.05f, 16, 0.22f, 0.92f);  // Even softer gun kick
         if (sfxShoot_) { int ch = Mix_PlayChannel(-1, sfxShoot_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
     } else if (fireInput_ && p.ammo <= 0 && !p.reloading) {
         // Auto-reload
@@ -3869,7 +3984,11 @@ void Game::enemyShoot(Enemy& e, float dt) {
         Vec2 eFwd   = Vec2::fromAngle(e.rotation);
         Vec2 eRight = {-eFwd.y, eFwd.x};
         Vec2 muzzle = e.pos + eFwd * 14.0f + eRight * 14.0f;
-        spawnEnemyBullet(muzzle, getEnemyTargetPos(e), spread);
+        float bulletSpeed = ENEMY_BULLET_SPEED;
+        if (e.type == EnemyType::Sniper) {
+            bulletSpeed *= SNIPER_BULLET_SPEED_MULTI;
+        }
+        spawnEnemyBullet(muzzle, getEnemyTargetPos(e), spread, bulletSpeed);
         e.burstShotsLeft--;
         if (e.burstShotsLeft > 0) {
             e.burstGapTimer = e.burstGap;
@@ -4105,12 +4224,12 @@ void Game::spawnBullet(Vec2 pos, float angle) {
     }
 }
 
-void Game::spawnEnemyBullet(Vec2 pos, Vec2 target, float angleOffset) {
+void Game::spawnEnemyBullet(Vec2 pos, Vec2 target, float angleOffset, float speed) {
     Entity b;
     Vec2 dir = (target - pos).normalized();
     if (angleOffset != 0.0f) dir = Vec2::fromAngle(dir.angle() + angleOffset);
     b.pos = pos + dir * 20.0f;  // push forward out of the enemy body; lateral already baked into pos
-    b.vel = dir * ENEMY_BULLET_SPEED;
+    b.vel = dir * speed;
     b.rotation = atan2f(dir.y, dir.x);
     b.size = BULLET_SIZE;
     b.lifetime = ENEMY_BULLET_LIFETIME;
@@ -4128,7 +4247,7 @@ void Game::spawnEnemyBullet(Vec2 pos, Vec2 target, float angleOffset) {
     // Host broadcasts bullet spawn to clients
     auto& net = NetworkManager::instance();
     if (net.isHost() && net.isInGame()) {
-        net.sendEnemyBulletSpawn(b.pos, dir);
+        net.sendEnemyBulletSpawn(b.pos, b.vel);
     }
 }
 
@@ -4155,10 +4274,8 @@ void Game::spawnBulletExplosion(Vec2 pos, int damage, uint8_t ownerId, int skipE
     camera_.addShake(1.6f);
     screenFlashTimer_ = std::max(screenFlashTimer_, 0.035f);
     screenFlashR_ = 255; screenFlashG_ = 150; screenFlashB_ = 50;
-    if (sfxExplosion_) {
-        int ch = Mix_PlayChannel(-1, sfxExplosion_, 0);
-        if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 3);
-    }
+    playExplosionFeedback(pos, radius * 6.8f, 0.10f, 0.34f, 75, 180, 1.10f, 0.72f,
+                          config_.sfxVolume / 2, config_.sfxVolume / 10);
 
     if (!applyDamage) return;
 
@@ -4451,7 +4568,8 @@ void Game::spawnExplosion(Vec2 pos, uint8_t ownerId) {
     ex.ownerId = ownerId;
     explosions_.push_back(ex);
     camera_.addShake(6.0f);
-    if (sfxExplosion_) { int ch = Mix_PlayChannel(-1, sfxExplosion_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+    playExplosionFeedback(pos, ex.radius * 8.4f, 0.18f, 0.62f, 130, 320, 1.45f, 0.74f,
+                          config_.sfxVolume, config_.sfxVolume / 12);
 
     // ── Sync explosion to other players (guard prevents echo-loop from network callback) ──
     auto& net = NetworkManager::instance();
@@ -4620,6 +4738,113 @@ Vec2 Game::pickSpawnPos() {
     return center; // absolute last resort
 }
 
+bool Game::isEnemySpawnVisibleToAnyPlayer(Vec2 pos) const {
+    auto hasSightLine = [&](Vec2 playerPos, float viewW, float viewH) -> bool {
+        float viewPadX = viewW * 0.60f + TILE_SIZE * 1.5f;
+        float viewPadY = viewH * 0.60f + TILE_SIZE * 1.5f;
+        if (fabsf(pos.x - playerPos.x) <= viewPadX && fabsf(pos.y - playerPos.y) <= viewPadY) {
+            return true;
+        }
+
+        Vec2 toSpawn = pos - playerPos;
+        float dist = toSpawn.length();
+        if (dist >= ENEMY_VISION_DIST) return false;
+
+        Vec2 dir = toSpawn.normalized();
+        float step = TILE_SIZE * 0.4f;
+        for (float d = step; d < dist; d += step) {
+            Vec2 pt = playerPos + dir * d;
+            if (map_.isSolid(TileMap::toTile(pt.x), TileMap::toTile(pt.y))) return false;
+        }
+        return true;
+    };
+
+    auto& net = NetworkManager::instance();
+    if (net.isOnline()) {
+        if (!player_.dead && hasSightLine(player_.pos, camera_.viewW, camera_.viewH)) return true;
+
+        for (int ci = 1; ci < 4; ++ci) {
+            if (!coopSlots_[ci].joined || coopSlots_[ci].player.dead) continue;
+            if (hasSightLine(coopSlots_[ci].player.pos, coopSlots_[ci].camera.viewW, coopSlots_[ci].camera.viewH)) return true;
+        }
+
+        for (const auto& p : net.players()) {
+            if (p.id == net.localPlayerId() || !p.alive || p.spectating) continue;
+            if (hasSightLine(p.pos, (float)SCREEN_W, (float)SCREEN_H)) return true;
+        }
+        return false;
+    }
+
+    if (state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) {
+        for (int ci = 0; ci < 4; ++ci) {
+            if (!coopSlots_[ci].joined || coopSlots_[ci].player.dead) continue;
+            if (hasSightLine(coopSlots_[ci].player.pos, coopSlots_[ci].camera.viewW, coopSlots_[ci].camera.viewH)) return true;
+        }
+        return false;
+    }
+
+    if (!player_.dead && hasSightLine(player_.pos, camera_.viewW, camera_.viewH)) return true;
+    return false;
+}
+
+Vec2 Game::pickEnemySpawnPos(bool* foundHidden) {
+    if (foundHidden) *foundHidden = false;
+
+    auto isValidSpawn = [&](Vec2 sp, bool requireHidden) -> bool {
+        if (map_.worldCollides(sp.x, sp.y, ENEMY_SIZE * 0.5f)) return false;
+        if (requireHidden && isEnemySpawnVisibleToAnyPlayer(sp)) return false;
+        return true;
+    };
+
+    bool tryHidden = true;
+    Vec2 candidate = {map_.worldWidth() * 0.5f, map_.worldHeight() * 0.5f};
+
+    if (!map_.spawnPoints.empty()) {
+        int hiddenAttempts = std::min((int)map_.spawnPoints.size() * 2, 48);
+        for (int attempt = 0; attempt < hiddenAttempts; ++attempt) {
+            Vec2 sp = map_.spawnPoints[rand() % map_.spawnPoints.size()];
+            if (!isValidSpawn(sp, true)) continue;
+            if (foundHidden) *foundHidden = true;
+            return sp;
+        }
+
+        for (int attempt = 0; attempt < 24; ++attempt) {
+            Vec2 sp = map_.spawnPoints[rand() % map_.spawnPoints.size()];
+            if (!isValidSpawn(sp, false)) continue;
+            return sp;
+        }
+        tryHidden = false;
+    }
+
+    int hiddenAttempts = tryHidden ? 80 : 0;
+    for (int attempt = 0; attempt < hiddenAttempts; ++attempt) {
+        float rx = (float)(64 + rand() % std::max(1, map_.width * 64 - 128));
+        float ry = (float)(64 + rand() % std::max(1, map_.height * 64 - 128));
+        Vec2 sp = {rx, ry};
+        if (!isValidSpawn(sp, true)) continue;
+        if (foundHidden) *foundHidden = true;
+        return sp;
+    }
+
+    for (int attempt = 0; attempt < 120; ++attempt) {
+        float rx = (float)(64 + rand() % std::max(1, map_.width * 64 - 128));
+        float ry = (float)(64 + rand() % std::max(1, map_.height * 64 - 128));
+        Vec2 sp = {rx, ry};
+        if (!isValidSpawn(sp, false)) continue;
+        return sp;
+    }
+
+    for (int ty = 1; ty < map_.height - 1; ++ty) {
+        for (int tx = 1; tx < map_.width - 1; ++tx) {
+            Vec2 sp = {TileMap::toWorld(tx), TileMap::toWorld(ty)};
+            if (!isValidSpawn(sp, false)) continue;
+            return sp;
+        }
+    }
+
+    return candidate;
+}
+
 void Game::spawnBomb() {
     auto& net = NetworkManager::instance();
     Bomb b;
@@ -4661,15 +4886,10 @@ void Game::updateSpawning(float dt) {
         waveSpawnTimer_ -= dt;
         if (waveSpawnTimer_ <= 0 && waveEnemiesLeft_ > 0) {
             waveSpawnTimer_ = WAVE_SPAWN_INTERVAL;
-            if (!map_.spawnPoints.empty()) {
-                for (int attempt = 0; attempt < 5; attempt++) {
-                    Vec2 sp = map_.spawnPoints[rand() % map_.spawnPoints.size()];
-                    if (!map_.worldCollides(sp.x, sp.y, ENEMY_SIZE * 0.5f)) {
-                        spawnEnemy(sp, rollWaveEnemyType());
-                        waveEnemiesLeft_--;
-                        break;
-                    }
-                }
+            Vec2 sp = pickEnemySpawnPos();
+            if (!map_.worldCollides(sp.x, sp.y, ENEMY_SIZE * 0.5f)) {
+                spawnEnemy(sp, rollWaveEnemyType());
+                waveEnemiesLeft_--;
             }
         }
         if (waveEnemiesLeft_ <= 0) {
@@ -4837,7 +5057,7 @@ void Game::resolveCollisions() {
     };
 
     auto spawnBulletBurstFX = [&](Vec2 pos, SDL_Color color, int count, float shake) {
-        for (int i = 0; i < count; i++) {
+        for (int i = 0; i < count; ++i) {
             BoxFragment f;
             f.pos = {pos.x + (float)(rand() % 14 - 7), pos.y + (float)(rand() % 14 - 7)};
             float ang = (float)(rand() % 360) * (float)M_PI / 180.0f;
@@ -5059,18 +5279,18 @@ void Game::resolveCollisions() {
                 bullets_.push_back(b);
                 b.alive = false;
                 camera_.addShake(2.2f);
-                rumble(0.4f, 80);  // Parry reflect rumble
+                rumble(0.40f, 72, 0.50f, 1.55f);  // Sharp parry reflect rumble
                 if (sfxParry_) { int ch = Mix_PlayChannel(-1, sfxParry_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
             } else {
                 p.takeDamage(b.damage);
                 b.alive = false;
                 camera_.addShake(1.8f);
-                rumble(0.5f, 150);  // Damage rumble
+                rumble(0.48f, 150, 1.25f, 0.78f);  // Heavier damage thud
                 if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
                 if (p.dead) {
                     if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
                     camera_.addShake(4.0f);
-                    rumble(0.8f, 300);  // Death rumble
+                    rumble(0.92f, 340, 1.50f, 0.82f);  // Heavy death rumble
                     auto& net = NetworkManager::instance();
                     if (!net.isInGame()) spawnPlayerDeathEffect(p.pos);
                     if (net.isInGame()) net.sendPlayerDied(net.localPlayerId(), 0);
@@ -5091,7 +5311,7 @@ void Game::resolveCollisions() {
                 e.vel = (e.pos - p.pos).normalized() * 500.0f;
                 e.damageFlash = 1.0f;
                 camera_.addShake(2.2f);
-                rumble(0.5f, 90);  // Parry counter rumble
+                rumble(0.52f, 84, 0.65f, 1.45f);  // Sharp parry counter rumble
                 if (sfxParry_) { int ch = Mix_PlayChannel(-1, sfxParry_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
                 if (e.hp <= 0) {
                     killEnemy(e);
@@ -5106,12 +5326,13 @@ void Game::resolveCollisions() {
                 }
             } else {
                 p.takeDamage(e.contactDamage);
-                rumble(0.5f, 140);  // Contact damage rumble
+                rumble(0.54f, 150, 1.30f, 0.72f);  // Heavy contact impact rumble
                 camera_.addShake(1.8f);
                 if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
                 if (p.dead) {
                     if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
                     camera_.addShake(4.0f);
+                    rumble(0.92f, 340, 1.50f, 0.82f);  // Heavy death rumble
                     auto& net2 = NetworkManager::instance();
                     if (!net2.isInGame()) spawnPlayerDeathEffect(p.pos);
                     if (net2.isInGame()) net2.sendPlayerDied(net2.localPlayerId(), 0);
@@ -5384,7 +5605,7 @@ void Game::playerParry() {
     p.parryTimer = PARRY_WINDOW;           // Reflect/counter window
     p.parryDashTimer = PARRY_DASH_DURATION; // Dash movement duration (scout speed)
     p.parryCdTimer = PARRY_COOLDOWN;
-    rumble(0.35f, 100);  // Medium rumble on parry
+    rumble(0.16f, 38, 0.32f, 1.20f);  // Softer parry dash startup
 
     // Dash direction = aim direction
     if (aimInput_.lengthSq() > 0.04f)
@@ -5398,6 +5619,7 @@ void Game::playerParry() {
 void Game::destroyBox(int tx, int ty) {
     // Replace the box tile with grass
     map_.set(tx, ty, TILE_GRASS);
+    invalidateMinimapCache();
     // Spawn wood-colored fragment particles — explosive burst
     float wx = TileMap::toWorld(tx);
     float wy = TileMap::toWorld(ty);
@@ -5446,10 +5668,9 @@ void Game::spawnPlayerDeathEffect(Vec2 pos) {
     screenFlashTimer_ = isOnline ? 0.08f : 0.22f;
     screenFlashR_ = 255; screenFlashG_ = 55; screenFlashB_ = 20;
 
-    // Explosion sound in singleplayer (multiplayer uses sfxDeath_ at callsite)
-    if (!isOnline && sfxExplosion_) {
-        int ch = Mix_PlayChannel(-1, sfxExplosion_, 0);
-        if (ch >= 0) Mix_Volume(ch, config_.sfxVolume);
+    if (!isOnline) {
+        playExplosionFeedback(pos, EXPLOSION_RADIUS * 9.0f, 0.24f, 0.72f, 140, 340, 1.50f, 0.76f,
+                              config_.sfxVolume, config_.sfxVolume / 14);
     }
 
     // Fire/gore burst
@@ -5546,7 +5767,9 @@ void Game::render() {
         state_ == GameState::MultiplayerGame || state_ == GameState::MultiplayerPaused || state_ == GameState::MultiplayerDead || state_ == GameState::MultiplayerSpectator ||
         state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused || state_ == GameState::LocalCoopDead;
 
-    if (sceneTarget_) SDL_SetRenderTarget(renderer_, sceneTarget_);
+    bool usePostFX = sceneTarget_ && !isSplitscreenActive();
+
+    if (usePostFX) SDL_SetRenderTarget(renderer_, sceneTarget_);
     SDL_SetRenderDrawColor(renderer_, 20, 20, 25, 255);
     SDL_RenderClear(renderer_);
 
@@ -6165,11 +6388,21 @@ void Game::render() {
         renderModSaveDialog();
 
     ui_.endFrame();
-    if (sceneTarget_) {
+    if (usePostFX) {
         SDL_SetRenderTarget(renderer_, nullptr);
         renderPostFXComposite(gameplayView);
     }
     SDL_RenderPresent(renderer_);
+}
+
+bool Game::isSplitscreenActive() const {
+    if (state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused ||
+        state_ == GameState::LocalCoopDead) {
+        return true;
+    }
+    return coopPlayerCount_ > 1 &&
+           (state_ == GameState::MultiplayerGame || state_ == GameState::MultiplayerPaused ||
+            state_ == GameState::MultiplayerDead || state_ == GameState::MultiplayerSpectator);
 }
 
 void Game::renderPostFXComposite(bool gameplayView) {
@@ -6306,6 +6539,53 @@ void Game::renderPostFXComposite(bool gameplayView) {
             }
         }
     }
+}
+
+SDL_GameController* Game::getPrimaryGameplayController() const {
+    auto isTakenBySubPlayer = [this](SDL_JoystickID jid) {
+        for (int s = 1; s < 4; s++) {
+            if (coopSlots_[s].joined && coopSlots_[s].joyInstanceId == jid) return true;
+        }
+        return false;
+    };
+
+    if (lobbyPrimaryPadId_ >= 0 && !isTakenBySubPlayer(lobbyPrimaryPadId_)) {
+        if (SDL_GameController* preferred = SDL_GameControllerFromInstanceID(lobbyPrimaryPadId_)) {
+            return preferred;
+        }
+    }
+
+    for (int i = 0; i < SDL_NumJoysticks(); i++) {
+        if (!SDL_IsGameController(i)) continue;
+        SDL_JoystickID jid = SDL_JoystickGetDeviceInstanceID(i);
+        if (isTakenBySubPlayer(jid)) continue;
+        if (SDL_GameController* gc = SDL_GameControllerFromInstanceID(jid)) {
+            return gc;
+        }
+    }
+
+    return nullptr;
+}
+
+Vec2 Game::resolveAimDirection(const Player& player, const Vec2& aimInput) const {
+    if (aimInput.lengthSq() > 0.04f) return aimInput.normalized();
+    if (player.moving && player.vel.lengthSq() > 1.0f) return player.vel.normalized();
+    return {};
+}
+
+void Game::renderAimCrosshair(const Camera& camera, const Player& player, Vec2 aimDir,
+                              float distance, SDL_Color color, int size) {
+    if (player.dead || aimDir.lengthSq() <= 0.01f) return;
+
+    Vec2 chWorld = player.pos + aimDir.normalized() * distance;
+    Vec2 chScreen = camera.worldToScreen(chWorld);
+    SDL_SetRenderDrawColor(renderer_, color.r, color.g, color.b, color.a);
+    SDL_RenderDrawLine(renderer_, (int)(chScreen.x - size), (int)chScreen.y,
+                                  (int)(chScreen.x + size), (int)chScreen.y);
+    SDL_RenderDrawLine(renderer_, (int)chScreen.x, (int)(chScreen.y - size),
+                                  (int)chScreen.x, (int)(chScreen.y + size));
+    SDL_Rect dot = {(int)chScreen.x - 1, (int)chScreen.y - 1, 3, 3};
+    SDL_RenderFillRect(renderer_, &dot);
 }
 
 // Bypass SDL_RenderCopyExF entirely — compute corners on CPU and submit raw
@@ -6756,6 +7036,10 @@ void Game::renderShadingPass() {
     }
 }
 
+void Game::invalidateMinimapCache() {
+    minimapCacheDirty_ = true;
+}
+
 void Game::renderMinimap() {
     // ── Minimap ─ bottom-right corner ────────────────────────────────────────
     const int MMAP_MAX_PX = 160;  // maximum rendered dimension in pixels
@@ -6774,30 +7058,81 @@ void Game::renderMinimap() {
     // Position in bottom-right corner
     int mmX = SCREEN_W - MMAP_MARGIN - mmW;
     int mmY = SCREEN_H - MMAP_MARGIN - mmH;
+    int texW = mmW + MMAP_INNER * 2 + 2;
+    int texH = mmH + MMAP_INNER * 2 + 2;
 
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
 
-    // Background
-    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 160);
-    SDL_Rect bg = {mmX - MMAP_INNER, mmY - MMAP_INNER,
-                   mmW + MMAP_INNER*2, mmH + MMAP_INNER*2};
-    SDL_RenderFillRect(renderer_, &bg);
+    bool cacheMismatch = !minimapCacheTex_ || minimapCacheDirty_ ||
+                         minimapCacheMapW_ != mapW || minimapCacheMapH_ != mapH ||
+                         minimapCacheTilePx_ != tpx;
+    if (cacheMismatch) {
+        if (minimapCacheTex_) {
+            SDL_DestroyTexture(minimapCacheTex_);
+            minimapCacheTex_ = nullptr;
+        }
 
-    // Border
-    SDL_SetRenderDrawColor(renderer_, 0, 200, 180, 100);
-    SDL_Rect border = {mmX - MMAP_INNER - 1, mmY - MMAP_INNER - 1,
-                       mmW + MMAP_INNER*2 + 2, mmH + MMAP_INNER*2 + 2};
-    SDL_RenderDrawRect(renderer_, &border);
+        minimapCacheTex_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA8888,
+                                             SDL_TEXTUREACCESS_TARGET, texW, texH);
+        if (minimapCacheTex_) {
+            SDL_SetTextureBlendMode(minimapCacheTex_, SDL_BLENDMODE_BLEND);
 
-    // Tiles
-    for (int ty = 0; ty < mapH; ty++) {
-        for (int tx = 0; tx < mapW; tx++) {
-            SDL_Rect r = {mmX + tx * tpx, mmY + ty * tpx, tpx, tpx};
-            if (map_.isSolid(tx, ty))
-                SDL_SetRenderDrawColor(renderer_, 150, 140, 120, 220);
-            else
-                SDL_SetRenderDrawColor(renderer_, 28, 30, 35, 200);
-            SDL_RenderFillRect(renderer_, &r);
+            SDL_Texture* prevTarget = SDL_GetRenderTarget(renderer_);
+            SDL_SetRenderTarget(renderer_, minimapCacheTex_);
+            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 0);
+            SDL_RenderClear(renderer_);
+
+            SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 160);
+            SDL_Rect bg = {1, 1, mmW + MMAP_INNER * 2, mmH + MMAP_INNER * 2};
+            SDL_RenderFillRect(renderer_, &bg);
+
+            SDL_SetRenderDrawColor(renderer_, 0, 200, 180, 100);
+            SDL_Rect border = {0, 0, texW, texH};
+            SDL_RenderDrawRect(renderer_, &border);
+
+            for (int ty = 0; ty < mapH; ty++) {
+                for (int tx = 0; tx < mapW; tx++) {
+                    SDL_Rect r = {1 + MMAP_INNER + tx * tpx, 1 + MMAP_INNER + ty * tpx, tpx, tpx};
+                    if (map_.isSolid(tx, ty))
+                        SDL_SetRenderDrawColor(renderer_, 150, 140, 120, 220);
+                    else
+                        SDL_SetRenderDrawColor(renderer_, 28, 30, 35, 200);
+                    SDL_RenderFillRect(renderer_, &r);
+                }
+            }
+
+            SDL_SetRenderTarget(renderer_, prevTarget);
+            minimapCacheDirty_ = false;
+            minimapCacheMapW_ = mapW;
+            minimapCacheMapH_ = mapH;
+            minimapCacheTilePx_ = tpx;
+        }
+    }
+
+    if (minimapCacheTex_) {
+        SDL_Rect dst = {mmX - MMAP_INNER - 1, mmY - MMAP_INNER - 1, texW, texH};
+        SDL_RenderCopy(renderer_, minimapCacheTex_, nullptr, &dst);
+    } else {
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 160);
+        SDL_Rect bg = {mmX - MMAP_INNER, mmY - MMAP_INNER,
+                       mmW + MMAP_INNER*2, mmH + MMAP_INNER*2};
+        SDL_RenderFillRect(renderer_, &bg);
+
+        SDL_SetRenderDrawColor(renderer_, 0, 200, 180, 100);
+        SDL_Rect border = {mmX - MMAP_INNER - 1, mmY - MMAP_INNER - 1,
+                           mmW + MMAP_INNER*2 + 2, mmH + MMAP_INNER*2 + 2};
+        SDL_RenderDrawRect(renderer_, &border);
+
+        for (int ty = 0; ty < mapH; ty++) {
+            for (int tx = 0; tx < mapW; tx++) {
+                SDL_Rect r = {mmX + tx * tpx, mmY + ty * tpx, tpx, tpx};
+                if (map_.isSolid(tx, ty))
+                    SDL_SetRenderDrawColor(renderer_, 150, 140, 120, 220);
+                else
+                    SDL_SetRenderDrawColor(renderer_, 28, 30, 35, 200);
+                SDL_RenderFillRect(renderer_, &r);
+            }
         }
     }
 
@@ -7105,16 +7440,35 @@ void Game::renderUI() {
         drawTextCentered("SUPPLY DROP", popY + 8, 20, dropCol);
     }
 
+    bool drewGamepadCrosshair = false;
+    if (SDL_GameController* gc = getPrimaryGameplayController()) {
+        (void)gc;
+#ifdef __SWITCH__
+        bool wantsGamepadCrosshair = true;
+#else
+        bool wantsGamepadCrosshair = usingGamepad_;
+#endif
+        if (wantsGamepadCrosshair) {
+            Vec2 aimDir = resolveAimDirection(player_, aimInput_);
+            if (aimDir.lengthSq() > 0.01f) {
+                renderAimCrosshair(camera_, player_, aimDir, 96.0f, {0, 255, 228, 200}, 12);
+                drewGamepadCrosshair = true;
+            }
+        }
+    }
+
 #ifndef __SWITCH__
-    // Gameplay crosshair (same style as editor cursor, but slightly smaller)
-    int mx, my;
-    SDL_GetMouseState(&mx, &my);
-    const int sz = 12;
-    SDL_SetRenderDrawColor(renderer_, 0, 255, 228, 200);
-    SDL_RenderDrawLine(renderer_, mx - sz, my, mx + sz, my);
-    SDL_RenderDrawLine(renderer_, mx, my - sz, mx, my + sz);
-    SDL_Rect dot = {mx - 1, my - 1, 3, 3};
-    SDL_RenderFillRect(renderer_, &dot);
+    if (!drewGamepadCrosshair) {
+        // Gameplay crosshair (same style as editor cursor, but slightly smaller)
+        int mx, my;
+        SDL_GetMouseState(&mx, &my);
+        const int sz = 12;
+        SDL_SetRenderDrawColor(renderer_, 0, 255, 228, 200);
+        SDL_RenderDrawLine(renderer_, mx - sz, my, mx + sz, my);
+        SDL_RenderDrawLine(renderer_, mx, my - sz, mx, my + sz);
+        SDL_Rect dot = {mx - 1, my - 1, 3, 3};
+        SDL_RenderFillRect(renderer_, &dot);
+    }
 #endif
 }
 
@@ -7682,6 +8036,7 @@ void Game::startCustomMap(const std::string& path) {
     map_.height = customMap_.height;
     map_.tiles  = customMap_.tiles;
     map_.ceiling = customMap_.ceiling;
+    invalidateMinimapCache();
 
     // Reset entities
     enemies_.clear();
@@ -7776,6 +8131,7 @@ void Game::startCustomMapMultiplayer(const std::string& path) {
     map_.height = customMap_.height;
     map_.tiles  = customMap_.tiles;
     map_.ceiling = customMap_.ceiling;
+    invalidateMinimapCache();
 
     // Reset entities
     enemies_.clear();
@@ -8308,7 +8664,7 @@ void Game::renderCharSelectMenu() {
             legFrames = &defaultLegSprites_;
         }
 
-        drawText("WALK PREVIEW", detailPanel.x + 24, detailPanel.y + 20, 18, cyan);
+        drawText("PREVIEW", detailPanel.x + 24, detailPanel.y + 20, 18, cyan);
         drawText(previewName, detailPanel.x + 24, detailPanel.y + 48, 14, white);
 
         SDL_Rect previewBox = {detailPanel.x + 32, detailPanel.y + 82, detailPanel.w - 64, 320};
@@ -8356,8 +8712,6 @@ void Game::renderCharSelectMenu() {
 
         char stats[128];
         snprintf(stats, sizeof(stats), "HP:%d   SPD:%.0f   AMMO:%d", hp, speed, ammo);
-        drawTextCentered(stats, detailPanel.y + detailPanel.h - 96, 14, dimCyan);
-        drawTextCentered("Animated body + leg frames preview the walk cycle.", detailPanel.y + detailPanel.h - 68, 12, gray);
     };
 
     int baseY = listPanel.y + 54;
@@ -8408,9 +8762,6 @@ void Game::renderCharSelectMenu() {
     }
     if (ui_.hoveredItem == 63 && !usingGamepad_) menuSelection_ = backIdx;
 
-    if (availableChars_.empty()) {
-        drawTextCentered("No .cschar found in characters/ folder", SCREEN_H / 2 + 40, 14, {80, 80, 90, 255});
-    }
     { UI::HintPair hints[] = { {UI::Action::Confirm, "Select"}, {UI::Action::Back, "Back"} };
       ui_.drawHintBar(hints, 2); }
 }
@@ -8992,6 +9343,7 @@ void Game::testCharacter() {
     upgrades_.reset();
     crateSpawnTimer_ = 0;
     map_.generate(config_.mapWidth, config_.mapHeight);
+    invalidateMinimapCache();
 
     player_ = Player{};
     player_.maxHp = cc.hp;
@@ -9747,6 +10099,7 @@ void Game::startLocalCoopGame() {
     crateSpawnTimer_ = 0;
     sandboxMode_ = false;
     map_.generate(config_.mapWidth, config_.mapHeight);
+    invalidateMinimapCache();
     map_.findSpawnPoints();
 
     // Viewport dimensions per player count
@@ -9815,7 +10168,7 @@ void Game::handleLocalCoopInput() {
         if (fabsf(lx) < dead) lx = 0; if (fabsf(ly) < dead) ly = 0;
         if (fabsf(rx) < dead) rx = 0; if (fabsf(ry) < dead) ry = 0;
         coopSlots_[i].moveInput  = {lx, ly};
-        coopSlots_[i].aimInput   = {rx, ry};
+        if (rx != 0.0f || ry != 0.0f) coopSlots_[i].aimInput = {rx, ry};
         coopSlots_[i].fireInput  = (rt > 0.25f);
         coopSlots_[i].bombInput  = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_X);
         coopSlots_[i].parryInput = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_LEFTSHOULDER);
@@ -9852,7 +10205,7 @@ void Game::handleLocalCoopInput() {
         if (fabsf(lx) < dead) lx = 0; if (fabsf(ly) < dead) ly = 0;
         if (fabsf(rx) < dead) rx = 0; if (fabsf(ry) < dead) ry = 0;
         coopSlots_[i].moveInput  = {lx, ly};
-        coopSlots_[i].aimInput   = {rx, ry};
+        if (rx != 0.0f || ry != 0.0f) coopSlots_[i].aimInput = {rx, ry};
         coopSlots_[i].fireInput  = (rt > 0.25f);
         coopSlots_[i].bombInput  = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_X);
         coopSlots_[i].parryInput = (bool)SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_LEFTSHOULDER);
@@ -10271,34 +10624,9 @@ void Game::renderLocalCoopGame() {
         // ── Crosshair / aim indicator ──
         {
             Player& cp = coopSlots_[i].player;
-            if (!cp.dead) {
-                Vec2 aimDir = {};
-                // Use aim input if present, otherwise use movement direction
-                if (coopSlots_[i].aimInput.lengthSq() > 0.04f) {
-                    aimDir = coopSlots_[i].aimInput.normalized();
-                } else if (cp.moving && cp.vel.lengthSq() > 1.f) {
-                    aimDir = cp.vel.normalized();
-                }
-
-                if (aimDir.lengthSq() > 0.01f) {
-                    // Position crosshair 80 pixels from player in aim direction
-                    Vec2 chWorld = cp.pos + aimDir * 80.f;
-                    Vec2 chScreen = camera_.worldToScreen(chWorld);
-                    
-                    // Draw crosshair arms
-                    const int sz = 10;
-                    SDL_Color col = pColors[i];
-                    SDL_SetRenderDrawColor(renderer_, col.r, col.g, col.b, 200);
-                    SDL_RenderDrawLine(renderer_, (int)(chScreen.x - sz), (int)chScreen.y, 
-                                                  (int)(chScreen.x + sz), (int)chScreen.y);
-                    SDL_RenderDrawLine(renderer_, (int)chScreen.x, (int)(chScreen.y - sz), 
-                                                  (int)chScreen.x, (int)(chScreen.y + sz));
-                    
-                    // Draw center dot
-                    SDL_Rect dot = {(int)chScreen.x - 1, (int)chScreen.y - 1, 3, 3};
-                    SDL_RenderFillRect(renderer_, &dot);
-                }
-            }
+            Vec2 aimDir = resolveAimDirection(cp, coopSlots_[i].aimInput);
+            float crosshairDistance = (i == 0) ? 96.0f : 80.0f;
+            renderAimCrosshair(camera_, cp, aimDir, crosshairDistance, pColors[i]);
         }
     }
 
@@ -10615,26 +10943,9 @@ void Game::renderMultiplayerSplitscreen() {
         // ── Crosshair ──
         {
             Player& cp = coopSlots_[i].player;
-            if (!cp.dead) {
-                Vec2 aimDir = {};
-                if (coopSlots_[i].aimInput.lengthSq() > 0.04f)
-                    aimDir = coopSlots_[i].aimInput.normalized();
-                else if (cp.moving && cp.vel.lengthSq() > 1.f)
-                    aimDir = cp.vel.normalized();
-                if (aimDir.lengthSq() > 0.01f) {
-                    Vec2 chWorld = cp.pos + aimDir * 80.f;
-                    Vec2 chScreen = camera_.worldToScreen(chWorld);
-                    const int sz = 10;
-                    SDL_Color col = pColors[i];
-                    SDL_SetRenderDrawColor(renderer_, col.r, col.g, col.b, 200);
-                    SDL_RenderDrawLine(renderer_, (int)(chScreen.x-sz), (int)chScreen.y,
-                                                  (int)(chScreen.x+sz), (int)chScreen.y);
-                    SDL_RenderDrawLine(renderer_, (int)chScreen.x, (int)(chScreen.y-sz),
-                                                  (int)chScreen.x, (int)(chScreen.y+sz));
-                    SDL_Rect dot = {(int)chScreen.x-1, (int)chScreen.y-1, 3, 3};
-                    SDL_RenderFillRect(renderer_, &dot);
-                }
-            }
+            Vec2 aimDir = resolveAimDirection(cp, coopSlots_[i].aimInput);
+            float crosshairDistance = (i == 0) ? 96.0f : 80.0f;
+            renderAimCrosshair(camera_, cp, aimDir, crosshairDistance, pColors[i]);
         }
     }
 
@@ -11276,14 +11587,14 @@ void Game::setupNetworkCallbacks() {
         waveAnnounceNum_ = waveNum;
     };
 
-    net.onEnemyBulletSpawned = [this](Vec2 pos, Vec2 dir) {
+    net.onEnemyBulletSpawned = [this](Vec2 pos, Vec2 vel) {
         // Clients only — spawn the bullet locally for visuals and local collision
         auto& net2 = NetworkManager::instance();
         if (net2.isHost()) return;
         Entity b;
         b.pos = pos;
-        b.vel = dir * ENEMY_BULLET_SPEED;
-        b.rotation = atan2f(dir.y, dir.x);
+        b.vel = vel;
+        b.rotation = atan2f(vel.y, vel.x);
         b.size = BULLET_SIZE;
         b.lifetime = ENEMY_BULLET_LIFETIME;
         b.tag = TAG_ENEMY_BULLET;
