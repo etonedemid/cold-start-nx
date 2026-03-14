@@ -15562,7 +15562,7 @@ void Game::updateDiscordPresence() {
         } else {
             snprintf(det, sizeof(det), "Solo Play");
         }
-        snprintf(st, sizeof(st), "Wave %d Â· %d/%d HP",
+        snprintf(st, sizeof(st), "Wave %d - %d/%d HP",
                  waveNumber_, player_.hp, player_.maxHp);
         act.details   = det;
         act.state     = st;
