@@ -3735,8 +3735,8 @@ void Game::updatePlayer(float dt) {
                 queueMeleeImpactRumble(0.32f, 74, 0.46f, 1.18f);
                 if (upgrades_.hasShockEdge || upgrades_.hasStunRounds) emitShockPulse(e.pos);
                 if (simAuth) {
-                    e.hp = -9999.0f;
-                    killEnemy(e);
+                    e.hp -= meleePlayerDamage;
+                    if (e.hp <= 0) killEnemy(e);
                     if (upgrades_.hasBloodlust) {
                         p.meleeBloodlustProc = true;
                         p.ammo = std::min(p.maxAmmo, p.ammo + 1 + (upgrades_.hasScavenger ? 1 : 0));
@@ -4050,7 +4050,44 @@ void Game::updateEnemies(float dt) {
             e.lastSeenTime = gameTime_;
             e.idleTimer = 0;
         } else if (e.state == EnemyState::Chase && gameTime_ - e.lastSeenTime > LOSE_PLAYER_DELAY) {
-            e.state = EnemyState::Wander;
+            // Migrate to the nearest player within 1.5× vision range instead of wandering
+            const float extRange = ENEMY_VISION_DIST * 1.5f;
+            float migBest = 1e9f;
+            uint8_t migId = 255, migSlot = 0;
+            auto tryMigrate = [&](uint8_t pid, uint8_t pslot, Vec2 ppos) {
+                float d = (ppos - e.pos).length();
+                if (d < extRange && d < migBest) { migBest = d; migId = pid; migSlot = pslot; }
+            };
+            if (net.isOnline()) {
+                if (!player_.dead) tryMigrate(net.localPlayerId(), 0, player_.pos);
+                for (int ci = 1; ci < 4; ci++) {
+                    if (!coopSlots_[ci].joined || coopSlots_[ci].player.dead) continue;
+                    tryMigrate(net.localPlayerId(), (uint8_t)ci, coopSlots_[ci].player.pos);
+                }
+                for (auto& p : net.players()) {
+                    if (p.id == net.localPlayerId()) continue;
+                    if (p.alive && !p.spectating) tryMigrate(p.id, 0, p.pos);
+                    for (int spi = 0; spi < (int)p.subPlayers.size(); spi++) {
+                        if (!p.subPlayers[spi].alive) continue;
+                        tryMigrate(p.id, (uint8_t)(spi + 1), p.subPlayers[spi].targetPos);
+                    }
+                }
+            } else if (state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) {
+                for (int ci = 0; ci < 4; ci++) {
+                    if (!coopSlots_[ci].joined || coopSlots_[ci].player.dead) continue;
+                    tryMigrate((uint8_t)ci, (uint8_t)ci, coopSlots_[ci].player.pos);
+                }
+            } else if (!player_.dead) {
+                tryMigrate(0, 0, player_.pos);
+            }
+            if (migId != 255) {
+                e.targetPlayerId = migId;
+                e.targetPlayerSlot = migSlot;
+                e.state = EnemyState::Chase;
+                e.lastSeenTime = gameTime_;
+            } else {
+                e.state = EnemyState::Wander;
+            }
         }
 
         // After 30s of wandering with no sight of any player, hunt down the nearest one
