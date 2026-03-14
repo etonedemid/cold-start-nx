@@ -25,6 +25,8 @@
 #include <set>
 #include <functional>
 #include <unordered_map>
+#include <atomic>
+#include <mutex>
 
 enum class GameState {
     MainMenu,
@@ -69,6 +71,8 @@ enum class GameState {
     LocalCoopGame,   // active splitscreen game
     LocalCoopPaused, // paused from splitscreen
     LocalCoopDead,   // all local players dead
+    // ── Self-update (Switch only) ──
+    Updating,        // downloading new NRO in background
 };
 
 struct GameConfig {
@@ -187,6 +191,9 @@ public:
     bool init();
     void run();
     void shutdown();
+#ifdef __SWITCH__
+    void setNroPath(const char* path) { if (path) nroSelfPath_ = path; }
+#endif
 
 private:
     // ── Core ──
@@ -216,6 +223,15 @@ private:
     std::string latestVersion_;
     void checkForUpdates();
     bool isNewerVersion(const char* current, const char* latest);
+#ifdef __SWITCH__
+    // ── Switch self-update ──
+    std::string        nroSelfPath_;              // set by main() from argv[0]
+    std::atomic<float> updateProgress_{0.0f};     // 0–1
+    std::atomic<bool>  updateDone_{false};
+    std::atomic<bool>  updateFailed_{false};
+    void startSwitchUpdate();
+    void renderUpdating();
+#endif
 
     // ── Input (mapped to Joy-Con / Pro Controller) ──
     Vec2 moveInput_  = {0,0};
