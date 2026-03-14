@@ -12026,6 +12026,14 @@ void Game::setupNetworkCallbacks() {
             bool ours = (killerId == net2.localPlayerId());
             killEnemy(enemies_[enemyIdx], ours);
         }
+        // Keep bossWaveActive_ in sync on clients after each boss kill
+        if (bossWaveActive_) {
+            bool anyBossAlive = false;
+            for (auto& be : enemies_) {
+                if (be.alive && isBossType(be.type)) { anyBossAlive = true; break; }
+            }
+            if (!anyBossAlive) bossWaveActive_ = false;
+        }
     };
 
     // Host broadcast a config change (e.g. lobby settings update)
@@ -12457,6 +12465,10 @@ void Game::setupNetworkCallbacks() {
         waveNumber_ = waveNum;
         waveAnnounceTimer_ = 2.5f;
         waveAnnounceNum_ = waveNum;
+        // Clients don't run updateSpawning(), so sync the boss wave flag here
+        bool isBoss = false;
+        for (int bw : BOSS_WAVES) if (waveNum == bw) { isBoss = true; break; }
+        if (isBoss) bossWaveActive_ = true;
     };
 
     net.onEnemyBulletSpawned = [this](Vec2 pos, Vec2 vel) {
