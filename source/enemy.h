@@ -11,6 +11,9 @@ enum class EnemyType {
     Scout,
     Sniper,
     Gunner,
+    BossBrute,
+    BossSniper,
+    BossGunner,
 };
 enum class EnemyState { Wander, Chase };
 
