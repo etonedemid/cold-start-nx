@@ -6,33 +6,36 @@
 
 // ── Upgrade info table ──
 static const UpgradeInfo s_upgradeTable[] = {
-    // name              description                        color               cursed
-    { "Speed Up",        "+10% movement speed",             {100, 200, 255, 255}, false },  // SpeedUp
-    { "Damage Up",       "+50% damage, stronger axe hits",  {255, 100, 100, 255}, false },  // DamageUp
-    { "Fire Rate Up",    "+15% fire rate, faster axe reset",{255, 200, 50,  255}, false },  // FireRateUp
-    { "Ammo Up",         "+5 max ammo",                     {200, 200, 200, 255}, false },  // AmmoUp
-    { "Health Up",       "+1 max HP, full heal",            {255, 80,  80,  255}, false },  // HealthUp
-    { "Quick Reload",    "30% faster reload",               {80,  200, 80,  255}, false },  // ReloadUp
-    { "Blindness",       "5s invulnerability",               {100, 150, 255, 255}, false },  // Blindness
-    { "Bomb",            "+3 bombs",                        {255, 180, 50,  255}, false },  // BombPickup
-    { "Magnet",          "Bullets home slightly",           {200, 100, 255, 255}, false },  // Magnet
-    { "Ricochet",        "Bullets bounce off walls",        {150, 255, 150, 255}, false },  // Ricochet
-    { "Piercing",        "Bullets pierce, axe sweep widens",{255, 255, 100, 255}, false },  // Piercing
-    { "Triple Shot",     "Fire 3-way spread",               {255, 150, 200, 255}, false },  // TripleShot
-    { "Overclock",       "+20% fire rate, faster axe reset",{100, 255, 255, 255}, false },  // Overclock
-    { "Heavy Rounds",    "+65% damage, heavier axe hits",   {210, 180, 140, 255}, false },  // HeavyRounds
-    { "Bomb Core",       "+1 bomb, bombs charge faster",    {255, 140, 60, 255},  false },  // BombCore
-    { "Juggernaut",      "+2 max HP, slower, wider axe",    {120, 220, 140, 255}, false },  // Juggernaut
-    { "Stun Rounds",     "Hits briefly stun, axe pulse stuns", {140, 180, 255, 255}, false },  // StunRounds
-    { "Scavenger",       "Kills refund 1 ammo",             {255, 240, 120, 255}, false },  // Scavenger
-    { "Explosive Tips",  "Bullets pop in a small blast",    {255, 170, 80, 255},  false },  // ExplosiveTips
-    { "Chain Lightning", "Bullets zap nearby enemies",      {110, 240, 255, 255}, false },  // ChainLightning
-    { "Rail Slugs",      "Faster, bigger, harder shots",    {220, 220, 220, 255}, false },  // RailSlugs
-    { "Sharpened Edge",  "+range, +arc, +axe damage",       {220, 220, 255, 255}, false },  // SharpenedEdge
-    { "Bloodlust",       "Melee kills empower next swing",  {255, 70,  90,  255}, false },  // Bloodlust
-    { "Shock Edge",      "Melee hit emits a stun pulse",    {100, 255, 255, 255}, false },  // ShockEdge
-    { "Slow Down",       "-15% movement speed",             {150, 50,  50,  255}, true  },  // SlowDown
-    { "Glass Cannon",    "+50% damage, -2 HP",              {255, 50,  255, 255}, true  },  // GlassCannon
+    // name              description                              color                 cursed  quality
+    { "Speed Up",        "+10% movement speed",                  {100, 200, 255, 255}, false,  UpgradeQuality::Common   },  // SpeedUp
+    { "Damage Up",       "+50% damage, stronger axe hits",       {255, 100, 100, 255}, false,  UpgradeQuality::Uncommon },  // DamageUp
+    { "Fire Rate Up",    "+15% fire rate, faster axe reset",     {255, 200, 50,  255}, false,  UpgradeQuality::Common   },  // FireRateUp
+    { "Ammo Up",         "+5 max ammo",                          {200, 200, 200, 255}, false,  UpgradeQuality::Common   },  // AmmoUp
+    { "Health Up",       "+1 max HP, full heal",                 {255, 80,  80,  255}, false,  UpgradeQuality::Common   },  // HealthUp
+    { "Quick Reload",    "30% faster reload",                    {80,  200, 80,  255}, false,  UpgradeQuality::Common   },  // ReloadUp
+    { "Blindness",       "5s invulnerability",                   {100, 150, 255, 255}, false,  UpgradeQuality::Uncommon },  // Blindness
+    { "Bomb",            "+3 bombs",                             {255, 180, 50,  255}, false,  UpgradeQuality::Common   },  // BombPickup
+    { "Magnet",          "Bullets home slightly",                {200, 100, 255, 255}, false,  UpgradeQuality::Rare     },  // Magnet
+    { "Ricochet",        "Bullets bounce off walls",             {150, 255, 150, 255}, false,  UpgradeQuality::Rare     },  // Ricochet
+    { "Piercing",        "Bullets pierce, axe sweep widens",     {255, 255, 100, 255}, false,  UpgradeQuality::Rare     },  // Piercing
+    { "Triple Shot",     "Fire 3-way spread",                    {255, 150, 200, 255}, false,  UpgradeQuality::Rare     },  // TripleShot
+    { "Overclock",       "+20% fire rate, faster axe reset",    {100, 255, 255, 255}, false,  UpgradeQuality::Uncommon },  // Overclock
+    { "Heavy Rounds",    "+65% damage, heavier axe hits",        {210, 180, 140, 255}, false,  UpgradeQuality::Rare     },  // HeavyRounds
+    { "Bomb Core",       "+1 bomb, bombs charge faster",         {255, 140, 60, 255},  false,  UpgradeQuality::Rare     },  // BombCore
+    { "Juggernaut",      "+2 max HP, slower, wider axe",         {120, 220, 140, 255}, false,  UpgradeQuality::Rare     },  // Juggernaut
+    { "Stun Rounds",     "Hits briefly stun, axe pulse stuns",   {140, 180, 255, 255}, false,  UpgradeQuality::Uncommon },  // StunRounds
+    { "Scavenger",       "Kills refund 1 ammo",                  {255, 240, 120, 255}, false,  UpgradeQuality::Uncommon },  // Scavenger
+    { "Explosive Tips",  "Bullets pop in a small blast",         {255, 170, 80, 255},  false,  UpgradeQuality::Rare     },  // ExplosiveTips
+    { "Chain Lightning", "Bullets zap nearby enemies",           {110, 240, 255, 255}, false,  UpgradeQuality::Rare     },  // ChainLightning
+    { "Rail Slugs",      "Faster, bigger, harder shots",         {220, 220, 220, 255}, false,  UpgradeQuality::Rare     },  // RailSlugs
+    { "Sharpened Edge",  "+range, +arc, +axe damage",            {220, 220, 255, 255}, false,  UpgradeQuality::Rare     },  // SharpenedEdge
+    { "Bloodlust",       "Melee kills empower next swing",       {255, 70,  90,  255}, false,  UpgradeQuality::Rare     },  // Bloodlust
+    { "Shock Edge",      "Melee hit emits a stun pulse",         {100, 255, 255, 255}, false,  UpgradeQuality::Rare     },  // ShockEdge
+    { "Auto Reloader",   "Reload triggers automatically on empty",{100, 220, 180, 255}, false, UpgradeQuality::Uncommon },  // AutoReloader
+    { "Vampire",         "Killing an enemy restores 1 HP",       {220, 50,  50,  255}, false,  UpgradeQuality::Rare     },  // Vampire
+    { "Last Stand",      "At 1 HP: +100% dmg and +30% speed",   {255, 80, 255, 255},  false,  UpgradeQuality::Epic     },  // LastStand
+    { "Slow Down",       "-15% movement speed",                  {150, 50,  50,  255}, true,   UpgradeQuality::Cursed   },  // SlowDown
+    { "Glass Cannon",    "+50% damage, -2 HP",                   {255, 50,  255, 255}, true,   UpgradeQuality::Cursed   },  // GlassCannon
 };
 
 const UpgradeInfo& getUpgradeInfo(UpgradeType type) {
@@ -56,7 +59,7 @@ void PlayerUpgrades::apply(UpgradeType type) {
     case UpgradeType::SpeedUp:      speedBonus += 52.0f; break;
     case UpgradeType::DamageUp:     damageMulti += 0.5f; meleeDamageBonus += 1; break;
     case UpgradeType::FireRateUp:   fireRateBonus += 1.5f; meleeCooldownMulti *= 0.93f; break;
-    case UpgradeType::AmmoUp:       ammoBonus += 3; break;
+    case UpgradeType::AmmoUp:       ammoBonus += 5; break;
     case UpgradeType::HealthUp:     break; // handled in game logic (needs HP access)
     case UpgradeType::ReloadUp:     reloadMulti *= 0.7f; meleeCooldownMulti *= 0.95f; break;
     case UpgradeType::Blindness:    hasBlindness = true; blindnessTimer = 5.0f; break;
@@ -82,49 +85,36 @@ void PlayerUpgrades::apply(UpgradeType type) {
     case UpgradeType::ShockEdge:    hasShockEdge = true; break;
     case UpgradeType::SlowDown:     speedBonus -= 78.0f; break;
     case UpgradeType::GlassCannon:  damageMulti += 0.5f; meleeDamageBonus += 1; break;
+    case UpgradeType::AutoReloader: hasAutoReload = true; break;
+    case UpgradeType::Vampire:      hasVampire = true; break;
+    case UpgradeType::LastStand:    hasLastStand = true; break;
     default: break;
     }
 }
 
 // ── Random upgrade roll ──
 UpgradeType rollRandomUpgrade() {
-    // Weighted roll — common stat ups more likely, special abilities rarer, cursed rare
-    static const struct { UpgradeType type; int weight; } table[] = {
-        { UpgradeType::SpeedUp,      20 },
-        { UpgradeType::DamageUp,     20 },
-        { UpgradeType::FireRateUp,   18 },
-        { UpgradeType::AmmoUp,       15 },
-        { UpgradeType::HealthUp,     18 },
-        { UpgradeType::ReloadUp,     15 },
-        { UpgradeType::Blindness,     8 },
-        { UpgradeType::BombPickup,   10 },
-        { UpgradeType::Magnet,        5 },
-        { UpgradeType::Ricochet,      5 },
-        { UpgradeType::Piercing,      5 },
-        { UpgradeType::TripleShot,    4 },
-        { UpgradeType::Overclock,     8 },
-        { UpgradeType::HeavyRounds,   7 },
-        { UpgradeType::BombCore,      6 },
-        { UpgradeType::Juggernaut,    5 },
-        { UpgradeType::StunRounds,    6 },
-        { UpgradeType::Scavenger,     8 },
-        { UpgradeType::ExplosiveTips, 5 },
-        { UpgradeType::ChainLightning, 5 },
-        { UpgradeType::RailSlugs,     5 },
-        { UpgradeType::SharpenedEdge, 6 },
-        { UpgradeType::Bloodlust,     5 },
-        { UpgradeType::ShockEdge,     5 },
-        { UpgradeType::SlowDown,      3 },
-        { UpgradeType::GlassCannon,   3 },
-    };
-    int totalWeight = 0;
-    for (auto& e : table) totalWeight += e.weight;
+    // Step 1: roll a quality tier
+    // Common=50%, Uncommon=30%, Rare=15%, Epic=4%, Cursed=1%
+    int tierRoll = rand() % 100;
+    UpgradeQuality tier;
+    if      (tierRoll < 50) tier = UpgradeQuality::Common;
+    else if (tierRoll < 80) tier = UpgradeQuality::Uncommon;
+    else if (tierRoll < 95) tier = UpgradeQuality::Rare;
+    else if (tierRoll < 99) tier = UpgradeQuality::Epic;
+    else                    tier = UpgradeQuality::Cursed;
 
-    int roll = rand() % totalWeight;
-    int acc = 0;
-    for (auto& e : table) {
-        acc += e.weight;
-        if (roll < acc) return e.type;
+    // Step 2: count upgrades in that tier, then pick uniformly
+    int count = 0;
+    for (int i = 0; i < (int)UpgradeType::COUNT; i++)
+        if (s_upgradeTable[i].quality == tier) count++;
+    if (count == 0) return UpgradeType::SpeedUp;
+
+    int pick = rand() % count;
+    for (int i = 0; i < (int)UpgradeType::COUNT; i++) {
+        if (s_upgradeTable[i].quality == tier) {
+            if (pick-- == 0) return (UpgradeType)i;
+        }
     }
     return UpgradeType::SpeedUp;
 }

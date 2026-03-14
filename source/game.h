@@ -90,6 +90,7 @@ struct GameConfig {
     bool shaderGlow = true;
     bool shaderGlitch = true;
     bool shaderNeonEdge = true;
+    bool saveIncomingModsPermanently = false;
 };
 
 enum class DecalType : uint8_t { Blood, Scorch };
@@ -135,6 +136,8 @@ struct CoopSlot {
     bool  meleeInput  = false;
     int   weaponSwitchInput = 0; // +1 = next, -1 = prev
     bool  pauseInput = false;
+    bool  bombLaunchInput = false;  // per-slot ZL one-shot (launch orbiting bomb)
+    bool  bombLaunchHeld  = false;  // debounce: was ZL held last frame
 };
 
 // ── Mod-save dialog state ────────────────────────────────────────────────────
@@ -199,6 +202,8 @@ private:
     SDL_GameController* activeController_ = nullptr;
     void rumble(float strength, int durationMs);
     void rumble(float strength, int durationMs, float lowBandScale, float highBandScale);
+    void rumbleForSlot(int slot, float strength, int durationMs, float lowBandScale = 1.0f, float highBandScale = 1.0f);
+    SDL_GameController* getRumbleControllerForSlot(int slot) const;
 #ifdef __SWITCH__
     Uint32 switchRumbleStopTick_ = 0;
     bool switchRumbleActive_ = false;
@@ -460,8 +465,9 @@ private:
     // Combat
     void spawnBullet(Vec2 pos, float angle);
     void spawnEnemyBullet(Vec2 pos, Vec2 target, float angleOffset = 0.0f, float speed = ENEMY_BULLET_SPEED);
-    void spawnExplosion(Vec2 pos, uint8_t ownerId = 255);
-    void spawnBulletExplosion(Vec2 pos, int damage, uint8_t ownerId = 255, int skipEnemyIdx = -1, bool applyDamage = true);
+    void spawnExplosion(Vec2 pos, uint8_t ownerId = 255, uint8_t ownerSlot = 0);
+    void spawnBulletExplosion(Vec2 pos, int damage, uint8_t ownerId = 255, uint8_t ownerSlot = 0,
+                              int skipEnemyIdx = -1, bool applyDamage = true);
     void spawnPlayerDeathEffect(Vec2 pos);
     float localFeedbackFalloff(Vec2 pos, float maxDistance) const;
     void playExplosionFeedback(Vec2 pos, float maxDistance, float minStrength, float maxStrength,
@@ -578,6 +584,7 @@ private:
     float connectTimer_ = 0;                // connection attempt timeout
     bool  suppressNetExplosion_ = false;    // prevent re-sending network-spawned explosions
     bool  pvpDamageThisFrame_ = false;       // flag for PVP bullet-player collision
+    int   activeLocalPlayerSlot_ = 0;        // slot currently being simulated locally (0 = main player)
     std::string joinAddress_ = "127.0.0.1"; // address to join
     std::string connectStatus_;              // connection status message
     bool        ipTyping_    = false;        // currently editing IP on gamepad
@@ -586,6 +593,10 @@ private:
     int         usernameCharIdx_ = 0;        // palette index for username char picker
     int         kbNavHeldButton_ = -1;       // D-pad button held during keyboard picker nav
     Uint32      kbNavRepeatAt_   = 0;        // SDL_GetTicks target for next repeat step
+    int         menuNavHeldBtn_  = -1;       // D-pad button held for menu-nav hold-repeat
+    Uint32      menuNavRepeatAt_ = 0;        // timer for menu nav hold-repeat
+    int         menuNavStickPrev_= 0;        // previous analog-stick nav direction (-1/0/+1)
+    int         hostSetupScrollY_= 0;        // scroll offset (px) for HOST OPTIONS rows
 
     // ── Centralized soft keyboard ──
     struct SoftKeyboard {
@@ -642,6 +653,7 @@ private:
     // ── Lobby settings (host-controlled) ──
     LobbySettings lobbySettings_;           // synced from host to clients
     int  lobbySettingsSel_   = 0;           // which settings row is selected (host)
+    int  lobbySettingsScrollY_ = 0;         // scroll offset (px) for lobby settings panel
     int  lobbySettingsScroll_= 0;           // scroll offset for settings panel
     int  lobbyGamemodeIdx_   = 0;           // index into GameModeRegistry for lobby
     int  lobbyMapIdx_        = 0;           // 0=random, 1+=custom maps
@@ -734,6 +746,7 @@ private:
     MatchResult matchResult_;
     float matchTimer_   = 0.f;    // counts DOWN from pvpMatchDuration (0 if no limit)
     float matchElapsed_ = 0.f;    // counts UP from game start
+    float discordTimer_ = 0.f;    // throttle Discord presence refresh (~5 s)
     void renderWinLoss();
     void renderScoreboard();
     void renderTeamSelect();
@@ -771,4 +784,5 @@ private:
     void initMods();
     void reloadModdedContent();
     void applyModOverrides();
+    void updateDiscordPresence();
 };

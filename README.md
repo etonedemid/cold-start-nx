@@ -1,7 +1,7 @@
 
 <img width="848" height="204" alt="banner" src="https://github.com/user-attachments/assets/2a0af91e-a15e-462f-aa99-d2869a311675" />
 
-# COLD START  `v1.3.0`
+# COLD START  `v1.4.0`
 
 COLD START is a top-down action shooter built in C++ with SDL2 for PC and Nintendo Switch homebrew. It combines fast combat, local content editing, multiplayer support, and a lightweight modding pipeline aimed at rapid iteration.
 
@@ -162,11 +162,11 @@ nxlink -a <SWITCH_IP> -s cold_start.nro
 
 ## Release artifacts
 
-Current release artifacts for `v1.3.0`:
+Current release artifacts for `v1.4.0`:
 
-- `cold_start-linux-v1.3.0.zip` — Linux x86_64 (self-contained, SDL2 libs bundled)
-- `cold_start-linux-server-v1.3.0.zip` — Linux dedicated server (headless)
-- `cold_start-windows-v1.3.0.zip` — Windows x86_64 (MinGW, all DLLs bundled)
+- `cold_start-linux-v1.4.0.zip` — Linux x86_64 (self-contained, SDL2 libs bundled)
+- `cold_start-linux-server-v1.4.0.zip` — Linux dedicated server (headless)
+- `cold_start-windows-v1.4.0.zip` — Windows x86_64 (MinGW, all DLLs bundled)
 - `cold-start-nx.nro` — Nintendo Switch homebrew
 
 ## Controls
@@ -335,6 +335,15 @@ Practical notes:
 - First launch may create missing runtime content directories automatically
 
 ## Changelog
+
+### v1.4.0 (2026-03-14)
+- **Upgrade rarity tiers** — upgrades now roll from quality tiers (Common 50%, Uncommon 30%, Rare 15%, Epic 4%, Cursed 1%) instead of a flat weighted table; added `UpgradeQuality` enum assignable per upgrade so mod authors can tune rarity
+- **Three new upgrades** — Auto Reloader (Uncommon): fires reload automatically on empty magazine; Vampire (Rare): each enemy kill restores 1 HP; Last Stand (Epic): at 1 HP gain +100% bullet damage and +30% movement speed
+- **Multi-bomb** — holding the bomb button with multiple bombs queued now launches them in rapid succession instead of gating on the first bomb's expiry
+- **PvE kills in co-op scoreboard** — enemy kill credits now always accumulate per co-op slot so PvE kills appear on the split-screen and multiplayer K/D board
+- **Discord Rich Presence** — zero-dependency IPC client on Linux (`$XDG_RUNTIME_DIR/discord-ipc-N`) and Windows (`\\.\pipe\discord-ipc-N`) that shows current game state in the Discord activity panel; stubs cleanly on Switch and dedicated server builds
+- **AmmoUp fix** — `apply()` now correctly grants +5 max ammo matching the displayed description (was +3)
+- **Split-screen visual improvements** — co-op viewports now show HP bars above nameplate tags, invulnerability blink on player bodies, parry tint, and box-fragment age fade/shrink
 
 ### v1.3.0 (2026-03-13)
 - **P1 hotfix** — the gamepad that opened host/join now stays assigned to P1 during multiplayer splitscreen, instead of falling back to keyboard-only slot 0 input on PC

@@ -811,8 +811,9 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             uint8_t pid   = payloadLen > 12 ? payload[12] : 0;
             uint32_t netId = 0;
             if (payloadLen >= 17) memcpy(&netId, payload + 13, 4);
+            uint8_t playerSlot = (payloadLen >= 18) ? payload[17] : 0;
 
-            if (onBulletSpawned) onBulletSpawned(pos, angle, pid, netId);
+            if (onBulletSpawned) onBulletSpawned(pos, angle, pid, netId, playerSlot);
 
             if (isHost_) {
                 auto pkt = buildPacket(NetPacketType::BulletSpawn, payload, payloadLen);
@@ -848,7 +849,8 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             memcpy(&vel.x, payload + 8, 4);
             memcpy(&vel.y, payload + 12, 4);
             uint8_t pid = payload[16];
-            if (onBombSpawned) onBombSpawned(pos, vel, pid);
+            uint8_t playerSlot = (payloadLen >= 18) ? payload[17] : 0;
+            if (onBombSpawned) onBombSpawned(pos, vel, pid, playerSlot);
 
             // Host relays bombs to other clients
             if (isHost_) {
@@ -867,7 +869,8 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             memcpy(&pos.x, payload, 4);
             memcpy(&pos.y, payload + 4, 4);
             uint8_t ownerId = (payloadLen >= 9) ? payload[8] : 255;
-            if (onExplosionSpawned) onExplosionSpawned(pos, ownerId);
+            uint8_t ownerSlot = (payloadLen >= 10) ? payload[9] : 0;
+            if (onExplosionSpawned) onExplosionSpawned(pos, ownerId, ownerSlot);
             // Host relays explosions to all other clients
             if (isHost_) {
                 auto pkt = buildPacket(NetPacketType::ExplosionSpawn, payload, payloadLen);
@@ -882,7 +885,8 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
     case NetPacketType::BombOrbit: {
         if (payloadLen >= 1) {
             uint8_t ownerId = payload[0];
-            if (onBombOrbit) onBombOrbit(ownerId);
+            uint8_t ownerSlot = (payloadLen >= 2) ? payload[1] : 0;
+            if (onBombOrbit) onBombOrbit(ownerId, ownerSlot);
             // Host relays to all other clients
             if (isHost_) {
                 auto pkt = buildPacket(NetPacketType::BombOrbit, payload, payloadLen);
@@ -1917,15 +1921,16 @@ void NetworkManager::sendSubPlayerStates(uint8_t localId, const SubPlayerInfo* s
 #endif
 }
 
-void NetworkManager::sendBulletSpawn(Vec2 pos, float angle, uint8_t playerId, uint32_t netId) {
+void NetworkManager::sendBulletSpawn(Vec2 pos, float angle, uint8_t playerId, uint32_t netId, uint8_t playerSlot) {
 #if HAS_ENET
-    uint8_t payload[17];
+    uint8_t payload[18];
     memcpy(payload,      &pos.x, 4);
     memcpy(payload + 4,  &pos.y, 4);
     memcpy(payload + 8,  &angle, 4);
     payload[12] = playerId;
     memcpy(payload + 13, &netId, 4);
-    auto pkt = buildPacket(NetPacketType::BulletSpawn, payload, 17);
+    payload[17] = playerSlot;
+    auto pkt = buildPacket(NetPacketType::BulletSpawn, payload, 18);
     sendUnreliable(pkt);
 #endif
 }
@@ -1937,34 +1942,36 @@ void NetworkManager::sendBulletHit(uint32_t bulletNetId) {
 #endif
 }
 
-void NetworkManager::sendBombSpawn(Vec2 pos, Vec2 vel, uint8_t playerId) {
+void NetworkManager::sendBombSpawn(Vec2 pos, Vec2 vel, uint8_t playerId, uint8_t playerSlot) {
 #if HAS_ENET
-    uint8_t payload[17];
+    uint8_t payload[18];
     memcpy(payload, &pos.x, 4);
     memcpy(payload + 4, &pos.y, 4);
     memcpy(payload + 8, &vel.x, 4);
     memcpy(payload + 12, &vel.y, 4);
     payload[16] = playerId;
-    auto pkt = buildPacket(NetPacketType::BombSpawn, payload, 17);
+    payload[17] = playerSlot;
+    auto pkt = buildPacket(NetPacketType::BombSpawn, payload, 18);
     sendReliable(pkt);
 #endif
 }
 
-void NetworkManager::sendBombOrbit(uint8_t ownerId) {
+void NetworkManager::sendBombOrbit(uint8_t ownerId, uint8_t ownerSlot) {
 #if HAS_ENET
-    uint8_t payload[1] = { ownerId };
-    auto pkt = buildPacket(NetPacketType::BombOrbit, payload, 1);
+    uint8_t payload[2] = { ownerId, ownerSlot };
+    auto pkt = buildPacket(NetPacketType::BombOrbit, payload, 2);
     sendReliable(pkt);
 #endif
 }
 
-void NetworkManager::sendExplosion(Vec2 pos, uint8_t ownerId) {
+void NetworkManager::sendExplosion(Vec2 pos, uint8_t ownerId, uint8_t ownerSlot) {
 #if HAS_ENET
-    uint8_t payload[9];
+    uint8_t payload[10];
     memcpy(payload, &pos.x, 4);
     memcpy(payload + 4, &pos.y, 4);
     payload[8] = ownerId;
-    auto pkt = buildPacket(NetPacketType::ExplosionSpawn, payload, 9);
+    payload[9] = ownerSlot;
+    auto pkt = buildPacket(NetPacketType::ExplosionSpawn, payload, 10);
     sendReliable(pkt);
 #endif
 }

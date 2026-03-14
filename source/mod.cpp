@@ -663,7 +663,7 @@ std::vector<uint8_t> ModManager::serializeEnabledMods() const {
     return result;
 }
 
-void ModManager::deserializeAndInstallMods(const std::vector<uint8_t>& data) {
+void ModManager::deserializeAndInstallMods(const std::vector<uint8_t>& data, bool permanentInstall) {
     if (data.size() < 2 || data.size() > MAX_MOD_SYNC_BYTES) {
         printf("ModSync: rejecting blob size %zu\n", data.size());
         return;
@@ -681,11 +681,14 @@ void ModManager::deserializeAndInstallMods(const std::vector<uint8_t>& data) {
 
     printf("ModSync: deserializing %u mods (%zu bytes)\n", numMods, data.size());
 
-    // Create sync directory
     mkdir("mods", 0755);
-    std::string syncBase = "mods/_mp_sync";
-    removeTree(syncBase);
-    mkdir(syncBase.c_str(), 0755);
+    std::string installBase = permanentInstall ? "mods" : "mods/_mp_sync";
+    if (!permanentInstall) {
+        removeTree(installBase);
+        mkdir(installBase.c_str(), 0755);
+    }
+
+    std::unordered_set<std::string> installedIds;
 
     for (uint16_t mi = 0; mi < numMods && offset < data.size(); mi++) {
         // Read mod ID
@@ -704,8 +707,12 @@ void ModManager::deserializeAndInstallMods(const std::vector<uint8_t>& data) {
         }
 
         // Create mod directory (only if id is safe)
-        std::string modDir = syncBase + "/" + modId;
-        if (!skipMod) mkdir(modDir.c_str(), 0755);
+        std::string modDir = installBase + "/" + modId;
+        if (!skipMod) {
+            if (permanentInstall) removeTree(modDir);
+            mkdir(modDir.c_str(), 0755);
+            installedIds.insert(modId);
+        }
 
         // Read file count
         if (offset + 2 > data.size()) break;
@@ -720,7 +727,8 @@ void ModManager::deserializeAndInstallMods(const std::vector<uint8_t>& data) {
         }
 
         if (!skipMod)
-            printf("ModSync: installing mod '%s' (%u files)\n", modId.c_str(), numFiles);
+            printf("ModSync: installing mod '%s' (%u files)%s\n",
+                   modId.c_str(), numFiles, permanentInstall ? " permanently" : "");
 
         for (uint16_t fi = 0; fi < numFiles && offset < data.size(); fi++) {
             // Read relative path
@@ -778,7 +786,7 @@ void ModManager::deserializeAndInstallMods(const std::vector<uint8_t>& data) {
 
     // Enable synced mods (they came from the host, so they should be active)
     for (auto& m : mods_) {
-        if (m.folder.find("_mp_sync") != std::string::npos) {
+        if (installedIds.count(m.id)) {
             m.enabled = true;
         } else if (prevEnabled.count(m.id)) {
             m.enabled = prevEnabled[m.id];
@@ -786,5 +794,6 @@ void ModManager::deserializeAndInstallMods(const std::vector<uint8_t>& data) {
     }
 
     loadAllEnabled();
+    saveModConfig();
     printf("ModSync: mods installed and loaded\n");
 }

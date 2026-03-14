@@ -283,11 +283,11 @@ public:
     // Game state sending (called by game update)
     void sendPlayerState(const NetPlayer& state);
     void sendSubPlayerStates(uint8_t localId, const SubPlayerInfo* subs, int count);
-    void sendBulletSpawn(Vec2 pos, float angle, uint8_t playerId, uint32_t netId = 0);
+    void sendBulletSpawn(Vec2 pos, float angle, uint8_t playerId, uint32_t netId = 0, uint8_t playerSlot = 0);
     void sendBulletHit(uint32_t bulletNetId);
-    void sendBombSpawn(Vec2 pos, Vec2 vel, uint8_t playerId);
-    void sendBombOrbit(uint8_t ownerId);            // broadcast "I have an orbiting bomb"
-    void sendExplosion(Vec2 pos, uint8_t ownerId = 255);
+    void sendBombSpawn(Vec2 pos, Vec2 vel, uint8_t playerId, uint8_t playerSlot = 0);
+    void sendBombOrbit(uint8_t ownerId, uint8_t ownerSlot = 0);            // broadcast "I have an orbiting bomb"
+    void sendExplosion(Vec2 pos, uint8_t ownerId = 255, uint8_t ownerSlot = 0);
     void sendEnemyStates(const void* enemyData, int count);   // host only
     void sendCrateSpawn(Vec2 pos, uint8_t upgradeType);       // host only
     void sendPickupCollect(Vec2 pos, uint8_t upgradeType, uint8_t playerId);
@@ -330,11 +330,11 @@ public:
     std::function<void(uint8_t id, const std::string& name)> onPlayerJoined;
     std::function<void(uint8_t id)> onPlayerLeft;
     std::function<void(const NetPlayer& state)> onPlayerStateReceived;
-    std::function<void(Vec2 pos, float angle, uint8_t playerId, uint32_t netId)> onBulletSpawned;
+    std::function<void(Vec2 pos, float angle, uint8_t playerId, uint32_t netId, uint8_t playerSlot)> onBulletSpawned;
     std::function<void(uint32_t netId)> onBulletRemoved;
-    std::function<void(Vec2 pos, Vec2 vel, uint8_t playerId)> onBombSpawned;
-    std::function<void(uint8_t ownerId)> onBombOrbit;
-    std::function<void(Vec2 pos, uint8_t ownerId)> onExplosionSpawned;
+    std::function<void(Vec2 pos, Vec2 vel, uint8_t playerId, uint8_t playerSlot)> onBombSpawned;
+    std::function<void(uint8_t ownerId, uint8_t ownerSlot)> onBombOrbit;
+    std::function<void(Vec2 pos, uint8_t ownerId, uint8_t ownerSlot)> onExplosionSpawned;
     std::function<void(Vec2 pos, uint8_t upgradeType)> onCrateSpawned;
     std::function<void(Vec2 pos, uint8_t upgradeType, uint8_t playerId)> onPickupCollected;
     std::function<void(const void* data, int count)> onEnemyStatesReceived;
