@@ -897,6 +897,95 @@ bool Game::isNewerVersion(const char* current, const char* latest) {
     return UpdateChecker::isNewerVersion(current, latest);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Switch self-update
+// ─────────────────────────────────────────────────────────────────────────────
+#ifdef __SWITCH__
+void Game::startSwitchUpdate() {
+    updateDone_.store(false);
+    updateFailed_.store(false);
+    updateProgress_.store(0.0f);
+    state_ = GameState::Updating;
+
+    std::string ver = latestVersion_;
+
+    // Determine the path of the currently running NRO
+    std::string nroPath = nroSelfPath_;
+    if (nroPath.empty()) {
+        // Fallback to standard hbmenu install location
+        nroPath = "sdmc:/switch/cold_start/cold_start.nro";
+    }
+
+    std::thread([this, ver, nroPath]() {
+        bool ok = UpdateChecker::downloadNro(
+            "etonedemid", "cold-start-nx", ver.c_str(), nroPath.c_str(),
+            [this](int64_t done, int64_t total) {
+                if (total > 0)
+                    updateProgress_.store((float)done / (float)total);
+            });
+        if (ok) updateDone_.store(true);
+        else    updateFailed_.store(true);
+    }).detach();
+}
+
+void Game::renderUpdating() {
+    float progress = updateProgress_.load();
+    bool  failed   = updateFailed_.load();
+    bool  done     = updateDone_.load();
+
+    SDL_SetRenderDrawColor(renderer_, 12, 12, 18, 255);
+    SDL_RenderClear(renderer_);
+
+    const int cx = SCREEN_W / 2;
+    const int cy = SCREEN_H / 2;
+
+    if (failed) {
+        ui_.drawTextCentered("UPDATE FAILED", cy - 30, 26, UI::Color::Red);
+        ui_.drawTextCentered("Could not download update.", cy + 10, 14, UI::Color::White);
+        ui_.drawTextCentered("Exiting...", cy + 34, 13, {130, 130, 130, 255});
+    } else if (done) {
+        ui_.drawTextCentered("UPDATE COMPLETE", cy - 30, 26, UI::Color::Green);
+        ui_.drawTextCentered("Relaunch the game to apply.", cy + 10, 14, UI::Color::White);
+        ui_.drawTextCentered("Exiting...", cy + 34, 13, {130, 130, 130, 255});
+    } else {
+        char title[64];
+        snprintf(title, sizeof(title), "UPDATING TO v%s", latestVersion_.c_str());
+        ui_.drawTextCentered(title, cy - 60, 22, UI::Color::Cyan);
+
+        // Progress bar
+        const int barW = 480, barH = 22;
+        const int barX = cx - barW / 2;
+        const int barY = cy - barH / 2;
+
+        // Background (dark)
+        SDL_SetRenderDrawColor(renderer_, 30, 30, 40, 255);
+        SDL_Rect bg = {barX, barY, barW, barH};
+        SDL_RenderFillRect(renderer_, &bg);
+
+        // Fill
+        int fillW = (int)(barW * progress);
+        if (fillW > 0) {
+            SDL_SetRenderDrawColor(renderer_, 50, 200, 100, 255);
+            SDL_Rect fill = {barX, barY, fillW, barH};
+            SDL_RenderFillRect(renderer_, &fill);
+        }
+
+        // Border
+        SDL_SetRenderDrawColor(renderer_, 80, 130, 100, 255);
+        SDL_RenderDrawRect(renderer_, &bg);
+
+        // Percentage label
+        if (progress > 0.0f) {
+            char pct[16];
+            snprintf(pct, sizeof(pct), "%d%%", (int)(progress * 100.0f));
+            ui_.drawTextCentered(pct, barY + barH + 12, 14, UI::Color::White);
+        } else {
+            ui_.drawTextCentered("Connecting...", barY + barH + 12, 14, {120, 120, 120, 255});
+        }
+    }
+}
+#endif // __SWITCH__
+
 // ═════════════════════════════════════════════════════════════════════════════
 //  Asset Loading
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1733,9 +1822,11 @@ void Game::handleInput() {
                 menuSelection_ = 0;
             }
             else if (menuSelection_ == 9) {
-                // UPDATE — open release page
+                // UPDATE
                 #if defined(__SWITCH__)
-                    /* no browser on Switch */
+                    if (updateAvailable_ && !latestVersion_.empty()) {
+                        startSwitchUpdate();
+                    }
                 #elif defined(_WIN32)
                     system("start https://github.com/etonedemid/cold-start-nx/releases/latest");
                 #else
@@ -3234,6 +3325,15 @@ void Game::update() {
     pickupPopupTimer_  = std::max(0.0f, pickupPopupTimer_ - dt);
     waveAnnounceTimer_ = std::max(0.0f, waveAnnounceTimer_ - dt);
     cratePopupTimer_   = std::max(0.0f, cratePopupTimer_ - dt);
+
+#ifdef __SWITCH__
+    // Downloading update — just wait for the background thread to finish
+    if (state_ == GameState::Updating) {
+        if (updateDone_.load() || updateFailed_.load())
+            running_ = false;  // exit so Switch can relaunch the new NRO
+        return;
+    }
+#endif
 
     // Only run gameplay logic in active playing states
     bool isPlayingState =
@@ -7042,6 +7142,11 @@ void Game::render() {
         if (state_ == GameState::LocalCoopPaused) renderPauseMenu();
         if (state_ == GameState::LocalCoopDead)   renderDeathScreen();
         break;
+#ifdef __SWITCH__
+    case GameState::Updating:
+        renderUpdating();
+        break;
+#endif
     }
 
     // Mod-save dialog overlay — rendered on top of everything
