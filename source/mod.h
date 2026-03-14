@@ -164,8 +164,9 @@ public:
     // Network mod sync: serialize all enabled mods into a blob
     // Includes mod.cfg + small content files (skip large media)
     std::vector<uint8_t> serializeEnabledMods() const;
-    // Install mods from serialized blob (writes to mods/_mp_sync/)
-    void deserializeAndInstallMods(const std::vector<uint8_t>& data);
+    // Install mods from serialized blob. Temporary installs go to mods/_mp_sync/;
+    // permanent installs go to mods/<id>/ so players can edit them later.
+    void deserializeAndInstallMods(const std::vector<uint8_t>& data, bool permanentInstall = false);
 
 private:
     std::vector<Mod> mods_;

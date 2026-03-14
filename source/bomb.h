@@ -15,8 +15,10 @@ struct Bomb {
     float   lifetime    = 10.0f;
     float   age         = 0;
     uint8_t ownerId     = 255;     // player who owns/launched this bomb (255 = local/unowned)
+    uint8_t ownerSubSlot = 0;      // local splitscreen slot on the owning client (0 = main player)
     int     homingTarget   = -1;   // index into enemies_ for homing, -1 = none
     uint8_t homingPlayerId = 255;  // remote player ID to home toward (PvP), 255 = none
+    uint8_t homingPlayerSlot = 0;  // remote/local subplayer slot for PvP homing (0 = main player)
     float   homingStr      = 0.0f;
 
     // Animation
@@ -35,4 +37,5 @@ struct Explosion {
     bool    alive     = true;
     bool    dealtDmg  = false;  // apply damage only once
     uint8_t ownerId   = 255;    // player who triggered the explosion (255 = unowned/AI)
+    uint8_t ownerSubSlot = 0;   // local splitscreen slot on the owning client (0 = main player)
 };
