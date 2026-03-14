@@ -95,22 +95,33 @@ bool DiscordRPC::tryConnect() {
     for (int i = 0; i < 10; ++i) {
         char path[64];
         snprintf(path, sizeof(path), "\\\\.\\pipe\\discord-ipc-%d", i);
-        HANDLE h = CreateFileA(path,
-                               GENERIC_READ | GENERIC_WRITE,
+        HANDLE h = CreateFileA(path, GENERIC_READ | GENERIC_WRITE,
                                0, nullptr, OPEN_EXISTING, 0, nullptr);
-        if (h != INVALID_HANDLE_VALUE) {
-            pipe_ = (void*)h;
-            return true;
+        if (h == INVALID_HANDLE_VALUE) continue;
+        pipe_ = (void*)h;
+        char hs[256];
+        snprintf(hs, sizeof(hs), "{\"v\":1,\"client_id\":\"%s\"}", appId_.c_str());
+        if (!sendRaw(0, hs, (uint32_t)strlen(hs))) {
+            CloseHandle(h); pipe_ = (void*)(intptr_t)-1; return false;
         }
+        uint32_t hdr[2] = {}; char rbuf[4096] = {}; DWORD rd = 0;
+        if (!ReadFile(h, hdr, 8, &rd, nullptr) || rd != 8) {
+            CloseHandle(h); pipe_ = (void*)(intptr_t)-1; return false;
+        }
+        uint32_t payLen = hdr[1] < (uint32_t)(sizeof(rbuf)-1) ? hdr[1] : (uint32_t)(sizeof(rbuf)-1);
+        if (!ReadFile(h, rbuf, payLen, &rd, nullptr) || rd == 0) {
+            CloseHandle(h); pipe_ = (void*)(intptr_t)-1; return false;
+        }
+        rbuf[rd] = '\0';
+        if (!strstr(rbuf, "READY")) {
+            fprintf(stderr, "[Discord] handshake rejected: %.256s\n", rbuf);
+            CloseHandle(h); pipe_ = (void*)(intptr_t)-1; return false;
+        }
+        return true;
     }
     return false;
 #else
-    const char* dirs[] = {
-        getenv("XDG_RUNTIME_DIR"),
-        getenv("TMPDIR"),
-        "/tmp",
-        nullptr
-    };
+    const char* dirs[] = { getenv("XDG_RUNTIME_DIR"), getenv("TMPDIR"), "/tmp", nullptr };
     for (int di = 0; dirs[di]; ++di) {
         for (int i = 0; i < 10; ++i) {
             char path[256];
@@ -123,17 +134,49 @@ bool DiscordRPC::tryConnect() {
             addr.sun_family = AF_UNIX;
             strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
 
-            if (::connect(s, (struct sockaddr*)&addr, sizeof(addr)) == 0) {
-                fcntl(s, F_SETFL, O_NONBLOCK);
-                fd_ = s;
-                return true;
+            if (::connect(s, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
+                ::close(s); continue;
             }
-            ::close(s);
+
+            // Send handshake (opcode 0) while socket is still blocking
+            fd_ = s;
+            char hs[256];
+            snprintf(hs, sizeof(hs), "{\"v\":1,\"client_id\":\"%s\"}", appId_.c_str());
+            if (!sendRaw(0, hs, (uint32_t)strlen(hs))) {
+                fd_ = -1; ::close(s); continue;
+            }
+
+            // Wait for READY frame (500 ms timeout)
+            struct timeval tv{}; tv.tv_usec = 500000;
+            setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+            uint32_t hdr[2] = {}; char rbuf[4096] = {};
+            ssize_t rh = ::recv(s, hdr, 8, MSG_WAITALL);
+            bool ok = false;
+            if (rh == 8 && hdr[1] > 0 && hdr[1] < sizeof(rbuf) - 1) {
+                ssize_t rb = ::recv(s, rbuf, hdr[1], MSG_WAITALL);
+                if (rb > 0) {
+                    rbuf[rb] = '\0';
+                    ok = (strstr(rbuf, "READY") != nullptr);
+                    if (!ok) fprintf(stderr, "[Discord] handshake rejected: %.256s\n", rbuf);
+                }
+            } else {
+                fprintf(stderr, "[Discord] no READY frame (rh=%zd errno=%d)\n", rh, errno);
+            }
+
+            // Remove recv timeout, go non-blocking
+            tv = {}; setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+            fcntl(s, F_SETFL, O_NONBLOCK);
+
+            if (!ok) { fd_ = -1; ::close(s); return false; }
+            return true;
         }
     }
     return false;
 #endif
 }
+
+
 
 void DiscordRPC::pumpRead() {
     // Drain any responses so the IPC buffer never fills up.
@@ -225,7 +268,7 @@ void DiscordRPC::tick(float dt) {
     if (connected_) {
         pumpRead();
         if (!connected_) return; // pumpRead detected disconnect
-        if (!shook_) { handshake(); shook_ = true; }
+        if (!shook_) { handshake(); shook_ = true; }  // legacy fallback path
         flushPending();
         return;
     }
@@ -235,9 +278,7 @@ void DiscordRPC::tick(float dt) {
 
     if (tryConnect()) {
         connected_ = true;
-        shook_     = false;
-        handshake();
-        shook_ = true;
+        shook_     = true;   // handshake + READY already confirmed in tryConnect()
         flushPending();
     }
 }
