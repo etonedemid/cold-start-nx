@@ -879,6 +879,10 @@ void Game::updateSwitchRumble() {
 void Game::checkForUpdates() {
     if (updateChecked_) return;
     updateChecked_ = true;
+
+#ifdef __SWITCH__
+    return;
+#endif
     
     // Run in background thread to avoid blocking startup
     std::thread([this]() {
@@ -896,95 +900,6 @@ void Game::checkForUpdates() {
 bool Game::isNewerVersion(const char* current, const char* latest) {
     return UpdateChecker::isNewerVersion(current, latest);
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  Switch self-update
-// ─────────────────────────────────────────────────────────────────────────────
-#ifdef __SWITCH__
-void Game::startSwitchUpdate() {
-    updateDone_.store(false);
-    updateFailed_.store(false);
-    updateProgress_.store(0.0f);
-    state_ = GameState::Updating;
-
-    std::string ver = latestVersion_;
-
-    // Determine the path of the currently running NRO
-    std::string nroPath = nroSelfPath_;
-    if (nroPath.empty()) {
-        // Fallback to standard hbmenu install location
-        nroPath = "sdmc:/switch/cold_start/cold_start.nro";
-    }
-
-    std::thread([this, ver, nroPath]() {
-        bool ok = UpdateChecker::downloadNro(
-            "etonedemid", "cold-start-nx", ver.c_str(), nroPath.c_str(),
-            [this](int64_t done, int64_t total) {
-                if (total > 0)
-                    updateProgress_.store((float)done / (float)total);
-            });
-        if (ok) updateDone_.store(true);
-        else    updateFailed_.store(true);
-    }).detach();
-}
-
-void Game::renderUpdating() {
-    float progress = updateProgress_.load();
-    bool  failed   = updateFailed_.load();
-    bool  done     = updateDone_.load();
-
-    SDL_SetRenderDrawColor(renderer_, 12, 12, 18, 255);
-    SDL_RenderClear(renderer_);
-
-    const int cx = SCREEN_W / 2;
-    const int cy = SCREEN_H / 2;
-
-    if (failed) {
-        ui_.drawTextCentered("UPDATE FAILED", cy - 30, 26, UI::Color::Red);
-        ui_.drawTextCentered("Could not download update.", cy + 10, 14, UI::Color::White);
-        ui_.drawTextCentered("Exiting...", cy + 34, 13, {130, 130, 130, 255});
-    } else if (done) {
-        ui_.drawTextCentered("UPDATE COMPLETE", cy - 30, 26, UI::Color::Green);
-        ui_.drawTextCentered("Relaunch the game to apply.", cy + 10, 14, UI::Color::White);
-        ui_.drawTextCentered("Exiting...", cy + 34, 13, {130, 130, 130, 255});
-    } else {
-        char title[64];
-        snprintf(title, sizeof(title), "UPDATING TO v%s", latestVersion_.c_str());
-        ui_.drawTextCentered(title, cy - 60, 22, UI::Color::Cyan);
-
-        // Progress bar
-        const int barW = 480, barH = 22;
-        const int barX = cx - barW / 2;
-        const int barY = cy - barH / 2;
-
-        // Background (dark)
-        SDL_SetRenderDrawColor(renderer_, 30, 30, 40, 255);
-        SDL_Rect bg = {barX, barY, barW, barH};
-        SDL_RenderFillRect(renderer_, &bg);
-
-        // Fill
-        int fillW = (int)(barW * progress);
-        if (fillW > 0) {
-            SDL_SetRenderDrawColor(renderer_, 50, 200, 100, 255);
-            SDL_Rect fill = {barX, barY, fillW, barH};
-            SDL_RenderFillRect(renderer_, &fill);
-        }
-
-        // Border
-        SDL_SetRenderDrawColor(renderer_, 80, 130, 100, 255);
-        SDL_RenderDrawRect(renderer_, &bg);
-
-        // Percentage label
-        if (progress > 0.0f) {
-            char pct[16];
-            snprintf(pct, sizeof(pct), "%d%%", (int)(progress * 100.0f));
-            ui_.drawTextCentered(pct, barY + barH + 12, 14, UI::Color::White);
-        } else {
-            ui_.drawTextCentered("Connecting...", barY + barH + 12, 14, {120, 120, 120, 255});
-        }
-    }
-}
-#endif // __SWITCH__
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  Asset Loading
@@ -1763,7 +1678,11 @@ void Game::handleInput() {
     // Handle menu state transitions
     if (state_ == GameState::MainMenu) {
         if (menuSelection_ < 0) menuSelection_ = 0;
+#ifdef __SWITCH__
+        if (menuSelection_ > 9) menuSelection_ = 9;  // 0-9: 10 items (PLAY through QUIT)
+#else
         if (menuSelection_ > 10) menuSelection_ = 10;  // 0-10: 11 items (PLAY through QUIT)
+#endif
         if (confirmInput_) {
             if (menuSelection_ == 0) {
                 state_ = GameState::PlayModeMenu;
@@ -1821,13 +1740,10 @@ void Game::handleInput() {
                 configSelection_ = 0;
                 menuSelection_ = 0;
             }
+#ifndef __SWITCH__
             else if (menuSelection_ == 9) {
-                // UPDATE
-                #if defined(__SWITCH__)
-                    if (updateAvailable_ && !latestVersion_.empty()) {
-                        startSwitchUpdate();
-                    }
-                #elif defined(_WIN32)
+                // UPDATE — open release page
+                #if defined(_WIN32)
                     system("start https://github.com/etonedemid/cold-start-nx/releases/latest");
                 #else
                     system("xdg-open https://github.com/etonedemid/cold-start-nx/releases/latest 2>/dev/null || "
@@ -1838,6 +1754,11 @@ void Game::handleInput() {
             else if (menuSelection_ == 10) {
                 running_ = false;  // QUIT
             }
+#else
+            else if (menuSelection_ == 9) {
+                running_ = false;  // QUIT
+            }
+#endif
             else running_ = false;
         }
     }
@@ -3326,15 +3247,6 @@ void Game::update() {
     waveAnnounceTimer_ = std::max(0.0f, waveAnnounceTimer_ - dt);
     cratePopupTimer_   = std::max(0.0f, cratePopupTimer_ - dt);
 
-#ifdef __SWITCH__
-    // Downloading update — just wait for the background thread to finish
-    if (state_ == GameState::Updating) {
-        if (updateDone_.load() || updateFailed_.load())
-            running_ = false;  // exit so Switch can relaunch the new NRO
-        return;
-    }
-#endif
-
     // Only run gameplay logic in active playing states
     bool isPlayingState =
         state_ == GameState::Playing || state_ == GameState::Paused || state_ == GameState::Dead ||
@@ -3836,7 +3748,10 @@ void Game::updatePlayer(float dt) {
                 if (upgrades_.hasShockEdge || upgrades_.hasStunRounds) emitShockPulse(e.pos);
                 if (simAuth) {
                     e.hp -= meleePlayerDamage;
-                    if (e.hp <= 0) killEnemy(e);
+                    if (e.hp <= 0) {
+                        killEnemy(e);
+                        queueMeleeImpactRumble(0.64f, 130, 1.35f, 0.70f);  // extra kill thud
+                    }
                     if (upgrades_.hasBloodlust) {
                         p.meleeBloodlustProc = true;
                         p.ammo = std::min(p.maxAmmo, p.ammo + 1 + (upgrades_.hasScavenger ? 1 : 0));
@@ -3871,6 +3786,25 @@ void Game::updatePlayer(float dt) {
                         destroyBox(btx, bty);
                         if (upgrades_.hasBloodlust) p.meleeBloodlustProc = true;
                         if (upgrades_.hasShockEdge) emitShockPulse({wx, wy});
+                    }
+                }
+            }
+            // Hitting solid walls — clank feedback
+            {
+                int wpx = TileMap::toTile(p.pos.x);
+                int wpy = TileMap::toTile(p.pos.y);
+                int wsr = (int)(meleeRange / TILE_SIZE) + 1;
+                for (int dy = -wsr; dy <= wsr; dy++) {
+                    for (int dx = -wsr; dx <= wsr; dx++) {
+                        int tx = wpx + dx, ty = wpy + dy;
+                        if (map_.get(tx, ty) != TILE_WALL) continue;
+                        float wx = TileMap::toWorld(tx);
+                        float wy = TileMap::toWorld(ty);
+                        Vec2 toWall = {wx - p.pos.x, wy - p.pos.y};
+                        if (toWall.length() > meleeRange + TILE_SIZE * 0.6f) continue;
+                        if (!angleDiffOk(toWall)) continue;
+                        spawnMeleeImpact({wx, wy}, {110, 110, 130, 255}, 6, 0.60f);
+                        queueMeleeImpactRumble(0.18f, 50, 0.88f, 0.36f);
                     }
                 }
             }
@@ -7142,11 +7076,6 @@ void Game::render() {
         if (state_ == GameState::LocalCoopPaused) renderPauseMenu();
         if (state_ == GameState::LocalCoopDead)   renderDeathScreen();
         break;
-#ifdef __SWITCH__
-    case GameState::Updating:
-        renderUpdating();
-        break;
-#endif
     }
 
     // Mod-save dialog overlay — rendered on top of everything
@@ -8272,6 +8201,21 @@ void Game::renderMainMenu() {
 
     // Menu items
     struct Item { const char* label; SDL_Color accent; bool enabled; };
+#ifdef __SWITCH__
+    Item items[] = {
+        {"PLAY",             UI::Color::Green,  true},   // 0
+        {"MULTIPLAYER",      UI::Color::Blue,   true},   // 1
+        {"EDITOR",           UI::Color::Yellow, true},   // 2
+        {"MAPS",             UI::Color::White,  true},   // 3
+        {"PACKS",            UI::Color::White,  true},   // 4
+        {"CHARACTER",        UI::Color::White,  true},   // 5
+        {"CHARACTER EDITOR", UI::Color::White,  true},   // 6
+        {"MODS",             UI::Color::Purple, true},   // 7
+        {"CONFIG",           UI::Color::White,  true},   // 8
+        {"QUIT",             UI::Color::Red,    true},   // 9
+    };
+    constexpr int count = 10;
+#else
     Item items[] = {
         {"PLAY",             UI::Color::Green,  true},   // 0
         {"MULTIPLAYER",      UI::Color::Blue,   true},   // 1
@@ -8286,6 +8230,7 @@ void Game::renderMainMenu() {
         {"QUIT",             UI::Color::Red,    true},   // 10
     };
     constexpr int count = 11;
+#endif
     int baseY = SCREEN_H / 4 + 10;
     int stepY = 32;
     int itemW = 320;
@@ -8323,11 +8268,13 @@ void Game::renderMainMenu() {
     }
     
     // Show update notification if available
+#ifndef __SWITCH__
     if (updateAvailable_ && !latestVersion_.empty()) {
         char updateMsg[64];
         snprintf(updateMsg, sizeof(updateMsg), "New version available: v%s", latestVersion_.c_str());
         ui_.drawTextCentered(updateMsg, baseY + 9 * stepY - 18, 12, UI::Color::Green);
     }
+#endif
 
     // Selected character name
     if (selectedChar_ >= 0 && selectedChar_ < (int)availableChars_.size()) {
