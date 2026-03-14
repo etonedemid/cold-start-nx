@@ -192,7 +192,7 @@ bool downloadNro(const char* owner, const char* repo, const char* version,
     // Build GitHub release asset URL
     char url[512];
     snprintf(url, sizeof(url),
-        "https://github.com/%s/%s/releases/download/v%s/cold_start.nro",
+        "https://github.com/%s/%s/releases/download/v%s/cold-start-nx.nro",
         owner, repo, version);
 
     // Write to a temp file next to the destination
