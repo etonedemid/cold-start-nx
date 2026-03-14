@@ -747,6 +747,7 @@ private:
     float matchTimer_   = 0.f;    // counts DOWN from pvpMatchDuration (0 if no limit)
     float matchElapsed_ = 0.f;    // counts UP from game start
     float discordTimer_ = 0.f;    // throttle Discord presence refresh (~5 s)
+    int64_t discordSessionStart_ = 0; // Unix timestamp when current session began
     void renderWinLoss();
     void renderScoreboard();
     void renderTeamSelect();
