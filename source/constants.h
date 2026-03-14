@@ -3,7 +3,7 @@
 #include "vec2.h"
 
 // ── Version ──
-constexpr const char* GAME_VERSION = "1.4.1";
+constexpr const char* GAME_VERSION = "1.5.0";
 
 // Screen (window resolution - runtime configurable)
 inline int SCREEN_W = 1280;
@@ -102,12 +102,46 @@ constexpr float GUNNER_SHOOT_CD     = 1.25f;
 constexpr float GUNNER_BURST_GAP    = 0.11f;
 constexpr float GUNNER_RENDER_SCALE = 4.6f;
 
+// Boss enemies — spawned at waves 25, 50, 100
+constexpr int   BOSS_WAVES[]         = {25, 50, 100};
+constexpr float BOSS_BRUTE_HP        = 750.0f;
+constexpr float BOSS_BRUTE_SPEED     = 210.0f;
+constexpr float BOSS_BRUTE_SIZE      = 80.0f;
+constexpr float BOSS_BRUTE_DASH_DIST = 280.0f;
+constexpr float BOSS_BRUTE_DASH_FORCE= 1200.0f;
+constexpr float BOSS_BRUTE_DASH_DELAY= 0.30f;
+constexpr float BOSS_BRUTE_DASH_DUR  = 0.35f;
+constexpr float BOSS_BRUTE_DASH_CD   = 1.20f;
+constexpr int   BOSS_BRUTE_DASH_DMG  = 5;
+constexpr float BOSS_BRUTE_SCALE     = 6.5f;
+
+constexpr float BOSS_SNIPER_HP       = 750.0f;
+constexpr float BOSS_SNIPER_SPEED    = 100.0f;
+constexpr float BOSS_SNIPER_SIZE     = 80.0f;
+constexpr float BOSS_SNIPER_SHOOT_CD = 0.75f;
+constexpr float BOSS_SNIPER_SCALE    = 7.0f;
+constexpr float BOSS_SNIPER_PANIC_RANGE = 210.0f; // sprint away if player closer than this
+
+constexpr float BOSS_GUNNER_HP       = 750.0f;
+constexpr float BOSS_GUNNER_SPEED    = 140.0f;
+constexpr float BOSS_GUNNER_SIZE     = 76.0f;
+constexpr float BOSS_GUNNER_SHOOT_CD = 0.75f;
+constexpr int   BOSS_GUNNER_BURST    = 8;
+constexpr float BOSS_GUNNER_BURST_GAP= 0.07f;
+constexpr float BOSS_GUNNER_SCALE    = 6.8f;
+
+// Sniper normal — panic sprint range (shared with boss sniper)
+constexpr float SNIPER_PANIC_RANGE   = 180.0f;  // sprint away if player closer than this
+
+// Stun: bosses shrug it off — max duration regardless of upgrade source
+constexpr float BOSS_MAX_STUN        = 0.20f;
+
 // Bomb
 constexpr float BOMB_ORBIT_SPEED  = 80.0f;
 constexpr float BOMB_DASH_SPEED   = 1000.0f;
 constexpr float BOMB_SIZE         = 32.0f;
 constexpr float EXPLOSION_RADIUS  = 200.0f;
-constexpr float EXPLOSION_DAMAGE  = 100.0f;
+constexpr float EXPLOSION_DAMAGE  = 10.0f;
 constexpr float EXPLOSION_DURATION= 1.1f;
 constexpr int   KILLS_PER_BOMB    = 5;
 constexpr int   MAX_BOMBS         = 5;
@@ -117,7 +151,8 @@ constexpr float PARRY_WINDOW   = 0.25f;
 constexpr float PARRY_COOLDOWN = 1.0f;
 constexpr float PARRY_DASH_SPEED    = 1050.0f;  // Match scout dash force
 constexpr float PARRY_DASH_DURATION = 0.15f;    // Match scout dash duration
-constexpr float PARRY_DMG      = 4.0f;
+constexpr float PARRY_DMG            = 4.0f;
+constexpr int   PARRY_REFLECT_DAMAGE = 3;        // damage of a player-reflected bullet
 
 // Melee (player axe swing)
 constexpr float MELEE_DURATION      = 0.30f;  // swing animation duration

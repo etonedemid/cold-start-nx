@@ -123,11 +123,17 @@ static void sendSwitchVibrationNow(const HidVibrationValue& value) {
 #endif
 
 bool isMeleeEnemyType(EnemyType type) {
-    return type == EnemyType::Melee || type == EnemyType::Brute || type == EnemyType::Scout;
+    return type == EnemyType::Melee || type == EnemyType::Brute || type == EnemyType::Scout
+        || type == EnemyType::BossBrute;
 }
 
 bool isShooterEnemyType(EnemyType type) {
-    return type == EnemyType::Shooter || type == EnemyType::Sniper || type == EnemyType::Gunner;
+    return type == EnemyType::Shooter || type == EnemyType::Sniper || type == EnemyType::Gunner
+        || type == EnemyType::BossSniper || type == EnemyType::BossGunner;
+}
+
+bool isBossType(EnemyType type) {
+    return type == EnemyType::BossBrute || type == EnemyType::BossSniper || type == EnemyType::BossGunner;
 }
 
 bool isCrateSpawnType(uint8_t type) {
@@ -195,13 +201,17 @@ EnemyType enemyTypeFromSpawnId(uint8_t type) {
 
 SDL_Color enemyBaseTint(EnemyType type) {
     switch (type) {
-        case EnemyType::Brute:   return {210, 110, 110, 255};
-        case EnemyType::Scout:   return {255, 150, 200, 255};
-        case EnemyType::Sniper:  return {190, 160, 255, 255};
-        case EnemyType::Gunner:  return {255, 225, 140, 255};
-        case EnemyType::Shooter: return {255, 235, 210, 255};
+        case EnemyType::Brute:      return {210, 110, 110, 255};
+        case EnemyType::Scout:      return {255, 150, 200, 255};
+        case EnemyType::Sniper:     return {190, 160, 255, 255};
+        case EnemyType::Gunner:     return {255, 225, 140, 255};
+        case EnemyType::Shooter:    return {255, 235, 210, 255};
+        // Boss tints — vivid and distinct so players immediately recognise them
+        case EnemyType::BossBrute:  return {255,  40,  40, 255};  // deep crimson
+        case EnemyType::BossSniper: return { 40, 220, 255, 255};  // electric teal
+        case EnemyType::BossGunner: return {255, 190,  20, 255};  // molten gold
         case EnemyType::Melee:
-        default:                 return {255, 255, 255, 255};
+        default:                    return {255, 255, 255, 255};
     }
 }
 
@@ -944,6 +954,9 @@ void Game::loadAssets() {
     scoutSprite_   = a.tex("sprites/enemy/scout.png");
     sniperSprite_  = a.tex("sprites/enemy/sniper.png");
     gunnerSprite_  = a.tex("sprites/enemy/gunner.png");  // falls back to nullptr → uses shooterSprite_
+    bossBruteSprite_  = a.tex("sprites/enemy/boss_brute.png");
+    bossSniperSprite_ = a.tex("sprites/enemy/boss_sniper.png");
+    bossGunnerSprite_ = a.tex("sprites/enemy/boss_gunner.png");
     bulletSprite_  = a.tex("sprites/projectiles/bullet-player.png");
     // Red-tinted copy for enemy bullets – reuse same texture with color mod at draw time
     enemyBulletSprite_ = bulletSprite_;
@@ -999,6 +1012,7 @@ void Game::startGame() {
     waveNumber_ = 0;
     waveEnemiesLeft_ = 0;
     waveActive_ = false;
+    bossWaveActive_ = false;
     wavePauseTimer_ = WAVE_PAUSE_BASE;
     waveSpawnTimer_ = 0;
 
@@ -1444,20 +1458,22 @@ void Game::handleInput() {
         }
         if (e.type == SDL_KEYDOWN && !e.key.repeat) {
             usingGamepad_ = false;
-            switch (e.key.keysym.sym) {
-                case SDLK_ESCAPE: pauseInput_ = true; break;
-                case SDLK_RETURN: confirmInput_ = true; break;
-                case SDLK_BACKSPACE: backInput_ = true; break;
-                case SDLK_SPACE:  parryInput_ = true; break;
-                case SDLK_e:     meleeInput_ = true; break;
-                case SDLK_1:     player_.activeWeapon = 0; break;
-                case SDLK_2:     player_.activeWeapon = 1; break;
-                case SDLK_q:     bombInput_ = true; break;
-                case SDLK_TAB:   tabInput_ = true; break;
-                case SDLK_F11:
-                    config_.fullscreen = !config_.fullscreen;
-                    SDL_SetWindowFullscreen(window_, config_.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
-                    break;
+            {
+                switch (e.key.keysym.sym) {
+                    case SDLK_ESCAPE: pauseInput_ = true; break;
+                    case SDLK_RETURN: confirmInput_ = true; break;
+                    case SDLK_BACKSPACE: backInput_ = true; break;
+                    case SDLK_SPACE:  parryInput_ = true; break;
+                    case SDLK_e:     meleeInput_ = true; break;
+                    case SDLK_1:     player_.activeWeapon = 0; break;
+                    case SDLK_2:     player_.activeWeapon = 1; break;
+                    case SDLK_q:     bombInput_ = true; break;
+                    case SDLK_TAB:   tabInput_ = true; break;
+                    case SDLK_F11:
+                        config_.fullscreen = !config_.fullscreen;
+                        SDL_SetWindowFullscreen(window_, config_.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+                        break;
+                }
             }
         }
         // Arrow keys with OS key-repeat (fires on both initial press and held repeats)
@@ -3549,7 +3565,6 @@ void Game::updatePlayer(float dt) {
         p.invulnTimer -= dt;
         if (p.invulnTimer <= 0) p.invulnerable = false;
     }
-
     // ── Shooting ──
     p.fireCooldown -= dt;
     if (!spectatorMode_ && p.activeWeapon == 0) {  // gun slot only
@@ -4074,7 +4089,8 @@ void Game::updateEnemies(float dt) {
     for (auto& e : enemies_) {
         if (!e.alive) continue;
 
-        // Stun
+        // Stun (bosses resist stunlock — cap max accumulated stun)
+        if (isBossType(e.type) && e.stunTimer > BOSS_MAX_STUN) e.stunTimer = BOSS_MAX_STUN;
         if (e.stunTimer > 0) { e.stunTimer -= dt; continue; }
 
         // Damage flash decay
@@ -4350,6 +4366,18 @@ void Game::enemyChase(Enemy& e, float dt) {
 
     // Shooter: keep range and strafe while shooting
     if (isShooterEnemyType(e.type)) {
+        // Sniper/BossSniper: panic dash-sprint away if player is dangerously close
+        bool isSniper = (e.type == EnemyType::Sniper || e.type == EnemyType::BossSniper);
+        float panicRange = isSniper ? (e.type == EnemyType::BossSniper ? BOSS_SNIPER_PANIC_RANGE : SNIPER_PANIC_RANGE) : 0.0f;
+        if (isSniper && dist < panicRange) {
+            Vec2 away = (e.pos - targetPos).normalized();
+            float panicSpeed = e.speed * 3.2f;
+            Vec2 desired = steerToward(e.pos, e.pos + away * 300.0f, panicSpeed, dt);
+            e.vel = Vec2::lerp(e.vel, desired, dt * 16.0f);  // snap quickly
+            e.rotation = atan2f(toPlayer.y, toPlayer.x);     // still face player while fleeing
+            enemyShoot(e, dt);  // keep firing while panicking
+            return;
+        }
         if (dist < e.preferredMinRange) {
             // Back away and strafe sideways
             Vec2 away  = (e.pos - targetPos).normalized();
@@ -5449,8 +5477,48 @@ void Game::updateSpawning(float dt) {
                 return;
             }
 
+            // ── Block new wave while a boss is still alive ──
+            {
+                bool anyBossAlive = false;
+                for (auto& be : enemies_)
+                    if (be.alive && isBossType(be.type)) { anyBossAlive = true; break; }
+                if (anyBossAlive) {
+                    bossWaveActive_ = true;
+                    wavePauseTimer_ = 2.0f;  // re-check soon
+                    return;
+                }
+                bossWaveActive_ = false;  // boss slain — clear flag
+            }
+
             // Start new wave
             waveNumber_++;
+
+            // ── Determine if this is a boss wave ──
+            EnemyType bossWaveType = EnemyType::BossBrute;
+            bool isBossWave = false;
+            for (int bw : BOSS_WAVES) {
+                if (waveNumber_ == bw) { isBossWave = true; break; }
+            }
+            if (waveNumber_ == 50)  bossWaveType = EnemyType::BossSniper;
+            else if (waveNumber_ == 100) bossWaveType = EnemyType::BossGunner;
+
+            if (isBossWave) {
+                // Spawn a single boss — no normal enemies this wave
+                Vec2 bsp = pickEnemySpawnPos();
+                spawnEnemy(bsp, bossWaveType);
+                waveEnemiesLeft_ = 0;
+                waveActive_ = false;
+                bossWaveActive_ = true;
+                // Extended announcement banner (boss waves get 4 seconds)
+                waveAnnounceTimer_ = 4.0f;
+                waveAnnounceNum_ = waveNumber_;
+                if (sendNetEvents) {
+                    auto& net = NetworkManager::instance();
+                    net.sendWaveStart(waveNumber_);
+                }
+                return;
+            }
+
             int waveSize = WAVE_SIZE_BASE + waveNumber_ * WAVE_SIZE_GROWTH;
             if (waveSize > WAVE_MAX_SIZE) waveSize = WAVE_MAX_SIZE;
             waveEnemiesLeft_ = waveSize;
@@ -5537,6 +5605,45 @@ void Game::spawnEnemy(Vec2 pos, EnemyType type) {
             e.burstGap = GUNNER_BURST_GAP;
             e.shootSpread = 0.18f;
             e.renderScale = GUNNER_RENDER_SCALE;
+            break;
+        // ── Boss variants ────────────────────────────────────────────────────
+        case EnemyType::BossBrute:
+            e.hp = BOSS_BRUTE_HP * config_.enemyHpScale;
+            e.maxHp = BOSS_BRUTE_HP * config_.enemyHpScale;
+            e.speed = BOSS_BRUTE_SPEED * config_.enemySpeedScale;
+            e.size = BOSS_BRUTE_SIZE;
+            e.dashDistance = BOSS_BRUTE_DASH_DIST;
+            e.dashForce = BOSS_BRUTE_DASH_FORCE;
+            e.dashDelay = BOSS_BRUTE_DASH_DELAY;
+            e.dashDuration = BOSS_BRUTE_DASH_DUR;
+            e.dashCooldown = BOSS_BRUTE_DASH_CD;
+            e.contactDamage = BOSS_BRUTE_DASH_DMG;
+            e.renderScale = BOSS_BRUTE_SCALE;
+            break;
+        case EnemyType::BossSniper:
+            e.hp = BOSS_SNIPER_HP * config_.enemyHpScale;
+            e.maxHp = BOSS_SNIPER_HP * config_.enemyHpScale;
+            e.speed = BOSS_SNIPER_SPEED * config_.enemySpeedScale;
+            e.size = BOSS_SNIPER_SIZE;
+            e.shootCooldown = BOSS_SNIPER_SHOOT_CD;
+            e.shootCooldownBase = BOSS_SNIPER_SHOOT_CD;
+            e.preferredMinRange = 460.0f;
+            e.preferredMaxRange = 800.0f;
+            e.renderScale = BOSS_SNIPER_SCALE;
+            break;
+        case EnemyType::BossGunner:
+            e.hp = BOSS_GUNNER_HP * config_.enemyHpScale;
+            e.maxHp = BOSS_GUNNER_HP * config_.enemyHpScale;
+            e.speed = BOSS_GUNNER_SPEED * config_.enemySpeedScale;
+            e.size = BOSS_GUNNER_SIZE;
+            e.shootCooldown = BOSS_GUNNER_SHOOT_CD;
+            e.shootCooldownBase = BOSS_GUNNER_SHOOT_CD;
+            e.preferredMinRange = 220.0f;
+            e.preferredMaxRange = 480.0f;
+            e.shotsPerBurst = BOSS_GUNNER_BURST;
+            e.burstGap = BOSS_GUNNER_BURST_GAP;
+            e.shootSpread = 0.22f;
+            e.renderScale = BOSS_GUNNER_SCALE;
             break;
         case EnemyType::Melee:
         default:
@@ -5794,10 +5901,11 @@ void Game::resolveCollisions() {
                 // Parry reflects!
                 b.vel = b.vel * -1.0f;
                 b.tag = TAG_BULLET;
+                b.damage = PARRY_REFLECT_DAMAGE;
                 bullets_.push_back(b);
                 b.alive = false;
                 camera_.addShake(2.2f);
-                rumble(0.40f, 72, 0.50f, 1.55f);  // Sharp parry reflect rumble
+                rumble(0.18f, 45, 0.28f, 0.72f);  // Soft parry-reflect tick
                 if (sfxParry_) { int ch = Mix_PlayChannel(-1, sfxParry_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
             } else {
                 p.takeDamage(b.damage);
@@ -5878,9 +5986,10 @@ void Game::resolveCollisions() {
                 if (ePoint || eSwept) {
                     if (cp.isParrying) {
                         b.vel = b.vel * -1.0f; b.tag = TAG_BULLET;
+                        b.damage = PARRY_REFLECT_DAMAGE;
                         bullets_.push_back(b); b.alive = false;
                         coopSlots_[ci].camera.addShake(2.2f);
-                        rumbleForSlot(ci, 0.40f, 72, 0.50f, 1.55f);
+                        rumbleForSlot(ci, 0.18f, 45, 0.28f, 0.72f);  // Soft parry-reflect tick
                         if (sfxParry_) { int ch = Mix_PlayChannel(-1, sfxParry_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
                     } else {
                         cp.takeDamage(b.damage); b.alive = false;
@@ -6287,6 +6396,17 @@ void Game::killEnemy(Enemy& e, bool trackKill) {
             player_.bombCount = std::min(MAX_BOMBS, player_.bombCount + 1);
         }
     }
+    // Drop 3 upgrade pickups when a boss is killed
+    if (isBossType(e.type)) {
+        for (int i = 0; i < 3; i++) {
+            Pickup pu;
+            float angle = (float)i / 3.0f * 2.0f * (float)M_PI;
+            pu.pos = {e.pos.x + cosf(angle) * 50.0f, e.pos.y + sinf(angle) * 50.0f};
+            pu.type = rollRandomUpgrade();
+            pickups_.push_back(pu);
+        }
+    }
+
     // Local co-op kills tracking: credit the slot that owns this kill
     // (During resolveCollisions, player_ = slot 0; use ownerId if available)
     if (state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) {
@@ -7363,13 +7483,17 @@ void Game::renderSpriteEx(SDL_Texture* tex, Vec2 worldPos, float angle, float sc
 
 SDL_Texture* Game::enemySpriteTex(EnemyType t) const {
     switch (t) {
-        case EnemyType::Brute:   return bruteSprite_   ? bruteSprite_   : enemySprite_;
-        case EnemyType::Scout:   return scoutSprite_   ? scoutSprite_   : enemySprite_;
-        case EnemyType::Sniper:  return sniperSprite_  ? sniperSprite_  : shooterSprite_;
-        case EnemyType::Gunner:  return gunnerSprite_  ? gunnerSprite_  : shooterSprite_;
-        case EnemyType::Shooter: return shooterSprite_;
+        case EnemyType::Brute:      return bruteSprite_   ? bruteSprite_   : enemySprite_;
+        case EnemyType::Scout:      return scoutSprite_   ? scoutSprite_   : enemySprite_;
+        case EnemyType::Sniper:     return sniperSprite_  ? sniperSprite_  : shooterSprite_;
+        case EnemyType::Gunner:     return gunnerSprite_  ? gunnerSprite_  : shooterSprite_;
+        case EnemyType::Shooter:    return shooterSprite_;
+        // Bosses use their dedicated sprites, falling back to the base type
+        case EnemyType::BossBrute:  return bossBruteSprite_  ? bossBruteSprite_  : (bruteSprite_  ? bruteSprite_  : enemySprite_);
+        case EnemyType::BossSniper: return bossSniperSprite_ ? bossSniperSprite_ : (sniperSprite_ ? sniperSprite_ : shooterSprite_);
+        case EnemyType::BossGunner: return bossGunnerSprite_ ? bossGunnerSprite_ : (gunnerSprite_ ? gunnerSprite_ : shooterSprite_);
         case EnemyType::Melee:
-        default:                 return enemySprite_;
+        default:                    return enemySprite_;
     }
 }
 
@@ -8115,11 +8239,67 @@ void Game::renderUI() {
         SDL_Rect line2 = {SCREEN_W/4, SCREEN_H/2 + 38, SCREEN_W/2, 2};
         SDL_RenderFillRect(renderer_, &line2);
 
-        // Text
+        // Text — show "BOSS WAVE" in red/amber for boss waves, normal cyan otherwise
         char waveTxt[64];
-        snprintf(waveTxt, sizeof(waveTxt), "WAVE %d", waveAnnounceNum_);
-        SDL_Color waveCol = {0, 255, 228, (Uint8)(alpha * 255)};
-        drawTextCentered(waveTxt, SCREEN_H/2 - 20, 36, waveCol);
+        bool isBossAnnounce = (waveAnnounceNum_ == 25 || waveAnnounceNum_ == 50 || waveAnnounceNum_ == 100);
+        if (isBossAnnounce) {
+            const char* bossName = (waveAnnounceNum_ == 25)  ? "BRUTE" :
+                                   (waveAnnounceNum_ == 50)  ? "SNIPER PRIME" : "CHAINGUNNER";
+            snprintf(waveTxt, sizeof(waveTxt), "WAVE %d  —  BOSS", waveAnnounceNum_);
+            SDL_Color waveCol = {255, 60, 60, (Uint8)(alpha * 255)};
+            drawTextCentered(waveTxt, SCREEN_H/2 - 26, 32, waveCol);
+            SDL_Color nameCol = {255, 200, 30, (Uint8)(alpha * 255)};
+            drawTextCentered(bossName, SCREEN_H/2 + 4, 28, nameCol);
+        } else {
+            snprintf(waveTxt, sizeof(waveTxt), "WAVE %d", waveAnnounceNum_);
+            SDL_Color waveCol = {0, 255, 228, (Uint8)(alpha * 255)};
+            drawTextCentered(waveTxt, SCREEN_H/2 - 20, 36, waveCol);
+        }
+    }
+
+    // ── Boss HP bar (visible while bossWaveActive_) ──
+    if (bossWaveActive_) {
+        // Find the living boss with the most HP remaining
+        const Enemy* boss = nullptr;
+        for (auto& be : enemies_) {
+            if (!be.alive || !isBossType(be.type)) continue;
+            if (!boss || be.hp > boss->hp) boss = &be;
+        }
+        if (boss) {
+            float hpFrac = (boss->maxHp > 0.0f) ? std::max(0.0f, boss->hp / boss->maxHp) : 0.0f;
+            const char* bossLabel = (boss->type == EnemyType::BossBrute)  ? "BRUTE" :
+                                    (boss->type == EnemyType::BossSniper) ? "SNIPER PRIME" : "CHAINGUNNER";
+
+            const int barW = SCREEN_W * 2 / 3;
+            const int barH = 20;
+            const int barX = (SCREEN_W - barW) / 2;
+            const int barY = SCREEN_H - 60;
+
+            // Shadow
+            SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 180);
+            SDL_Rect shadow = {barX - 2, barY - 22, barW + 4, barH + 26};
+            SDL_RenderFillRect(renderer_, &shadow);
+
+            // Background track
+            SDL_SetRenderDrawColor(renderer_, 50, 10, 10, 220);
+            SDL_Rect track = {barX, barY, barW, barH};
+            SDL_RenderFillRect(renderer_, &track);
+
+            // HP fill (colour shifts from green to red as HP drops)
+            Uint8 fr = (Uint8)(255 * (1.0f - hpFrac * 0.5f));
+            Uint8 fg = (Uint8)(160 * hpFrac);
+            SDL_SetRenderDrawColor(renderer_, fr, fg, 20, 255);
+            SDL_Rect fill = {barX, barY, (int)(barW * hpFrac), barH};
+            SDL_RenderFillRect(renderer_, &fill);
+
+            // Border
+            SDL_SetRenderDrawColor(renderer_, 200, 30, 30, 255);
+            SDL_RenderDrawRect(renderer_, &track);
+
+            // Boss name
+            SDL_Color lblCol = {255, 200, 30, 255};
+            drawTextCentered(bossLabel, barY - 20, 18, lblCol);
+        }
     }
 
     // ── Supply drop popup (crate spawned) ──
@@ -10825,6 +11005,7 @@ void Game::startLocalCoopGame() {
     }
     
     waveNumber_ = 0; waveEnemiesLeft_ = 0; waveActive_ = false;
+    bossWaveActive_ = false;
     wavePauseTimer_ = WAVE_PAUSE_BASE; waveSpawnTimer_ = 0;
     enemies_.clear(); bullets_.clear(); enemyBullets_.clear();
     bombs_.clear(); explosions_.clear(); debris_.clear();
