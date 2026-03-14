@@ -6,7 +6,7 @@
 #include <cstdint>
 
 #ifndef DISCORD_APP_ID
-#  define DISCORD_APP_ID "1234567890000000"
+#  define DISCORD_APP_ID "1482356403086561347"
 #endif
 
 struct DiscordActivity {
