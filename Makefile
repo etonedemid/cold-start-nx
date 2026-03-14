@@ -42,7 +42,7 @@ ASFLAGS	:=	-g $(ARCH)
 LDFLAGS	=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) \
 			-Wl,-Map,$(notdir $*.map)
 
-LIBS	:=	`$(PREFIX)pkg-config --libs SDL2_image SDL2_ttf SDL2_mixer sdl2` -lnx
+LIBS	:=	`$(PREFIX)pkg-config --libs SDL2_image SDL2_ttf SDL2_mixer sdl2` -lcurl -lmbedtls -lmbedx509 -lmbedcrypto -lz -lnx
 
 #---------------------------------------------------------------------------------
 # Library search paths
