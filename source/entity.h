@@ -34,6 +34,7 @@ struct Entity {
     int   bounces   = 0;        // ricochet bounce count
     uint32_t netId  = 0;        // network ID for remote bullet tracking (0 = not networked)
     uint8_t ownerId = 255;      // player ID who fired this bullet (255 = unowned/local-only)
+    uint8_t ownerSubSlot = 0;   // local splitscreen slot on the owning client (0 = main player)
     std::vector<uint32_t> hitEnemies; // piercing: enemy indices already struck this flight
 
     // Sprite

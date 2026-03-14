@@ -7,6 +7,15 @@
 #include <string>
 #include <vector>
 
+// ── Upgrade quality / rarity tier ──
+enum class UpgradeQuality : uint8_t {
+    Common,
+    Uncommon,
+    Rare,
+    Epic,
+    Cursed,
+};
+
 // ── Upgrade categories ──
 enum class UpgradeType : uint8_t {
     // Stat upgrades
@@ -35,6 +44,10 @@ enum class UpgradeType : uint8_t {
     SharpenedEdge,  // longer, wider axe swings
     Bloodlust,      // melee kills empower next swing
     ShockEdge,      // melee impacts emit a stun pulse
+    // New upgrades
+    AutoReloader,   // automatically reload when ammo hits 0
+    Vampire,        // each kill restores 1 HP
+    LastStand,      // at 1 HP: +100% damage and +30% speed
     // Negative (cursed) — rare
     SlowDown,       // -movement speed
     GlassCannon,    // +damage but -HP
@@ -43,10 +56,11 @@ enum class UpgradeType : uint8_t {
 
 // Human-readable info for UI/mod display
 struct UpgradeInfo {
-    const char* name;
-    const char* description;
-    SDL_Color   color;          // tint color for the crate glow
-    bool        isCursed;       // negative/risky upgrade
+    const char*    name;
+    const char*    description;
+    SDL_Color      color;          // tint color for the crate glow
+    bool           isCursed;       // negative/risky upgrade
+    UpgradeQuality quality;        // rarity tier used for drop weighting
 };
 
 // Global upgrade registry
@@ -98,6 +112,9 @@ struct PlayerUpgrades {
     bool  hasChainLightning = false;
     bool  hasBloodlust    = false;
     bool  hasShockEdge    = false;
+    bool  hasAutoReload   = false;
+    bool  hasVampire      = false;
+    bool  hasLastStand    = false;
     int   killsPerBomb    = KILLS_PER_BOMB;
     float bombDashSpeedMulti = 1.0f;
     float bulletSpeedMulti = 1.0f;
