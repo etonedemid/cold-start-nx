@@ -336,6 +336,19 @@ Practical notes:
 
 ## Changelog
 
+### v1.5.0 (2026-03-14)
+- **Boss wave system** — dedicated boss encounters at waves 25 (BossBrute), 50 (BossSniper), and 100 (BossGunner); no new waves spawn until the boss is dead; boss wave announcement banner and bottom-screen HP bar added
+- **Boss stun resistance** — all bosses are hard-capped at 0.20 s of stun regardless of upgrade source (axe shock-edge, stun rounds, parry, bombs), preventing stunlock cheese
+- **Boss drop reward** — killing any boss spawns 3 random upgrade pickups around its death position
+- **Boss tuning** — all bosses start with 750 HP; BossBrute base speed raised to 210; BossSniper and BossGunner speed unchanged
+- **Sniper panic sprint** — Sniper and BossSniper enemies sprint away at 3.2× speed when a player enters close range (180 / 210 px respectively), firing while fleeing
+- **Parried bullets deal 3 damage** — bullets reflected by parry now deal 3 damage instead of 1; parry also produces a softer high-frequency rumble pulse on each reflected bullet
+- **Bomb damage rework** — direct explosion damage reduced from 100 → 10 (splash 5), making bombs a tactical tool rather than an instant-kill
+- **AUR package published** — `cold-start` now available on the Arch User Repository (`yay -S cold-start`)
+
+### v1.4.1 (2026-03-14)
+- **Switch Joy-Con rumble fix** — `rumbleForSlot()` now always uses the native HID path on Switch unconditionally instead of falling through to `SDL_GameControllerRumble`, fixing silent rumble on Joy-Cons paired in handheld and docked mode
+
 ### v1.4.0 (2026-03-14)
 - **Upgrade rarity tiers** — upgrades now roll from quality tiers (Common 50%, Uncommon 30%, Rare 15%, Epic 4%, Cursed 1%) instead of a flat weighted table; added `UpgradeQuality` enum assignable per upgrade so mod authors can tune rarity
 - **Three new upgrades** — Auto Reloader (Uncommon): fires reload automatically on empty magazine; Vampire (Rare): each enemy kill restores 1 HP; Last Stand (Epic): at 1 HP gain +100% bullet damage and +30% movement speed
