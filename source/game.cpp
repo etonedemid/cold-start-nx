@@ -816,11 +816,14 @@ void Game::rumbleForSlot(int slot, float strength, int durationMs, float lowBand
     if (!targetController) targetController = activeController_;
 
 #ifdef __SWITCH__
-    if (!targetController) {
+    // Always use native HID vibration on Switch — SDL_GameControllerRumble is
+    // unreliable for Joy-Cons through the devkitpro SDL2 port.
+    {
         HidVibrationValue value = makeSwitchVibrationValue(strength, lowBandScale, highBandScale);
         sendSwitchVibrationNow(value);
         switchRumbleStopTick_ = SDL_GetTicks() + (Uint32)std::max(16, durationMs);
         switchRumbleActive_ = true;
+        return;
     }
 #endif
 
