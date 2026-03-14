@@ -178,14 +178,14 @@ void MapEditor::loadPalette() {
     };
 
     // Ensure basic tiles exist even if folders are empty
-    tryAdd("Grass",    "sprites/tiles/grass.png",    TILE_GRASS,  "ground");
-    tryAdd("Floor",    "sprites/tiles/floor.png",    TILE_FLOOR,  "ground");
-    tryAdd("Gravel",   "sprites/tiles/gravel.png",   TILE_GRAVEL, "ground");
-    tryAdd("Wood",     "sprites/tiles/wood.png",     TILE_WOOD,   "ground");
-    tryAdd("Sand",     "sprites/tiles/sand.png",     TILE_SAND,   "ground");
-    tryAdd("Wall",     "sprites/tiles/floor.png",    TILE_WALL,   "walls");
-    tryAdd("Glass",    "sprites/tiles/glasstile.png", TILE_GLASS, "ceiling");
-    tryAdd("Desk",     "sprites/tiles/desk.png",     TILE_DESK,   "props");
+    tryAdd("Grass",    "tiles/ground/grass.png",    TILE_GRASS,  "ground");
+    tryAdd("Floor",    "tiles/walls/floor.png",     TILE_FLOOR,  "ground");
+    tryAdd("Gravel",   "tiles/ground/gravel.png",   TILE_GRAVEL, "ground");
+    tryAdd("Wood",     "tiles/walls/wood.png",      TILE_WOOD,   "ground");
+    tryAdd("Sand",     "tiles/ground/sand.png",     TILE_SAND,   "ground");
+    tryAdd("Wall",     "tiles/walls/floor.png",     TILE_WALL,   "walls");
+    tryAdd("Glass",    "tiles/ceiling/glasstile.png", TILE_GLASS, "ceiling");
+    tryAdd("Desk",     "tiles/walls/desk.png",      TILE_DESK,   "props");
     tryAdd("Box",      "sprites/props/box.png",      TILE_BOX,    "props");
 
     buildTileTextureLookup();
