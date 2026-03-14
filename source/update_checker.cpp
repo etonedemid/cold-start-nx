@@ -15,7 +15,6 @@
     #include <arpa/inet.h>
     #include <netdb.h>
     #include <unistd.h>
-    #include <curl/curl.h>
 #else
     #include <sys/socket.h>
     #include <arpa/inet.h>
@@ -129,48 +128,11 @@ static std::string parseVersionFromJson(const std::string& json) {
 std::string fetchLatestVersion(const char* owner, const char* repo) {
     char path[512];
     snprintf(path, sizeof(path), "/repos/%s/%s/releases/latest", owner, repo);
-
-#ifdef __SWITCH__
-    // Raw sockets can't do TLS; use libcurl (already linked for the NRO download)
-    char url[512];
-    snprintf(url, sizeof(url), "https://api.github.com%s", path);
-
-    struct CurlBuf { std::string data; };
-    CurlBuf buf;
-    auto writeCallback = [](void* ptr, size_t size, size_t nmemb, void* ud) -> size_t {
-        auto* b = static_cast<CurlBuf*>(ud);
-        b->data.append(static_cast<char*>(ptr), size * nmemb);
-        return size * nmemb;
-    };
-
-    curl_global_init(CURL_GLOBAL_DEFAULT);
-    CURL* curl = curl_easy_init();
-    std::string result;
-    if (curl) {
-        curl_easy_setopt(curl, CURLOPT_URL,            url);
-        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  +writeCallback);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &buf);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-        curl_easy_setopt(curl, CURLOPT_USERAGENT,      "ColdStart-Switch/1.0");
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT,        10L);
-        // GitHub API requires Accept header
-        struct curl_slist* hdrs = nullptr;
-        hdrs = curl_slist_append(hdrs, "Accept: application/vnd.github+json");
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
-        if (curl_easy_perform(curl) == CURLE_OK)
-            result = parseVersionFromJson(buf.data);
-        curl_slist_free_all(hdrs);
-        curl_easy_cleanup(curl);
-    }
-    curl_global_cleanup();
-    return result;
-#else
+    
     std::string response = httpGet("api.github.com", path);
     if (response.empty()) return "";
+    
     return parseVersionFromJson(response);
-#endif
 }
 
 bool isNewerVersion(const char* current, const char* latest) {
@@ -196,91 +158,3 @@ bool isNewerVersion(const char* current, const char* latest) {
 }
 
 } // namespace UpdateChecker
-
-// ─── Switch-only: download NRO from GitHub releases ──────────────────────────
-#ifdef __SWITCH__
-#include <curl/curl.h>
-#include <cstdio>
-#include <functional>
-#include <cstdint>
-
-namespace UpdateChecker {
-
-namespace {
-    struct WriteCtx { FILE* fp; };
-    static size_t onWrite(void* ptr, size_t size, size_t nmemb, void* ud) {
-        auto* c = static_cast<WriteCtx*>(ud);
-        return fwrite(ptr, size, nmemb, c->fp);
-    }
-
-    struct ProgressCtx {
-        std::function<void(int64_t, int64_t)> fn;
-    };
-    static int onProgress(void* ud, curl_off_t dlTotal, curl_off_t dlNow,
-                          curl_off_t, curl_off_t) {
-        auto* c = static_cast<ProgressCtx*>(ud);
-        if (c && c->fn) c->fn((int64_t)dlNow, (int64_t)dlTotal);
-        return 0;
-    }
-} // anonymous namespace
-
-bool downloadNro(const char* owner, const char* repo, const char* version,
-                 const char* destPath,
-                 std::function<void(int64_t done, int64_t total)> progressFn) {
-    // Build GitHub release asset URL
-    char url[512];
-    snprintf(url, sizeof(url),
-        "https://github.com/%s/%s/releases/download/v%s/cold-start-nx.nro",
-        owner, repo, version);
-
-    // Write to a temp file next to the destination
-    char tmpPath[256];
-    snprintf(tmpPath, sizeof(tmpPath), "%s.tmp", destPath);
-
-    FILE* fp = fopen(tmpPath, "wb");
-    if (!fp) return false;
-
-    curl_global_init(CURL_GLOBAL_DEFAULT);
-    CURL* curl = curl_easy_init();
-    if (!curl) {
-        fclose(fp);
-        curl_global_cleanup();
-        return false;
-    }
-
-    WriteCtx    wctx{fp};
-    ProgressCtx pctx{progressFn};
-
-    curl_easy_setopt(curl, CURLOPT_URL,             url);
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION,  1L);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,   onWrite);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA,       &wctx);
-    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, onProgress);
-    curl_easy_setopt(curl, CURLOPT_XFERINFODATA,    &pctx);
-    curl_easy_setopt(curl, CURLOPT_NOPROGRESS,      0L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER,  0L);  // no CA bundle on Switch
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST,  0L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT,       "ColdStart-Switch/1.0");
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT,         180L);
-
-    CURLcode res = curl_easy_perform(curl);
-    curl_easy_cleanup(curl);
-    curl_global_cleanup();
-    fclose(fp);
-
-    if (res != CURLE_OK) {
-        remove(tmpPath);
-        return false;
-    }
-
-    // Atomically replace the running NRO
-    remove(destPath);
-    if (rename(tmpPath, destPath) != 0) {
-        remove(tmpPath);
-        return false;
-    }
-    return true;
-}
-
-} // namespace UpdateChecker
-#endif // __SWITCH__

@@ -69,10 +69,6 @@ int main(int argc, char* argv[]) {
     printf("COLD START launching...\n");
 
     Game game;
-#ifdef __SWITCH__
-    if (argc > 0 && argv[0] && argv[0][0] != '\0')
-        game.setNroPath(argv[0]);
-#endif
     if (dedicated) {
         game.configureDedicatedServer(dedicatedPort, dedicatedMaxPlayers,
                                       dedicatedPassword, dedicatedName);
