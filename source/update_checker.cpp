@@ -15,6 +15,7 @@
     #include <arpa/inet.h>
     #include <netdb.h>
     #include <unistd.h>
+    #include <curl/curl.h>
 #else
     #include <sys/socket.h>
     #include <arpa/inet.h>
@@ -128,11 +129,48 @@ static std::string parseVersionFromJson(const std::string& json) {
 std::string fetchLatestVersion(const char* owner, const char* repo) {
     char path[512];
     snprintf(path, sizeof(path), "/repos/%s/%s/releases/latest", owner, repo);
-    
+
+#ifdef __SWITCH__
+    // Raw sockets can't do TLS; use libcurl (already linked for the NRO download)
+    char url[512];
+    snprintf(url, sizeof(url), "https://api.github.com%s", path);
+
+    struct CurlBuf { std::string data; };
+    CurlBuf buf;
+    auto writeCallback = [](void* ptr, size_t size, size_t nmemb, void* ud) -> size_t {
+        auto* b = static_cast<CurlBuf*>(ud);
+        b->data.append(static_cast<char*>(ptr), size * nmemb);
+        return size * nmemb;
+    };
+
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    CURL* curl = curl_easy_init();
+    std::string result;
+    if (curl) {
+        curl_easy_setopt(curl, CURLOPT_URL,            url);
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  +writeCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &buf);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+        curl_easy_setopt(curl, CURLOPT_USERAGENT,      "ColdStart-Switch/1.0");
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT,        10L);
+        // GitHub API requires Accept header
+        struct curl_slist* hdrs = nullptr;
+        hdrs = curl_slist_append(hdrs, "Accept: application/vnd.github+json");
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
+        if (curl_easy_perform(curl) == CURLE_OK)
+            result = parseVersionFromJson(buf.data);
+        curl_slist_free_all(hdrs);
+        curl_easy_cleanup(curl);
+    }
+    curl_global_cleanup();
+    return result;
+#else
     std::string response = httpGet("api.github.com", path);
     if (response.empty()) return "";
-    
     return parseVersionFromJson(response);
+#endif
 }
 
 bool isNewerVersion(const char* current, const char* latest) {
