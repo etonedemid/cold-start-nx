@@ -3,6 +3,15 @@
 #include "mod.h"
 #include <cstdio>
 #include <sys/stat.h>
+#ifndef __SWITCH__
+#  ifndef PLATFORM_ANDROID
+#    include <climits>
+#    include <unistd.h>
+#    ifdef _WIN32
+#      include <windows.h>
+#    endif
+#  endif
+#endif
 
 // Platform-specific asset root prefix
 static std::string assetPrefix() {
@@ -11,7 +20,20 @@ static std::string assetPrefix() {
 #elif defined(PLATFORM_ANDROID)
     return "";  // SDL_RWops handles Android assets
 #else
-    return "romfs/";  // PC: relative to binary
+    // Resolve romfs/ relative to the executable so the game works regardless
+    // of the current working directory.
+    char exePath[PATH_MAX] = {};
+#  ifdef _WIN32
+    GetModuleFileNameA(nullptr, exePath, PATH_MAX);
+#  else
+    ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
+    if (len > 0) exePath[len] = '\0';
+#  endif
+    std::string dir(exePath);
+    auto sep = dir.find_last_of("/\\");
+    if (sep != std::string::npos) dir = dir.substr(0, sep + 1);
+    else dir = "./";
+    return dir + "romfs/";
 #endif
 }
 
