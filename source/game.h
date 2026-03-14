@@ -273,6 +273,7 @@ private:
     float waveSpawnTimer_ = 0;     // delay between individual spawns in a wave
     float wavePauseTimer_ = 0;     // countdown between waves
     bool  waveActive_     = false; // currently spawning a wave
+    bool  bossWaveActive_ = false; // boss wave in progress — no new waves until boss dies
     GameConfig config_{};
 
     // ── Map Editor ──
@@ -389,6 +390,9 @@ private:
     SDL_Texture* scoutSprite_   = nullptr;
     SDL_Texture* sniperSprite_  = nullptr;
     SDL_Texture* gunnerSprite_  = nullptr;
+    SDL_Texture* bossBruteSprite_  = nullptr;
+    SDL_Texture* bossSniperSprite_ = nullptr;
+    SDL_Texture* bossGunnerSprite_ = nullptr;
     SDL_Texture* bulletSprite_  = nullptr;
     SDL_Texture* enemyBulletSprite_ = nullptr;
     SDL_Texture* shieldSprite_  = nullptr;
