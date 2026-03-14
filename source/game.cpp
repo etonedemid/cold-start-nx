@@ -969,11 +969,11 @@ void Game::loadAssets() {
     floorTex_  = a.tex("tiles/walls/floor.png");
     grassTex_  = a.tex("tiles/ground/grass.png");
     gravelTex_ = a.tex("tiles/ground/gravel.png");
-    woodTex_   = a.tex("sprites/tiles/wood.png");  // not yet moved
-    sandTex_   = a.tex("sprites/tiles/sand.png");  // not yet moved
+    woodTex_   = a.tex("tiles/walls/wood.png");
+    sandTex_   = a.tex("tiles/ground/sand.png");
     wallTex_   = a.tex("tiles/walls/floor.png");
-    glassTex_  = a.tex("sprites/tiles/glass.png"); // not yet moved
-    deskTex_   = a.tex("sprites/tiles/desk.png");  // not yet moved
+    glassTex_  = a.tex("tiles/walls/glass.png");
+    deskTex_   = a.tex("tiles/walls/desk.png");
     boxTex_    = a.tex("tiles/props/box.png");
     gravelGrass1Tex_ = a.tex("tiles/ground/gravel-grass1.png");
     gravelGrass2Tex_ = a.tex("tiles/ground/gravel-grass2.png");
