@@ -33,6 +33,7 @@ struct Enemy {
 
     // Target tracking (multiplayer)
     uint8_t targetPlayerId = 255;   // 255 = unset, will pick first seen / closest
+    uint8_t targetPlayerSlot = 0;   // 0 = main player on that client, 1..3 = subplayers
     float   idleTimer      = 0;     // time spent wandering; after 30s retarget to nearest player
 
     // Wander
