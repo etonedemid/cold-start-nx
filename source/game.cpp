@@ -984,6 +984,7 @@ void Game::loadAssets() {
 void Game::startGame() {
     state_ = GameState::Playing;
     gameTime_ = 0;
+    discordSessionStart_ = (int64_t)time(nullptr);
     // Reset lobby flags that would suppress wave spawning if carried over from a
     // previous multiplayer PvP session
     lobbySettings_.isPvp = false;
@@ -10708,6 +10709,7 @@ void Game::startLocalCoopGame() {
     state_ = GameState::LocalCoopGame;
     gameTime_ = 0;
     matchElapsed_ = 0.0f;
+    discordSessionStart_ = (int64_t)time(nullptr);
     spectatorMode_ = false;
     
     // Apply lobby settings to config and rules (like multiplayer)
@@ -12296,6 +12298,7 @@ void Game::setupNetworkCallbacks() {
         // Initialise lives tracking (client side)
         spectatorMode_ = false;
         matchElapsed_ = 0.0f;
+        discordSessionStart_ = (int64_t)time(nullptr);
         matchTimer_   = (lobbySettings_.pvpMatchDuration > 0.0f) ? lobbySettings_.pvpMatchDuration : 0.0f;
         localLives_ = (currentRules_.lives > 0 && !currentRules_.sharedLives) ? currentRules_.lives : -1;
         sharedLives_ = -1; // host tracks shared pool
@@ -12917,6 +12920,7 @@ void Game::startMultiplayerGame() {
     // Initialise lives tracking
     spectatorMode_ = false;
     matchElapsed_ = 0.0f;
+    discordSessionStart_ = (int64_t)time(nullptr);
     matchTimer_   = (lobbySettings_.pvpMatchDuration > 0.0f) ? lobbySettings_.pvpMatchDuration : 0.0f;
     if (currentRules_.lives > 0 && !currentRules_.sharedLives) {
         localLives_ = currentRules_.lives;
@@ -15552,7 +15556,7 @@ void Game::updateDiscordPresence() {
         }
         act.details   = det;
         act.state     = st;
-        act.startTime = static_cast<int64_t>(time(nullptr) - static_cast<time_t>(matchElapsed_));
+        act.startTime = discordSessionStart_;
     }
     else if (inGame) {
         char det[64], st[64];
@@ -15566,7 +15570,7 @@ void Game::updateDiscordPresence() {
                  waveNumber_, player_.hp, player_.maxHp);
         act.details   = det;
         act.state     = st;
-        act.startTime = static_cast<int64_t>(time(nullptr) - static_cast<time_t>(matchElapsed_));
+        act.startTime = discordSessionStart_;
     }
     else {
         act.details = "Cold Start";
