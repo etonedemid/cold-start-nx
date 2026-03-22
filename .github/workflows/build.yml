@@ -1,6 +1,7 @@
 # ─── COLD START — CI/CD Pipeline ─────────────────────────────────────────────
-# Builds for Linux, Windows, Nintendo Switch, Android, and a dedicated server.
-# Creates a GitHub Release when a version tag is pushed or workflow_dispatch.
+# Builds for Linux (x86_64 + ARM64), Windows, Nintendo Switch, Android,
+# and a dedicated server. Creates a GitHub Release when a version tag is
+# pushed or workflow_dispatch.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: Build
@@ -93,6 +94,76 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: cold_start-linux-server
+          path: server-dist/
+
+  # ── Linux ARM64 ────────────────────────────────────────────────────────────
+
+  linux-arm64:
+    name: Linux ARM64
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            libsdl2-dev \
+            libsdl2-image-dev \
+            libsdl2-ttf-dev \
+            libsdl2-mixer-dev \
+            libenet-dev \
+            libminiupnpc-dev
+
+      - name: Configure
+        run: cmake -B build-pc -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build-pc -j$(nproc)
+
+      - name: Package (dist bundle)
+        run: cmake --build build-pc --target dist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cold_start-linux-arm64
+          path: build-pc/dist/
+
+  # ── Linux ARM64 Dedicated Server ───────────────────────────────────────────
+
+  linux-arm64-server:
+    name: Linux ARM64 Dedicated Server
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            libenet-dev \
+            libminiupnpc-dev
+
+      - name: Configure
+        run: cmake -B build-server -DCMAKE_BUILD_TYPE=Release -DSERVER_ONLY=ON
+
+      - name: Build
+        run: cmake --build build-server -j$(nproc)
+
+      - name: Package server bundle
+        run: |
+          mkdir -p server-dist
+          cp build-server/cold_start server-dist/
+          cp -r romfs server-dist/romfs
+          cp -r deploy server-dist/deploy
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cold_start-linux-arm64-server
           path: server-dist/
 
   # ── Windows (MSYS2 MinGW64) ───────────────────────────────────────────────
@@ -241,12 +312,14 @@ jobs:
 
   release:
     name: Release
-    needs: [linux, linux-server, windows, switch]
+    needs: [linux, linux-server, linux-arm64, linux-arm64-server, windows, switch]
     runs-on: ubuntu-latest
     if: >-
       (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
       && needs.linux.result == 'success'
       && needs.linux-server.result == 'success'
+      && needs.linux-arm64.result == 'success'
+      && needs.linux-arm64-server.result == 'success'
       && needs.windows.result == 'success'
       && needs.switch.result == 'success'
     steps:
@@ -289,6 +362,20 @@ jobs:
             cd ../..
           fi
 
+          # Linux ARM64
+          cd artifacts/cold_start-linux-arm64
+          chmod +x cold_start run.sh
+          zip -r "../../cold_start-linux-arm64-${VER}.zip" .
+          cd ../..
+
+          # Linux ARM64 server
+          if [ -d "artifacts/cold_start-linux-arm64-server" ]; then
+            cd artifacts/cold_start-linux-arm64-server
+            chmod +x cold_start
+            zip -r "../../cold_start-linux-arm64-server-${VER}.zip" .
+            cd ../..
+          fi
+
           # Windows
           cd artifacts/cold_start-windows
           zip -r "../../cold_start-windows-${VER}.zip" .
@@ -324,5 +411,7 @@ jobs:
           files: |
             cold_start-linux-${{ steps.version.outputs.tag }}.zip
             cold_start-linux-server-${{ steps.version.outputs.tag }}.zip
+            cold_start-linux-arm64-${{ steps.version.outputs.tag }}.zip
+            cold_start-linux-arm64-server-${{ steps.version.outputs.tag }}.zip
             cold_start-windows-${{ steps.version.outputs.tag }}.zip
             cold-start-nx.nro
