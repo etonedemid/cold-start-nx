@@ -5,7 +5,6 @@
 #include <dirent.h>
 #include <sys/stat.h>
 
-// Simple INI line parser
 static bool parseLine(const std::string& line, std::string& key, std::string& value) {
     if (line.empty() || line[0] == ';' || line[0] == '#') return false;
     size_t eq = line.find('=');
@@ -22,7 +21,6 @@ bool MapPack::loadFromFile(const std::string& path) {
     FILE* f = fopen(path.c_str(), "r");
     if (!f) return false;
 
-    // Store folder path
     size_t slash = path.find_last_of('/');
     if (slash != std::string::npos) folder = path.substr(0, slash + 1);
     else folder = "";
@@ -36,12 +34,10 @@ bool MapPack::loadFromFile(const std::string& path) {
 
     while (fgets(buf, sizeof(buf), f)) {
         std::string line(buf);
-        // Strip newline
         while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
             line.pop_back();
         if (line.empty()) continue;
 
-        // Section header
         if (line[0] == '[') {
             size_t end = line.find(']');
             if (end != std::string::npos) section = line.substr(1, end - 1);
@@ -148,14 +144,12 @@ std::vector<MapPack> scanMapPacks(const std::string& baseDir) {
     struct dirent* entry;
     while ((entry = readdir(dir)) != nullptr) {
         std::string fname(entry->d_name);
-        // Look for .cspack files
         if (fname.size() > 7 && fname.substr(fname.size() - 7) == ".cspack") {
             MapPack pack;
             std::string path = baseDir + "/" + fname;
             if (pack.loadFromFile(path))
                 packs.push_back(std::move(pack));
         }
-        // Also look in subdirectories for pack.cspack
         if (fname != "." && fname != "..") {
             std::string subdir = baseDir + "/" + fname;
             struct stat st;

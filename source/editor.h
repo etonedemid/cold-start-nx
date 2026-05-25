@@ -70,8 +70,8 @@ enum class PaletteTab : uint8_t {
 struct EditorConfig {
     enum class Action : uint8_t { NewMap, LoadMap };
     Action action = Action::NewMap;
-    int    mapWidth  = 30;
-    int    mapHeight = 20;
+    int    mapWidth  = 50;
+    int    mapHeight = 50;
     std::string mapName    = "Untitled";
     std::string creator    = "Unknown";
     int    gameMode  = 0;   // 0=Arena, 1=Sandbox

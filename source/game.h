@@ -27,6 +27,8 @@
 #include <unordered_map>
 
 enum class GameState {
+    BiosIntro,    // Fake BIOS
+    LoginScreen,  // logon window
     MainMenu,
     PlayModeMenu,    // Choose between generated map, custom map, or pack
     ConfigMenu,
@@ -72,8 +74,8 @@ enum class GameState {
 };
 
 struct GameConfig {
-    int mapWidth = MAP_DEFAULT_W;
-    int mapHeight = MAP_DEFAULT_H;
+    int mapWidth = 32;
+    int mapHeight = 32;
     int windowWidth = 1280;
     int windowHeight = 720;
     int playerMaxHp = PLAYER_MAX_HP;
@@ -194,7 +196,7 @@ private:
     SDL_Renderer* renderer_ = nullptr;
     UI::Context   ui_;  // Immediate-mode UI system
     bool running_ = true;
-    GameState state_ = GameState::MainMenu;
+    GameState state_ = GameState::BiosIntro;
     float gameTime_ = 0;      // seconds since level start
     float dt_ = 0;
 
@@ -209,6 +211,41 @@ private:
     bool switchRumbleActive_ = false;
     void updateSwitchRumble();
 #endif
+
+    // ── BIOS intro ──
+    float biosTimer_      = 0;
+    int   biosLine_       = 0;
+    bool  biosBootPlayed_ = false;
+
+    // ── Music player window (main menu) ──
+    int  musicWinX_        = 0;
+    int  musicWinY_        = 0;
+    bool musicWinInit_     = false;
+    bool musicWinDragging_ = false;
+    int  musicWinDragOffX_ = 0;
+    int  musicWinDragOffY_ = 0;
+    bool musicPaused_      = false;
+
+    // ── Log-off confirmation ──
+    bool  logOffConfirm_     = false;
+    // ── Input debounce (prevents double-fire across frames) ──
+    float menuInputCooldown_ = 0.0f;
+
+    // ── Chat window (lobby) ──
+    int  chatWinX_         = 860;
+    int  chatWinY_         = 460;
+    bool chatWinInit_      = false;
+    bool chatWinDrag_      = false;
+    int  chatWinDragOX_    = 0;
+    int  chatWinDragOY_    = 0;
+    bool chatTyping_       = false;
+    char chatInputBuf_[256] = {};
+
+    // ── Login screen ──
+    std::string loginUsername_;
+    std::string loginPassword_;
+    int   loginField_  = 0;   // 0 = username, 1 = password
+    float loginBlinkT_ = 0;   // cursor blink accumulator
 
     // ── Update checker ──
     bool updateAvailable_ = false;
@@ -365,6 +402,7 @@ private:
     // ── Visual Polish ──
     float waveAnnounceTimer_ = 0;  // countdown for wave banner display
     int   waveAnnounceNum_   = 0;  // which wave to show
+    float lowHpTint_         = 0;  // 0..1, smoothed low-HP red overlay intensity
 
     // Pickup name popup (reuses wave banner style)
     float pickupPopupTimer_ = 0;
@@ -435,9 +473,24 @@ private:
     Mix_Chunk* sfxBreak_    = nullptr;
     Mix_Chunk* sfxBeep_     = nullptr;
     Mix_Chunk* sfxPress_    = nullptr;
-    Mix_Music* bgMusic_        = nullptr;
+    Mix_Chunk* sfxClick_    = nullptr;  // UI mouse click
+    Mix_Chunk* sfxBoot_     = nullptr;  // BIOS startup chime
+    Mix_Music* bgMusic_        = nullptr;  // unused; kept for ABI compat
     Mix_Music* menuMusic_      = nullptr;
     Mix_Music* customMapMusic_ = nullptr;  // per-map music loaded at runtime
+    std::vector<Mix_Music*>  bgMusicTracks_;
+    std::vector<std::string> bgMusicTrackNames_;
+    std::vector<std::string> bgMusicTrackAuthors_;
+    int  lastActionTrack_      = -1;
+    bool actionMusicActive_    = false;
+    bool musicLoopCurrent_     = false;
+
+    // Music player window (pause menu — separate from main-menu musicWin*)
+    int  pauseMusicWinX_          = 20;
+    int  pauseMusicWinY_          = -1;   // -1 = uninitialised, set on first draw
+    bool pauseMusicWinDragging_   = false;
+    int  pauseMusicWinDragOffX_   = 0;
+    int  pauseMusicWinDragOffY_   = 0;
 
     // ── Methods ──
     void loadAssets();
@@ -487,6 +540,7 @@ private:
     void destroyBox(int tx, int ty);
     void updateBoxFragments(float dt);
     void playMenuMusic();
+    void playActionMusic();
     // Start map-specific music (resolves trackPath relative to folder, falls back to bgMusic_)
     void playMapMusic(const std::string& folder, const std::string& trackPath);
 
@@ -515,6 +569,8 @@ private:
                             float distance, SDL_Color color, int size = 10);
     void renderMinimap();
     void invalidateMinimapCache();
+    void renderBiosIntro();
+    void renderLoginScreen();
     void renderMainMenu();
     void renderPlayModeMenu();
     void renderConfigMenu();

@@ -31,7 +31,7 @@ static const UpgradeInfo s_upgradeTable[] = {
     { "Sharpened Edge",  "+range, +arc, +axe damage",            {220, 220, 255, 255}, false,  UpgradeQuality::Rare     },  // SharpenedEdge
     { "Bloodlust",       "Melee kills empower next swing",       {255, 70,  90,  255}, false,  UpgradeQuality::Rare     },  // Bloodlust
     { "Shock Edge",      "Melee hit emits a stun pulse",         {100, 255, 255, 255}, false,  UpgradeQuality::Rare     },  // ShockEdge
-    { "Auto Reloader",   "Reload triggers automatically on empty",{100, 220, 180, 255}, false, UpgradeQuality::Uncommon },  // AutoReloader
+    { "Auto Reloader",   "Reload triggers automatically",{100, 220, 180, 255}, false, UpgradeQuality::Uncommon },  // AutoReloader
     { "Vampire",         "Killing an enemy restores 1 HP",       {220, 50,  50,  255}, false,  UpgradeQuality::Rare     },  // Vampire
     { "Last Stand",      "At 1 HP: +100% dmg and +30% speed",   {255, 80, 255, 255},  false,  UpgradeQuality::Epic     },  // LastStand
     { "Slow Down",       "-15% movement speed",                  {150, 50,  50,  255}, true,   UpgradeQuality::Cursed   },  // SlowDown

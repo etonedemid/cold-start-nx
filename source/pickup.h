@@ -44,7 +44,6 @@ enum class UpgradeType : uint8_t {
     SharpenedEdge,  // longer, wider axe swings
     Bloodlust,      // melee kills empower next swing
     ShockEdge,      // melee impacts emit a stun pulse
-    // New upgrades
     AutoReloader,   // automatically reload when ammo hits 0
     Vampire,        // each kill restores 1 HP
     LastStand,      // at 1 HP: +100% damage and +30% speed

@@ -1,7 +1,6 @@
 // ─── gamemode.cpp ─── Gamemode system implementation ────────────────────────
 #include "gamemode.h"
 
-// ── Predefined gamemode factories ──
 GameModeRules createArenaRules() {
     GameModeRules r;
     r.type = GameModeType::Arena;
@@ -102,19 +101,14 @@ GameModeRules createTeamDeathmatchRules(int teamCount, int scoreLimit, int maxPl
     return r;
 }
 
-// ── Registry ──
 GameModeRegistry& GameModeRegistry::instance() {
     static GameModeRegistry reg;
     return reg;
 }
 
 void GameModeRegistry::registerMode(const GameModeEntry& entry) {
-    // Don't duplicate
     for (auto& m : modes_) {
-        if (m.id == entry.id) {
-            m = entry; // update
-            return;
-        }
+        if (m.id == entry.id) { m = entry; return; }
     }
     modes_.push_back(entry);
 }

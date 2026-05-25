@@ -5,6 +5,31 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <csignal>
+
+#ifdef _WIN32
+#include <windows.h>
+static LONG WINAPI handleFatalException(PEXCEPTION_POINTERS info) {
+    FILE* f = fopen("cold_start.log", "a");
+    if (f) {
+        fprintf(f, "\n[FATAL] Unhandled exception 0x%08lX at 0x%p\n",
+                (unsigned long)info->ExceptionRecord->ExceptionCode,
+                info->ExceptionRecord->ExceptionAddress);
+        fclose(f);
+    }
+    MessageBoxA(nullptr,
+        "cold_start crashed.\nSee cold_start.log for details.\n\n"
+        "Please report this at github.com/etonedemid/cold-start-nx/issues",
+        "Fatal Error", MB_OK | MB_ICONERROR);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+#else
+static void handleFatalSignal(int sig) {
+    fprintf(stderr, "[FATAL] Signal %d received\n", sig);
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+#endif
 
 #ifdef __SWITCH__
 #include <switch.h>
@@ -64,6 +89,14 @@ int main(int argc, char* argv[]) {
 #ifdef __SWITCH__
     socketInitializeDefault();
     nxlinkStdio();
+#endif
+
+#ifdef _WIN32
+    SetUnhandledExceptionFilter(handleFatalException);
+#else
+    signal(SIGSEGV, handleFatalSignal);
+    signal(SIGABRT, handleFatalSignal);
+    signal(SIGFPE,  handleFatalSignal);
 #endif
 
     printf("COLD START launching...\n");
