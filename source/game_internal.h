@@ -13,6 +13,8 @@
 #ifdef _WIN32
 #include <direct.h>
 inline int mkdir(const char* path, int /*mode*/) { return _mkdir(path); }
+#elif defined(__SWITCH__)
+#include <switch.h>
 #endif
 
 // On Switch, A/B and X/Y are physically swapped compared to Xbox layout
