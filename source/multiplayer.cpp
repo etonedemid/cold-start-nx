@@ -6,6 +6,9 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#elif defined(__SWITCH__)
+#include <switch.h>
+#include <arpa/inet.h>
 #else
 #include <ifaddrs.h>
 #include <arpa/inet.h>
