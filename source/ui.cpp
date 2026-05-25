@@ -8,9 +8,47 @@
 
 namespace UI {
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Text Cache
-// ═════════════════════════════════════════════════════════════════════════════
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠀⡄⣐⣥⣬⣯⣴⣶⣻⣾⣷⣿⢿⣶⣦⣶⣭⣠⡆⣠⠀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡀⣀⣰⣴⣯⣿⣻⢿⣻⣟⣾⡽⣷⢯⣷⣟⣾⡽⣯⣷⢯⡿⣽⣻⣽⡷⣿⣤⣃⡂⠄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣸⢿⣟⡿⣽⣳⣯⣟⡿⣽⡾⣯⢿⣽⣟⡷⣯⡿⣽⣟⣾⢿⣽⢿⣽⣞⣿⣳⢿⣻⢿⣳⣆⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣽⣟⣯⣿⣻⣽⣳⣟⣿⣽⣻⣽⣟⡷⣯⡿⣯⢿⣽⢾⣯⢿⣞⡿⣾⡽⣞⡿⣯⣟⡿⣽⣻⣞⣻⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣴⣿⢯⣷⢯⣷⢿⣽⣾⣻⢾⣽⣳⣯⢿⣽⣻⡽⣟⣾⣻⣞⡿⣾⣽⣳⣟⣯⣟⡷⣯⢿⣽⣳⡟⡄⠀⠀⠀⢤⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠰⣿⡾⣿⣽⣻⡽⣟⣾⣳⢿⣯⣟⡷⣯⢿⣞⣷⣻⡽⣞⡷⣫⣽⢳⡭⣗⢯⡞⣭⡟⣽⣫⣞⣷⠹⠀⠀⠀⠠⠆⠋⠙⠠⡄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⡄⡀
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣺⣿⣽⢷⣯⢿⣽⢿⡽⣯⢿⡾⣽⣻⣽⢻⡞⣧⢏⡷⣫⢞⡵⣋⠷⣙⢮⢳⡹⢶⡙⣧⠳⡞⢧⠒⠀⠀⠀⡜⠈⠁⠂⠄⡀⠁⠃⠆⡄⣂⠀⢀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠀⣄⣠⣤⣶⣾⣿⣿⠀⡘
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣘⡿⣷⣯⢿⡾⣿⡽⣯⢿⡽⣯⣟⠷⣏⣞⢯⡞⡵⣋⢞⡱⢎⠶⣉⠞⡱⢊⠥⣃⠧⡙⢆⠯⣙⠞⠀⠀⠀⠐⢀⡉⠀⠐⠀⠠⠁⡈⠄⠠⠁⢊⠱⠒⡎⡤⢤⣄⣀⣀⣄⡤⣤⣤⣴⣷⣶⣿⣿⣿⣿⣿⣿⣿⣿⠇⢀⡙
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣽⣿⣻⢾⡿⣽⢷⣻⡽⣯⣟⢷⡹⢯⡝⣎⠳⣜⡱⣉⠎⠴⡉⢆⠡⢊⠑⠌⠒⠄⠊⠜⠨⡘⢥⡉⠀⠀⠀⠋⠠⠀⠀⠈⠀⠐⠀⠠⠀⡁⠌⢀⠂⡑⠄⡃⢧⠸⣜⡹⢮⣝⣳⢯⣟⡾⣟⣿⡿⣿⣿⣿⣿⣿⡟⠀⣬⠁
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣰⣯⣷⢿⣯⣟⣯⡿⣽⣻⢧⡟⣾⢹⢣⡝⢬⠓⡤⢃⠤⢉⠂⡐⠀⠂⠀⠈⠀⠈⠀⠁⠈⠐⢈⣮⠀⠀⠀⣈⠠⠄⠀⠀⠀⠈⠀⠀⠁⡀⠠⠀⠂⠠⠐⠠⠑⢂⠓⡬⢱⡓⢮⣳⣛⡾⣽⣻⢯⣿⣿⢿⣿⣿⣿⠁⡰⠆⠀
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠠⣿⣽⡾⣟⣾⡽⣾⣽⣳⢯⡞⡽⢲⡍⡖⡩⢆⠩⠐⡀⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢮⠄⠀⠀⢠⠄⠐⠀⠀⠀⠀⠀⠀⠀⠀⢀⠀⠄⠁⡐⠠⠁⠂⠌⠂⠥⣃⠞⣥⠳⣝⣞⣳⢯⣿⣻⣾⣿⣿⣿⡏⣄⠻⠀⠀
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢺⣿⣳⢿⣯⢷⣻⢷⣏⡞⣧⢯⡱⢣⢚⠰⢁⠂⠄⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⠖⠀⠀⠀⡤⠀⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠄⠀⠄⠂⠁⠄⡉⠰⣀⠫⡔⣫⠞⡼⣭⢟⡾⣽⡷⣿⣻⣿⠰⣎⠃⠀⠀
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣈⣿⡷⣟⡿⣞⣯⣟⡯⣞⡽⣒⠧⣃⠇⡊⠔⠂⠈⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣸⠃⠀⠀⠰⠀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠄⠀⠂⢁⠠⢀⠁⠄⢣⠘⡴⢋⢷⡹⢾⣹⢷⣻⣟⣿⠇⡾⡈⠀⠀⠀
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣼⣻⣽⢿⣽⣻⣞⡷⡽⢮⠵⣩⠖⣡⠊⡐⠠⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⡏⠀⠀⢀⢃⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⠀⠠⠀⠂⢈⠐⠠⣉⠲⣩⠖⡽⣣⢟⣯⢷⣻⡟⣸⢧⠁⠀⠀⠀
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣟⣯⣟⡿⣞⣷⡻⣞⡽⣋⠞⡥⠚⡄⠒⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣼⠀⠀⠀⡈⡉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠀⠄⠁⠠⢈⠐⡀⢃⢆⠻⡜⣵⢫⣞⣯⢿⣁⡟⠆⠀⠀⠀⠀
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠠⣞⣿⣽⢾⣻⣽⠾⣝⢧⣛⣥⡿⣴⣯⡴⠭⠾⠵⣧⣶⣶⡶⣤⣄⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⡅⠀⠀⢠⢰⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠁⠀⠠⠈⠀⠄⠂⠄⠣⢌⠣⡝⣬⢳⡽⣺⡏⣼⠛⠀⠀⠀⠀⠀
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢲⣿⣻⣞⡿⣽⢞⠟⠻⠋⠛⠁⠉⠉⠀⠀⠀⠀⠀⠀⠈⠉⠉⠙⠛⠟⢿⣶⢦⣀⠀⠀⠀⠀⠀⠾⠀⠀⠀⡄⠆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠀⡀⠡⠐⠈⠠⢁⢊⡱⡙⢦⡻⣜⡷⢦⡟⠃⠀⠀⠀⠀⠀
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠻⡶⠟⠘⠉⠁⠀⠀⠀⠀⠀⠀⢀⡀⠀⠀⠀⠀⢀⣀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠻⠿⣦⣄⠀⣘⠃⠀⠀⠰⠸⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⠀⠠⠀⡁⢂⠐⢢⠰⡙⢦⡝⣮⠗⣾⡉⠀⠀⠀⠀⠀⠀
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⢠⣀⡶⢤⠜⠣⠄⠂⠀⠀⠀⠀⠀⠀⠀⠀⠈⠀⠐⠀⠀⠀⠀⠀⠀⠀⠀⠙⠛⠍⠀⠀⠀⢃⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠄⠂⠁⠠⠐⠀⠌⣀⠣⡙⢦⡝⣞⢳⢧⠁⠀⠀⠀⠀⠀⠀
+// ⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣄⣶⣼⢷⡛⢯⡱⣉⠆⡘⠠⢀⠀⠄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡜⣈⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠠⠀⢁⠠⠁⠂⠤⢡⡙⢦⣹⡍⠺⠆⠀⠀⠀⠀⠀⠀⠀
+// ⠀⠀⠀⠀⠀⠀⠀⠀⣜⣿⣻⠽⣎⢷⡹⢆⡳⠰⢌⡐⠁⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠁⠻⢷⣦⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⠀⠐⠀⠠⢈⠐⠠⢃⡜⢦⠯⢀⠛⠀⠀⠀⠀⠀⠀⠀⠀
+// ⠀⠀⠀⠀⠀⠀⠀⢠⣞⡾⣭⢿⡹⢮⣕⢫⡒⣍⠢⠄⠡⠀⠀⠄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⠁⠀⠀⠀⠀⠀⠀⠈⠛⠷⣦⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⠈⢀⠁⠄⢈⣐⣡⣬⣶⡟⠟⠁⠀⠀⠀⠀⠀⠀⠀⠀
+// ⠀⠀⠀⠀⠀⠀⠀⠶⣾⡽⣯⣳⢏⡷⢎⢧⡓⡌⢆⠱⢀⠁⠀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡆⠀⠀⠠⡲⠂⠀⢀⠀⠀⠀⠀⠉⠛⠻⢶⡦⣤⣄⣀⣀⣀⠀⠀⠀⢀⣀⣀⣀⣈⣤⣤⡶⢶⠿⠻⠋⠋⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+// ⠀⠀⠀⠀⠀⠀⠘⣽⣷⣻⣗⣯⢻⡜⣯⠲⣍⡜⡌⢒⠠⠈⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠰⠀⠀⠀⠂⡄⠀⠀⠄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠁⠈⠛⠉⠋⠉⠉⠉⠉⠉⠛⠋⠀⠉⠀⠀⠀⠀⠀⡀⢀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+// ⠀⠀⠀⠀⠀⠀⣛⣿⣾⣳⣟⡾⣭⣛⢶⡛⡴⣊⠜⡄⢃⠌⠀⠄⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠃⠀⠀⡘⠰⠀⠀⠀⠀⠀⠀⠀⠀⠈⠐⠀⠄⢀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⠀⠤⠀⠐⣀⠍⠔⠊⠉⠁⠦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+// ⠀⠀⠀⠀⠀⡸⣽⣿⣞⡷⣯⢿⡵⣏⡾⣱⢧⡹⡘⡌⠆⡌⠐⡀⠠⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡜⠀⠀⢀⠁⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠉⠉⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡈⡘⠄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+// ⠀⠀⠀⠀⢠⣹⣿⡿⣾⢿⣽⣻⣞⢷⣹⢳⡎⡵⣙⠜⡒⢌⡐⠠⠀⠀⠄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⠁⠀⠀⡈⡘⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⢁⠳⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+// ⠀⠀⠀⠀⢦⣽⣿⣿⢿⣻⣾⣳⢯⣯⢗⡯⣞⡵⣩⠞⡱⢢⠘⡄⢁⠂⠀⠠⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠆⠀⠀⠠⢠⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡄⡄⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+// ⠀⠀⠀⠘⣶⣿⣿⣿⡿⣟⣷⣟⡿⣞⣯⢷⡹⢮⣕⡫⣕⢣⢣⠘⠤⡈⠐⡀⠠⠀⠀⠀⠀⠀⠀⠀⠀⠀⡸⠀⠀⠀⠂⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀etonedemid⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠰⠰⡈⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+// ⠀⠀⢀⡻⣼⣿⣿⣿⣿⣿⣻⣾⢿⡽⣞⣯⢟⣳⢎⡷⢬⠳⣌⡹⠤⣁⠃⡄⠠⠀⠁⡀⠄⠀⠀⠀⠀⢀⠃⠀⠀⠀⠲⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠃⢦⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+// ⠀⠀⣘⣳⣿⣿⣿⣿⣿⣽⣿⣽⡿⣽⣻⣞⣯⢟⣮⡝⣏⠷⣌⢧⠓⣌⠲⡈⠅⡌⠠⢀⠀⠄⠂⠀⢀⡝⠀⠀⠀⠀⠣⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡘⡘⠄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+// ⠀⢠⣣⣿⣿⣿⣿⣿⣿⣿⣟⣯⣿⣟⣷⣻⣞⡿⣮⡽⣞⡽⣺⢬⡛⣬⢣⡙⠴⣈⠅⢢⠐⠠⠀⡌⢠⠁⠀⠀⢀⡈⠆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀..⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡀⢡⢁⢳⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+// ⠀⣤⢳⣿⣿⣿⣿⣿⣿⣿⣿⣿⣟⣯⣿⢷⣯⣟⣷⣻⡵⢯⣳⢏⡾⣡⢧⡙⢶⡡⢎⠥⣊⠅⢣⡔⠖⠀⠀⠀⠄⠐⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠐⠠⡌⡌⠆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+// ⡼⢠⣿⣿⣿⣿⣿⡿⢿⣛⣿⣭⣿⣭⣯⠿⠾⠽⢾⣷⣿⣯⣷⣻⣼⢧⢯⡝⡶⣙⢎⠶⣡⠞⣥⠘⠂⠀⠀⠠⠀⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠄⠂⡌⢰⢠⡘⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+// ⡳⢹⡿⣟⣯⡽⠶⠛⠛⠉⠉⠀⠈⠀⠀⠀⠀⠀⠀⠀⠀⠁⠈⠋⠙⠻⠿⣾⣷⣹⣎⢷⡱⣞⢆⡏⠀⠀⠀⠂⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠠⠈⡄⠣⠌⠆⢦⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+// ⠆⠟⠋⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠛⢿⣾⣵⡛⣌⠁⠀⠀⡈⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠄⡁⢢⠑⡌⡱⠘⠰⡌⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠙⠃⠉⠀⠀⢀⠀⠠⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠀⢂⢁⠒⡌⢢⠱⣌⢁⠃⢳⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠆⣰⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡀⠄⠂⠤⢘⠠⣊⠴⣈⢇⠳⡌⡌⡈⠆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠝⡲⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠀⠠⠐⠠⢁⠰⡈⠜⣠⠣⡑⢆⠳⣌⠮⠕⣖⠢⠘⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠐⠩⢗⡲⢤⣀⡂⠤⠀⡄⠐⡀⢂⢁⠂⡌⠰⣁⠣⢌⢆⡱⠩⠔⠣⢙⡊⡭⣔⢮⠽⠆⠃⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠁⡊⠰⠏⢲⡖⣦⣠⠥⣬⢤⠬⣡⠤⡩⢄⣤⣒⢦⡙⠣⠏⠘⠁⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 
 const TextCache::Entry& TextCache::get(const char* text, int size) {
     static const Entry empty{};
@@ -137,6 +175,7 @@ void Context::init(SDL_Renderer* r) {
 void Context::beginFrame(float frameDt, bool gamepad) {
     dt = frameDt;
     usingGamepad = gamepad;
+    buttonFired = false;
     textCache.beginFrame();
 
     // Save previous frame hover for click-through in handleInput
@@ -211,6 +250,51 @@ int Context::textHeight(int size) {
     // Approximate using a reference character
     const auto& e = textCache.get("Ag", size);
     return e.height;
+}
+
+int Context::drawTextWrapped(const char* text, int x, int y, int size,
+                              int maxW, SDL_Color color, bool doDraw) {
+    const int lineH = textHeight(size) + 1;
+    int curY = y;
+
+    char line[256]; line[0] = '\0';
+    char word[128];
+    const char* p = text;
+
+    auto flush = [&]() {
+        if (line[0] == '\0') return;
+        if (doDraw) drawText(line, x, curY, size, color);
+        curY += lineH;
+        line[0] = '\0';
+    };
+
+    while (*p) {
+        // Skip leading spaces
+        while (*p == ' ') ++p;
+        if (!*p) break;
+
+        // Collect next word
+        int wlen = 0;
+        while (*p && *p != ' ' && wlen < 126) word[wlen++] = *p++;
+        word[wlen] = '\0';
+
+        // Build candidate line
+        char candidate[256];
+        if (line[0]) {
+            snprintf(candidate, sizeof(candidate), "%s %s", line, word);
+        } else {
+            snprintf(candidate, sizeof(candidate), "%s", word);
+        }
+
+        if (line[0] && textWidth(candidate, size) > maxW) {
+            flush();
+            snprintf(line, sizeof(line), "%s", word);
+        } else {
+            snprintf(line, sizeof(line), "%s", candidate);
+        }
+    }
+    flush();
+    return curY - y;
 }
 
 void Context::drawPanel(int x, int y, int w, int h, SDL_Color bg, SDL_Color border) {
@@ -390,6 +474,178 @@ void Context::drawHintBar(const HintPair* pairs, int count, int y) {
 
 bool Context::pointInRect(int px, int py, int rx, int ry, int rw, int rh) const {
     return px >= rx && px < rx + rw && py >= ry && py < ry + rh;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Win98 Drawing Primitives
+// ═════════════════════════════════════════════════════════════════════════════
+
+void Context::drawDesktop() {
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+    if (desktopBg) {
+        SDL_Rect dst = {0, 0, SCREEN_W, SCREEN_H};
+        SDL_RenderCopy(renderer, desktopBg, nullptr, &dst);
+    } else {
+        SDL_SetRenderDrawColor(renderer, W98::Desktop.r, W98::Desktop.g, W98::Desktop.b, 255);
+        SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
+        SDL_RenderFillRect(renderer, &full);
+    }
+}
+
+void Context::drawWin98Bevel(int x, int y, int w, int h, bool raised) {
+    if (w < 2 || h < 2) return;
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+
+    auto ln = [&](SDL_Color c, int x1, int y1, int x2, int y2) {
+        SDL_SetRenderDrawColor(renderer, c.r, c.g, c.b, 255);
+        SDL_RenderDrawLine(renderer, x1, y1, x2, y2);
+    };
+
+    SDL_Color outerTL = raised ? W98::White      : W98::DarkShadow;
+    SDL_Color innerTL = raised ? W98::Light      : W98::Shadow;
+    SDL_Color innerBR = raised ? W98::Shadow     : W98::Light;
+    SDL_Color outerBR = raised ? W98::DarkShadow : W98::White;
+
+    ln(outerTL, x,     y,     x+w-2, y    );
+    ln(outerTL, x,     y,     x,     y+h-2);
+    ln(outerBR, x,     y+h-1, x+w-1, y+h-1);
+    ln(outerBR, x+w-1, y,     x+w-1, y+h-1);
+
+    if (w >= 4 && h >= 4) {
+        ln(innerTL, x+1, y+1,   x+w-3, y+1  );
+        ln(innerTL, x+1, y+1,   x+1,   y+h-3);
+        ln(innerBR, x+1, y+h-2, x+w-2, y+h-2);
+        ln(innerBR, x+w-2, y+1, x+w-2, y+h-2);
+    }
+}
+
+void Context::drawWin98Window(int x, int y, int w, int h, const char* title, bool active) {
+    const int tH = W98::TitleH;
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(renderer, W98::Silver.r, W98::Silver.g, W98::Silver.b, 255);
+    SDL_Rect body = {x, y, w, h};
+    SDL_RenderFillRect(renderer, &body);
+
+    drawWin98Bevel(x, y, w, h, true);
+
+    // Title bar
+    SDL_Color barColor = active ? W98::Navy : W98::Shadow;
+    SDL_SetRenderDrawColor(renderer, barColor.r, barColor.g, barColor.b, 255);
+    SDL_Rect titleBar = {x+3, y+3, w-6, tH};
+    SDL_RenderFillRect(renderer, &titleBar);
+
+    if (title && title[0]) {
+        const auto& te = textCache.get(title, 14);
+        if (te.texture) {
+            SDL_SetTextureColorMod(te.texture, 255, 255, 255);
+            SDL_SetTextureAlphaMod(te.texture, 255);
+            SDL_Rect dst = {x+7, y+3+(tH-te.height)/2, te.width, te.height};
+            SDL_RenderCopy(renderer, te.texture, nullptr, &dst);
+        }
+    }
+
+    // Close button
+    int cbSz = tH - 4;
+    int cbX  = x + w - 3 - cbSz;
+    int cbY  = y + 5;
+    SDL_SetRenderDrawColor(renderer, W98::Silver.r, W98::Silver.g, W98::Silver.b, 255);
+    SDL_Rect cb = {cbX, cbY, cbSz, cbSz};
+    SDL_RenderFillRect(renderer, &cb);
+    drawWin98Bevel(cbX, cbY, cbSz, cbSz, true);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    int m = std::max(2, cbSz/4);
+    SDL_RenderDrawLine(renderer, cbX+m,      cbY+m,      cbX+cbSz-m-1, cbY+cbSz-m-1);
+    SDL_RenderDrawLine(renderer, cbX+m+1,    cbY+m,      cbX+cbSz-m,   cbY+cbSz-m-1);
+    SDL_RenderDrawLine(renderer, cbX+cbSz-m-1, cbY+m,   cbX+m,         cbY+cbSz-m-1);
+    SDL_RenderDrawLine(renderer, cbX+cbSz-m,   cbY+m,   cbX+m+1,       cbY+cbSz-m-1);
+
+    // Separator below title bar
+    SDL_SetRenderDrawColor(renderer, W98::Shadow.r, W98::Shadow.g, W98::Shadow.b, 255);
+    SDL_RenderDrawLine(renderer, x+3, y+3+tH, x+w-4, y+3+tH);
+    SDL_SetRenderDrawColor(renderer, W98::White.r, W98::White.g, W98::White.b, 255);
+    SDL_RenderDrawLine(renderer, x+3, y+4+tH, x+w-4, y+4+tH);
+}
+
+bool Context::win98Button(int idx, const char* label, int x, int y, int w, int h, bool sel) {
+    bool hovered  = pointInRect(mouseX, mouseY, x, y, w, h);
+    if (hovered) hoveredItem = idx;
+
+    bool activated = false;
+    if (hovered && mouseClicked) { clickedItem = idx; activated = true; buttonFired = true; }
+
+    bool pressed = hovered && mouseDown;
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(renderer, W98::Silver.r, W98::Silver.g, W98::Silver.b, 255);
+    SDL_Rect face = {x, y, w, h};
+    SDL_RenderFillRect(renderer, &face);
+
+    // Keyboard-focus dotted inner rect
+    if (sel && !pressed) {
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_Rect inner = {x+3, y+3, w-6, h-6};
+        SDL_RenderDrawRect(renderer, &inner);
+    }
+
+    drawWin98Bevel(x, y, w, h, !pressed);
+
+    const auto& te = textCache.get(label, 14);
+    if (te.texture) {
+        SDL_SetTextureColorMod(te.texture, 0, 0, 0);
+        SDL_SetTextureAlphaMod(te.texture, 255);
+        int ox = pressed ? 1 : 0;
+        SDL_Rect dst = {x+(w-te.width)/2+ox, y+(h-te.height)/2+ox, te.width, te.height};
+        SDL_RenderCopy(renderer, te.texture, nullptr, &dst);
+    }
+
+    return activated;
+}
+
+void Context::drawWin98TextField(int x, int y, int w, int h, const char* text,
+                                  bool focused, bool password, float blinkT) {
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+    SDL_Rect field = {x, y, w, h};
+    SDL_RenderFillRect(renderer, &field);
+    drawWin98Bevel(x, y, w, h, false);
+
+    std::string display;
+    if (text) {
+        display = password ? std::string(strlen(text), '*') : std::string(text);
+    }
+    if (focused && (int)(blinkT * 2) % 2 == 0) display += '|';
+
+    if (!display.empty()) {
+        const auto& te = textCache.get(display.c_str(), 14);
+        if (te.texture) {
+            SDL_SetTextureColorMod(te.texture, 0, 0, 0);
+            SDL_SetTextureAlphaMod(te.texture, 255);
+            SDL_Rect dst = {x+5, y+(h-te.height)/2,
+                            std::min(te.width, w-8), te.height};
+            SDL_RenderCopy(renderer, te.texture, nullptr, &dst);
+        }
+    }
+}
+
+void Context::drawWin98StatusBar(int y, const char* text) {
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(renderer, W98::Silver.r, W98::Silver.g, W98::Silver.b, 255);
+    SDL_Rect bar = {0, y, SCREEN_W, SCREEN_H - y};
+    SDL_RenderFillRect(renderer, &bar);
+    SDL_SetRenderDrawColor(renderer, W98::Shadow.r, W98::Shadow.g, W98::Shadow.b, 255);
+    SDL_RenderDrawLine(renderer, 0, y, SCREEN_W, y);
+    SDL_SetRenderDrawColor(renderer, W98::White.r, W98::White.g, W98::White.b, 255);
+    SDL_RenderDrawLine(renderer, 0, y+1, SCREEN_W, y+1);
+    if (text && text[0]) {
+        const auto& te = textCache.get(text, 12);
+        if (te.texture) {
+            SDL_SetTextureColorMod(te.texture, 0, 0, 0);
+            SDL_SetTextureAlphaMod(te.texture, 255);
+            SDL_Rect dst = {6, y+(SCREEN_H-y-te.height)/2, te.width, te.height};
+            SDL_RenderCopy(renderer, te.texture, nullptr, &dst);
+        }
+    }
 }
 
 } // namespace UI
