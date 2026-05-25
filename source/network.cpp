@@ -1684,7 +1684,7 @@ void NetworkManager::sendReliable(const std::vector<uint8_t>& data, ENetPeer* pe
         ENET_PACKET_FLAG_RELIABLE);
     if (peer) {
         enet_peer_send(peer, NET_CHAN_RELIABLE, pkt);
-    } else if (isHost_) {
+    } else if (isHost_ && enetHost_) {
         enet_host_broadcast(enetHost_, NET_CHAN_RELIABLE, pkt);
     } else {
         // Client: send to server peer (first connected peer)
@@ -1705,7 +1705,7 @@ void NetworkManager::sendUnreliable(const std::vector<uint8_t>& data, ENetPeer* 
     ENetPacket* pkt = enet_packet_create(data.data(), data.size(), 0);
     if (peer) {
         enet_peer_send(peer, NET_CHAN_UNRELIABLE, pkt);
-    } else if (isHost_) {
+    } else if (isHost_ && enetHost_) {
         enet_host_broadcast(enetHost_, NET_CHAN_UNRELIABLE, pkt);
     } else {
         // Client: send to server peer

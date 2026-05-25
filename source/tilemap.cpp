@@ -387,7 +387,6 @@ bool TileMap::worldCollides(float wx, float wy, float halfSize) const {
     return false;
 }
 
-// Helper: check if a tile and its immediate neighbors are all non-solid
 bool TileMap::isSpawnSafe(int tx, int ty) const {
     for (int dy = -1; dy <= 1; dy++)
         for (int dx = -1; dx <= 1; dx++)

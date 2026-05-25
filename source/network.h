@@ -362,7 +362,6 @@ public:
     std::function<void(uint32_t mapSeed, int mapW, int mapH, const std::vector<uint8_t>& customMapData)> onGameStarted;
     std::function<void()> onLobbyStartRequested;
     std::function<void(uint8_t newHostId)> onLobbyHostChanged;
-    // (onGameEnded declared above — intentional duplicate removed)
     std::function<void(const std::vector<uint8_t>& modData)> onModSyncReceived;
     std::function<void(const std::string& filename)> onFileSyncComplete;
     std::function<void()> onAllSyncsComplete;
