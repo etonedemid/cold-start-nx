@@ -415,3 +415,20 @@ jobs:
             cold_start-linux-arm64-server-${{ steps.version.outputs.tag }}.zip
             cold_start-windows-${{ steps.version.outputs.tag }}.zip
             cold-start-nx.nro
+
+      - name: Push to itch.io via butler
+        if: env.BUTLER_API_KEY != ''
+        env:
+          BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
+        run: |
+          curl -sL "https://broth.itch.zone/butler/linux-amd64/LATEST/archive/default" -o butler.zip
+          unzip -q butler.zip -d butler-bin
+          chmod +x butler-bin/butler
+          VER="${{ steps.version.outputs.tag }}"
+          GAME="etonedemid/coldstart"
+          push() { [ -f "$1" ] && butler-bin/butler push "$1" "$GAME:$2" --userversion "$VER"; }
+          push "cold_start-linux-${VER}.zip"        linux
+          push "cold_start-linux-server-${VER}.zip" linux-server
+          push "cold_start-linux-arm64-${VER}.zip"  linux-arm64
+          push "cold_start-windows-${VER}.zip"      windows
+          push "cold-start-nx.nro"                  switch
