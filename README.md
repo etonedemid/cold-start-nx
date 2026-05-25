@@ -1,7 +1,7 @@
 
 <img width="848" height="204" alt="banner" src="https://github.com/user-attachments/assets/2a0af91e-a15e-462f-aa99-d2869a311675" />
 
-# COLD START  `v1.5.0`
+# COLD START  `v1.6.0`
 
 COLD START is a top-down action shooter built in C++ with SDL2 for PC and Nintendo Switch homebrew. It combines fast combat, local content editing, multiplayer support, and a lightweight modding pipeline aimed at rapid iteration.
 
@@ -162,11 +162,11 @@ nxlink -a <SWITCH_IP> -s cold_start.nro
 
 ## Release artifacts
 
-Current release artifacts for `v1.4.0`:
+Current release artifacts for `v1.6.0`:
 
-- `cold_start-linux-v1.4.0.zip` — Linux x86_64 (self-contained, SDL2 libs bundled)
-- `cold_start-linux-server-v1.4.0.zip` — Linux dedicated server (headless)
-- `cold_start-windows-v1.4.0.zip` — Windows x86_64 (MinGW, all DLLs bundled)
+- `cold_start-linux-v1.6.0.zip` — Linux x86_64 (self-contained, SDL2 libs bundled)
+- `cold_start-linux-server-v1.6.0.zip` — Linux dedicated server (headless)
+- `cold_start-windows-v1.6.0.zip` — Windows x86_64 (MinGW, all DLLs bundled)
 - `cold-start-nx.nro` — Nintendo Switch homebrew
 
 ## Controls
@@ -335,6 +335,12 @@ Practical notes:
 - First launch may create missing runtime content directories automatically
 
 ## Changelog
+
+### v1.6.0 (2026-05-25)
+- **Music player overhaul** — tracks now advance sequentially (no skipping); .ogg format supported alongside .mp3; artist name displayed below track title in pause player; loop toggle no longer restarts the current track
+- **Low-HP vignette** — screen fades to red below 40% HP, pulses at critical HP (≤20%), and smoothly reverts on healing
+- **Editor Win98 UI** — toolbar and palette panel fully converted to Win98 style (silver backgrounds, beveled buttons, Navy/Shadow text); config screen defaults to 50×50 maps; width/height fields accept keyboard input directly
+- **HUD cleanup** — timer removed from the STATUS panel; GAME panel widened to fit text; FPS moved to subtitle line
 
 ### v1.5.0 (2026-03-14)
 - **Boss wave system** — dedicated boss encounters at waves 25 (BossBrute), 50 (BossSniper), and 100 (BossGunner); no new waves spawn until the boss is dead; boss wave announcement banner and bottom-screen HP bar added
