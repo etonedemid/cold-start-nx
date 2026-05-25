@@ -1,6 +1,4 @@
-// ─── discord_rpc.h ── Minimal Discord Rich Presence (IPC / pipe) ─────────────
-// Set your Application ID from https://discord.com/developers/applications
-// before building, e.g. -DDISCORD_APP_ID=\"123456789012345\"
+// hi to whoever is reading :)
 #pragma once
 #include <string>
 #include <cstdint>

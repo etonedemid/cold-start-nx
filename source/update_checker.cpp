@@ -35,7 +35,6 @@ static void initSockets() {
     initialized = true;
 }
 
-// Simple HTTP GET request implementation
 static std::string httpGet(const char* host, const char* path) {
     initSockets();
 
@@ -43,12 +42,8 @@ static std::string httpGet(const char* host, const char* path) {
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
 
-    if (getaddrinfo(host, "443", &hints, &result) != 0) {
-        // Try port 80 if SSL not available
-        if (getaddrinfo(host, "80", &hints, &result) != 0) {
-            return "";
-        }
-    }
+    if (getaddrinfo(host, "80", &hints, &result) != 0)
+        return "";
 
     int sock = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
     if (sock < 0) {
@@ -56,7 +51,6 @@ static std::string httpGet(const char* host, const char* path) {
         return "";
     }
 
-    // Set timeout to 5 seconds
     #ifdef _WIN32
     DWORD timeout = 5000;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
@@ -72,7 +66,6 @@ static std::string httpGet(const char* host, const char* path) {
     }
     freeaddrinfo(result);
 
-    // Build HTTP request
     char request[1024];
     snprintf(request, sizeof(request),
         "GET %s HTTP/1.1\r\n"
@@ -84,7 +77,6 @@ static std::string httpGet(const char* host, const char* path) {
 
     send(sock, request, strlen(request), 0);
 
-    // Read response
     std::string response;
     char buffer[4096];
     int bytesRead;
@@ -94,34 +86,27 @@ static std::string httpGet(const char* host, const char* path) {
     }
     close(sock);
 
-    // Extract body (after \r\n\r\n)
     size_t bodyStart = response.find("\r\n\r\n");
-    if (bodyStart != std::string::npos) {
+    if (bodyStart != std::string::npos)
         return response.substr(bodyStart + 4);
-    }
     return "";
 }
 
-// Parse version from GitHub API JSON response
 static std::string parseVersionFromJson(const std::string& json) {
     // Look for "tag_name":"vX.Y.Z"
     size_t pos = json.find("\"tag_name\"");
     if (pos == std::string::npos) return "";
-    
+
     pos = json.find("\"", pos + 11);
     if (pos == std::string::npos) return "";
-    
-    pos++; // Skip opening quote
+
+    pos++;
     size_t end = json.find("\"", pos);
     if (end == std::string::npos) return "";
-    
+
     std::string tag = json.substr(pos, end - pos);
-    
-    // Strip leading 'v' if present
-    if (!tag.empty() && tag[0] == 'v') {
+    if (!tag.empty() && tag[0] == 'v')
         tag = tag.substr(1);
-    }
-    
     return tag;
 }
 
@@ -137,23 +122,14 @@ std::string fetchLatestVersion(const char* owner, const char* repo) {
 
 bool isNewerVersion(const char* current, const char* latest) {
     if (!current || !latest) return false;
-    
+
     int currMajor = 0, currMinor = 0, currPatch = 0;
     int latestMajor = 0, latestMinor = 0, latestPatch = 0;
-    
-    // Parse current version
     sscanf(current, "%d.%d.%d", &currMajor, &currMinor, &currPatch);
-    
-    // Parse latest version
     sscanf(latest, "%d.%d.%d", &latestMajor, &latestMinor, &latestPatch);
-    
-    // Compare
-    if (latestMajor > currMajor) return true;
-    if (latestMajor < currMajor) return false;
-    
-    if (latestMinor > currMinor) return true;
-    if (latestMinor < currMinor) return false;
-    
+
+    if (latestMajor != currMajor) return latestMajor > currMajor;
+    if (latestMinor != currMinor) return latestMinor > currMinor;
     return latestPatch > currPatch;
 }
 

@@ -5,9 +5,9 @@
 #include "network.h"
 #include "gamemode.h"
 #include <cstdio>
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
-#include <algorithm>
 #include <csignal>
 #include <ctime>
 #include <string>
@@ -15,6 +15,7 @@
 #if !defined(__SWITCH__)
 
 #ifdef _WIN32
+#define NOMINMAX
 #include <windows.h>
 static void serverSleep(int ms) { Sleep(ms); }
 #else
@@ -82,7 +83,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Log player join/leave events
     net.onPlayerJoined = [](uint8_t id, const std::string& uname) {
         printf("[+] Player %u joined: %s\n", id, uname.c_str());
     };
@@ -101,7 +101,6 @@ int main(int argc, char* argv[]) {
                s.mapWidth, s.mapHeight, s.enemyHpScale, s.spawnRateScale);
     };
 
-    // Start the game when the lobby host requests it
     net.onLobbyStartRequested = [&net, &serverSettings]() {
         uint32_t seed = (uint32_t)time(nullptr);
         printf("[start] Lobby host requested game start — seed=%u  map=%dx%d\n",

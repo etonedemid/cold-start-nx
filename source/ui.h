@@ -30,6 +30,20 @@ namespace Color {
     constexpr SDL_Color Transparent = {0, 0, 0, 0};
 }
 
+// ─── Windows 98 Palette ─────────────────────────────────────────────────────
+namespace W98 {
+    constexpr SDL_Color Silver      = {192, 192, 192, 255};
+    constexpr SDL_Color Light       = {223, 223, 223, 255};
+    constexpr SDL_Color White       = {255, 255, 255, 255};
+    constexpr SDL_Color Shadow      = {128, 128, 128, 255};
+    constexpr SDL_Color DarkShadow  = {  0,   0,   0, 255};
+    constexpr SDL_Color Navy        = {  0,   0, 128, 255};
+    constexpr SDL_Color Desktop     = {  0, 128, 128, 255};
+    constexpr SDL_Color Black       = {  0,   0,   0, 255};
+    constexpr SDL_Color FieldBg     = {255, 255, 255, 255};
+    constexpr int       TitleH      = 22;
+}
+
 // ─── Text Cache ─────────────────────────────────────────────────────────────
 // Caches rendered text as white SDL_Textures.  Color is applied per-draw via
 // SDL_SetTextureColorMod / AlphaMod, so the same cached texture can be reused
@@ -87,7 +101,8 @@ std::string buildHintBar(const HintPair* pairs, int count, bool gamepad);
 // ─── Context ────────────────────────────────────────────────────────────────
 // Holds per-frame UI state.  One instance lives inside Game.
 struct Context {
-    SDL_Renderer* renderer = nullptr;
+    SDL_Renderer* renderer  = nullptr;
+    SDL_Texture*  desktopBg = nullptr; // optional background image for drawDesktop()
     TextCache     textCache;
 
     // Mouse / touch state — updated each frame from SDL events
@@ -113,6 +128,9 @@ struct Context {
     int  prevHoveredItem = -1; // from previous frame's render
     int  clickedItem = -1;  // set when mouse clicked on a hovered item
 
+    // Set to true for one frame when any win98Button/menuItem fires
+    bool buttonFired = false;
+
     void init(SDL_Renderer* r);
     void beginFrame(float dt, bool gamepad);
     void endFrame();
@@ -126,6 +144,10 @@ struct Context {
     void drawTextRight(const char* text, int x, int y, int size, SDL_Color color);
     int  textWidth(const char* text, int size);
     int  textHeight(int size);
+    // Word-wraps text into maxW px. Returns total pixel height used.
+    // Pass doDraw=false to measure without rendering.
+    int  drawTextWrapped(const char* text, int x, int y, int size,
+                         int maxW, SDL_Color color, bool doDraw = true);
 
     // Panels
     void drawPanel(int x, int y, int w, int h,
@@ -155,6 +177,27 @@ struct Context {
 
     // Hint bar at bottom of screen with automatic glyphs
     void drawHintBar(const HintPair* pairs, int count, int y = SCREEN_H - 36);
+
+    // ── Win98-style drawing ─────────────────────────────────────────────────
+
+    // Teal desktop fill
+    void drawDesktop();
+
+    // 3D bevel border — raised=true for buttons, false for sunken panels/fields
+    void drawWin98Bevel(int x, int y, int w, int h, bool raised);
+
+    // Full window chrome: silver bg + bevel + navy title bar + close button
+    void drawWin98Window(int x, int y, int w, int h, const char* title, bool active = true);
+
+    // 3D button with click animation; returns true when activated
+    bool win98Button(int idx, const char* label, int x, int y, int w, int h, bool sel);
+
+    // Sunken text field; password=true renders asterisks
+    void drawWin98TextField(int x, int y, int w, int h, const char* text,
+                            bool focused, bool password = false, float blinkT = 0.0f);
+
+    // Silver status bar strip at the given y-coord
+    void drawWin98StatusBar(int y, const char* text = nullptr);
 
     // ── Touch helpers ───────────────────────────────────────────────────────
     bool pointInRect(int px, int py, int rx, int ry, int rw, int rh) const;
