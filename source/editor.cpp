@@ -8,6 +8,12 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #ifdef _WIN32
+#  define cs_stricmp _stricmp
+#else
+#  include <strings.h>
+#  define cs_stricmp strcasecmp
+#endif
+#ifdef _WIN32
 #  include <direct.h>
 #  define mkdir(p, m) _mkdir(p)
 #endif
@@ -164,7 +170,7 @@ void MapEditor::loadPalette() {
     auto& a = Assets::instance();
     auto tryAdd = [&](const char* name, const char* tilePath, uint8_t type, const char* cat) {
         for (auto& pt : palette_) {
-            if (_stricmp(pt.name.c_str(), name) == 0) return;
+            if (cs_stricmp(pt.name.c_str(), name) == 0) return;
             if (pt.tileType == type)                     return; // same type already covered
         }
         SDL_Texture* t = a.tex(tilePath);
