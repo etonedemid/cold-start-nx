@@ -818,14 +818,21 @@ void Game::updateEnemies(float dt) {
             if (e.dashCdTimer <= 0) e.dashOnCd = false;
         }
 
-        // Rotation toward movement (shooter enemies in chase face their target, set in enemyChase)
+        // Body rotation: melee enemies gaze at player; shooters set rotation in enemyChase
         bool shooterChasing = isShooterEnemyType(e.type) && e.state == EnemyState::Chase;
-        if (!shooterChasing && e.vel.lengthSq() > 1.0f && !e.isDashing && !e.dashCharging) {
+        if (isMeleeEnemyType(e.type) && e.state == EnemyState::Chase) {
+            Vec2 tgt = getEnemyTargetPos(e);
+            float want = atan2f(tgt.y - e.pos.y, tgt.x - e.pos.x);
+            float diff = want - e.rotation;
+            while (diff >  (float)M_PI) diff -= 2.0f * (float)M_PI;
+            while (diff < -(float)M_PI) diff += 2.0f * (float)M_PI;
+            e.rotation += diff * std::min(1.0f, dt * 7.0f);
+        } else if (!shooterChasing && e.vel.lengthSq() > 1.0f && !e.isDashing && !e.dashCharging) {
             e.rotation = atan2f(e.vel.y, e.vel.x);
         }
 
-        // Leg animation for melee enemies
-        if (isMeleeEnemyType(e.type) && !legSprites_.empty()) {
+        // Leg animation — all enemy types
+        if (!legSprites_.empty()) {
             float spd = e.vel.length();
             if (spd > 1.0f) {
                 e.legRotation = atan2f(e.vel.y, e.vel.x);
@@ -1018,11 +1025,10 @@ void Game::enemyChase(Enemy& e, float dt) {
         return;
     }
 
-    // Melee: strafe/orbit at medium range, then charge when close
-    float strafeInner = e.dashDistance * 1.1f;
-    float strafeOuter = e.dashDistance * 2.2f;
+    // Melee: strafe/orbit in a band above strike range, charge straight when close
+    const float strafeInner = e.dashDistance + 50.0f;
+    const float strafeOuter = e.dashDistance + 270.0f;
     if (!e.dashOnCd && dist > strafeInner && dist < strafeOuter) {
-        // Circle the target — unique phase per enemy to avoid lock-step
         Vec2 toTarget = toPlayer.normalized();
         Vec2 perp = Vec2{-toTarget.y, toTarget.x};
         float sideSign = (sinf(gameTime_ * 1.3f + e.pos.x * 0.01f) > 0) ? 1.0f : -1.0f;
@@ -1045,14 +1051,14 @@ void Game::enemyChase(Enemy& e, float dt) {
 }
 
 void Game::enemyDash(Enemy& e, float dt) {
+    // Short lunge forward — not a screen-crossing dash, just a step into the swing
     e.vel = e.dashDir * e.dashForce;
     e.dashTimer -= dt;
     if (e.dashTimer <= 0) {
         e.isDashing = false;
         e.dashOnCd = true;
         e.dashCdTimer = e.dashCooldown;
-        // Keep some momentum after dash instead of hard stop
-        e.vel = e.dashDir * e.speed * 0.5f;
+        e.vel = {0, 0};
     }
 }
 
@@ -2555,10 +2561,17 @@ void Game::resolveCollisions() {
         }
     }
 
-    // Melee enemies vs player (dash collision)
+    // Melee enemies vs player — arc-based strike check (front cone + reach)
     if (!p.dead) for (auto& e : enemies_) {
         if (!e.alive || !(e.isDashing || e.netIsDashing)) continue;
-        if (circleOverlap(e.pos, e.size * 0.6f, p.pos, PLAYER_SIZE * 0.5f)) {
+        Vec2 toP = p.pos - e.pos;
+        float dist = toP.length();
+        float reach = e.size * 0.5f + PLAYER_SIZE * 0.5f + 28.0f;
+        float angDiff = atan2f(toP.y, toP.x) - e.rotation;
+        while (angDiff >  (float)M_PI) angDiff -= 2.0f * (float)M_PI;
+        while (angDiff < -(float)M_PI) angDiff += 2.0f * (float)M_PI;
+        bool inArc = dist < reach && fabsf(angDiff) < 1.65f; // ±95 deg
+        if (inArc) {
             if (p.isParrying) {
                 // Parry counter!
                 e.hp -= PARRY_DMG;
@@ -2632,7 +2645,13 @@ void Game::resolveCollisions() {
             }
             for (auto& e : enemies_) {
                 if (!e.alive || !(e.isDashing || e.netIsDashing)) continue;
-                if (circleOverlap(e.pos, e.size * 0.6f, cp.pos, PLAYER_SIZE * 0.5f)) {
+                Vec2 toCP = cp.pos - e.pos;
+                float cpDist = toCP.length();
+                float cpReach = e.size * 0.5f + PLAYER_SIZE * 0.5f + 28.0f;
+                float cpAng = atan2f(toCP.y, toCP.x) - e.rotation;
+                while (cpAng >  (float)M_PI) cpAng -= 2.0f * (float)M_PI;
+                while (cpAng < -(float)M_PI) cpAng += 2.0f * (float)M_PI;
+                if (cpDist < cpReach && fabsf(cpAng) < 1.65f) {
                     if (cp.isParrying) {
                         e.hp -= PARRY_DMG; e.stunTimer = 1.0f; e.isDashing = false;
                         e.vel = (e.pos - cp.pos).normalized() * 500.0f; e.damageFlash = 1.0f;
