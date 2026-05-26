@@ -711,8 +711,9 @@ void Game::updateEnemies(float dt) {
                 e.burstGap = 0.18f;
                 e.shootSpread = 0.10f;
             } else if (e.type == EnemyType::BossBrute) {
-                e.dashCooldown    *= 0.65f;
-                e.dashDelay       *= 0.70f;
+                e.dashCooldown       *= 0.55f;
+                e.dashDelay          *= 0.65f;
+                e.bossChargeCdTimer   = std::min(e.bossChargeCdTimer, BOSS_BRUTE_CHARGE_CD * 0.5f);
             }
         }
 
@@ -1068,34 +1069,45 @@ void Game::enemyChase(Enemy& e, float dt) {
         return;
     }
 
-    // Melee: light prowl/circle only when dash is on cooldown and very close to strike range.
-    // Otherwise always charge straight — enemies should feel relentless.
-    const float strafeInner = e.dashDistance + e.strafeOrbitOffset;
-    const float strafeOuter = e.dashDistance + 100.0f + e.strafeOrbitOffset;
-    bool inOrbitBand = e.dashOnCd && dist > strafeInner && dist < strafeOuter;
-    if (inOrbitBand) {
-        Vec2 toTarget = toPlayer.normalized();
-        Vec2 perp = Vec2{-toTarget.y, toTarget.x};
-        float sideSign = (sinf(gameTime_ * 1.3f + e.pos.x * 0.01f) > 0) ? 1.0f : -1.0f;
-        // Mostly forward, slight sidestep — never full orbit
-        Vec2 orbit = (toTarget * 0.78f + perp * sideSign * 0.40f).normalized();
-        Vec2 desired = steerToward(e.pos, e.pos + orbit * 200.0f, e.speed * 0.85f, dt);
-        e.vel = Vec2::lerp(e.vel, desired, dt * MELEE_INERTIA);
-    } else {
-        Vec2 desired = steerToward(e.pos, targetPos, e.speed, dt);
-        e.vel = Vec2::lerp(e.vel, desired, dt * MELEE_INERTIA);
-    }
-
-    // BossBrute: long-range charge when enraged and in medium band
-    if (e.type == EnemyType::BossBrute && e.bossEnraged && !e.bossCharging
+    // BossBrute: long-range charge — highest priority, always available
+    if (e.type == EnemyType::BossBrute && !e.bossCharging
         && e.bossChargeCdTimer <= 0 && !e.dashCharging && !e.isDashing
         && dist > e.dashDistance && dist < BOSS_BRUTE_CHARGE_RANGE) {
         e.bossCharging  = true;
         e.bossChargeDir = toPlayer.normalized();
         e.dashTimer     = BOSS_BRUTE_CHARGE_DUR;
-        e.flashTimer    = BOSS_BRUTE_CHARGE_DUR * 0.6f;  // brief flash cue
+        e.flashTimer    = BOSS_BRUTE_CHARGE_DUR * 0.6f;
         e.vel = {0, 0};
         return;
+    }
+
+    // Movement: close orbit → boss wide strafe → straight charge
+    const float strafeInner = e.dashDistance + e.strafeOrbitOffset;
+    const float strafeOuter = e.dashDistance + 100.0f + e.strafeOrbitOffset;
+    bool inOrbitBand = e.dashOnCd && dist > strafeInner && dist < strafeOuter;
+
+    if (inOrbitBand) {
+        // Close-range prowl — mostly forward, slight sidestep
+        Vec2 toTarget = toPlayer.normalized();
+        Vec2 perp = Vec2{-toTarget.y, toTarget.x};
+        float sideSign = (sinf(gameTime_ * 1.3f + e.pos.x * 0.01f) > 0) ? 1.0f : -1.0f;
+        Vec2 orbit = (toTarget * 0.78f + perp * sideSign * 0.40f).normalized();
+        Vec2 desired = steerToward(e.pos, e.pos + orbit * 200.0f, e.speed * 0.85f, dt);
+        e.vel = Vec2::lerp(e.vel, desired, dt * MELEE_INERTIA);
+    } else if (e.type == EnemyType::BossBrute && e.bossChargeCdTimer > 0
+               && dist > strafeOuter && dist < BOSS_BRUTE_CHARGE_RANGE
+               && !e.dashCharging && !e.isDashing) {
+        // Wide strafe while charge recharges — circle with light inward pressure
+        Vec2 toTarget = toPlayer.normalized();
+        Vec2 perp = Vec2{-toTarget.y, toTarget.x};
+        float sideSign = (sinf(gameTime_ * 0.65f + e.pos.y * 0.007f) > 0) ? 1.0f : -1.0f;
+        float fwd = (dist > BOSS_BRUTE_CHARGE_RANGE * 0.75f) ? 0.5f : 0.2f;
+        Vec2 orbit = (toTarget * fwd + perp * sideSign * 0.85f).normalized();
+        Vec2 desired = steerToward(e.pos, e.pos + orbit * 350.0f, e.speed, dt);
+        e.vel = Vec2::lerp(e.vel, desired, dt * MELEE_INERTIA);
+    } else {
+        Vec2 desired = steerToward(e.pos, targetPos, e.speed, dt);
+        e.vel = Vec2::lerp(e.vel, desired, dt * MELEE_INERTIA);
     }
 
     // Start dash when close — lock direction immediately
@@ -2609,7 +2621,7 @@ void Game::resolveCollisions() {
                 // Parry reflects — fire back at sniper-bullet speed
                 b.vel = b.vel.normalized() * -(ENEMY_BULLET_SPEED * SNIPER_BULLET_SPEED_MULTI);
                 b.tag = TAG_BULLET;
-                b.damage = PARRY_REFLECT_DAMAGE;
+                b.damage = PARRY_REFLECT_DAMAGE * (upgrades_.hasParrySurge ? 2 : 1);
                 bullets_.push_back(b);
                 b.alive = false;
                 camera_.addShake(2.2f);
@@ -2646,10 +2658,11 @@ void Game::resolveCollisions() {
         if (inArc) {
             if (p.isParrying) {
                 // Parry counter!
-                e.hp -= PARRY_DMG;
+                float surgeMul = upgrades_.hasParrySurge ? 2.0f : 1.0f;
+                e.hp -= PARRY_DMG * surgeMul;
                 e.stunTimer = 1.0f;
                 e.isDashing = false;
-                e.vel = (e.pos - p.pos).normalized() * 500.0f;
+                e.vel = (e.pos - p.pos).normalized() * (500.0f * (upgrades_.hasParrySurge ? 1.5f : 1.0f));
                 e.damageFlash = 1.0f;
                 camera_.addShake(2.2f);
                 rumble(0.52f, 84, 0.65f, 1.45f);  // Sharp parry counter rumble
@@ -2691,27 +2704,48 @@ void Game::resolveCollisions() {
             Vec2  delta   = p.pos - e.pos;
             float dist    = delta.length();
             if (dist < overlap) {
-                // Push both apart
-                Vec2 push = (dist > 0.1f) ? delta.normalized() : Vec2{1,0};
+                Vec2  push = (dist > 0.1f) ? delta.normalized() : Vec2{1,0};
                 float pen  = overlap - dist;
-                e.pos   -= push * (pen * 0.4f);
-                p.pos   += push * (pen * 0.6f);
-                e.vel   -= push * 120.0f;
-                // Damage (respects invuln — won't fire every frame)
-                bool hurt = !p.invulnerable;
-                p.takeDamage(1);
-                if (hurt && !p.dead) {
-                    camera_.addShake(1.2f);
-                    rumble(0.38f, 100, 1.0f, 0.6f);
-                    if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
-                }
-                if (hurt && p.dead) {
-                    camera_.addShake(4.0f);
-                    rumble(0.92f, 340, 1.50f, 0.82f);
-                    if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
-                    auto& net2 = NetworkManager::instance();
-                    if (!net2.isInGame()) spawnPlayerDeathEffect(p.pos);
-                    if (net2.isInGame())  net2.sendPlayerDied(net2.localPlayerId(), 0);
+                e.pos -= push * (pen * 0.4f);
+                p.pos += push * (pen * 0.6f);
+                if (p.isParrying) {
+                    // Parry counter: damage + stun + strong knockback, no player damage
+                    float surgeMul = upgrades_.hasParrySurge ? 2.0f : 1.0f;
+                    e.hp        -= PARRY_DMG * surgeMul;
+                    e.stunTimer  = 0.6f;
+                    e.isDashing  = false;
+                    e.damageFlash = 1.0f;
+                    e.vel        = push * (520.0f * (upgrades_.hasParrySurge ? 1.5f : 1.0f));
+                    camera_.addShake(1.8f);
+                    rumble(0.52f, 84, 0.65f, 1.45f);
+                    if (sfxParry_) { int ch = Mix_PlayChannel(-1, sfxParry_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                    if (e.hp <= 0) {
+                        killEnemy(e);
+                        auto& net2 = NetworkManager::instance();
+                        const bool simAuth2 = net2.isHost() || (net2.isConnectedToDedicated() && net2.isLobbyHost());
+                        if (net2.isInGame() && simAuth2) {
+                            uint32_t eIdx = (uint32_t)(&e - &enemies_[0]);
+                            net2.sendEnemyKilled(eIdx, net2.localPlayerId());
+                            enemyStatesNeedUpdate_ = true;
+                        }
+                    }
+                } else {
+                    e.vel -= push * 120.0f;
+                    bool hurt = !p.invulnerable;
+                    p.takeDamage(1);
+                    if (hurt && !p.dead) {
+                        camera_.addShake(1.2f);
+                        rumble(0.38f, 100, 1.0f, 0.6f);
+                        if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                    }
+                    if (hurt && p.dead) {
+                        camera_.addShake(4.0f);
+                        rumble(0.92f, 340, 1.50f, 0.82f);
+                        if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
+                        auto& net2 = NetworkManager::instance();
+                        if (!net2.isInGame()) spawnPlayerDeathEffect(p.pos);
+                        if (net2.isInGame())  net2.sendPlayerDied(net2.localPlayerId(), 0);
+                    }
                 }
             }
         }
@@ -3169,6 +3203,9 @@ void Game::killEnemy(Enemy& e, bool trackKill) {
         if (upgrades_.hasVampire) {
             player_.hp = std::min(player_.maxHp, player_.hp + 1);
         }
+        // Kill shaves 1s off parry cooldown
+        if (!player_.canParry)
+            player_.parryCdTimer = std::max(0.0f, player_.parryCdTimer - 1.0f);
         if (player_.killCounter >= upgrades_.killsPerBomb) {
             player_.killCounter = 0;
             player_.bombCount = std::min(MAX_BOMBS, player_.bombCount + 1);
@@ -3198,9 +3235,9 @@ void Game::playerParry() {
     Player& p = player_;
     p.canParry = false;
     p.isParrying = true;
-    p.parryTimer = PARRY_WINDOW;           // Reflect/counter window
-    p.parryDashTimer = PARRY_DASH_DURATION; // Dash movement duration (scout speed)
-    p.parryCdTimer = PARRY_COOLDOWN;
+    p.parryTimer = PARRY_WINDOW * (upgrades_.hasReactiveParry ? 2.0f : 1.0f);
+    p.parryDashTimer = PARRY_DASH_DURATION;
+    p.parryCdTimer = std::max(1.0f, PARRY_COOLDOWN - upgrades_.parryCdReduction);
     rumble(0.16f, 38, 0.32f, 1.20f);  // Softer parry dash startup
 
     // Dash direction = aim direction
