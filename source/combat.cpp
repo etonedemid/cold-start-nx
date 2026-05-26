@@ -2682,6 +2682,41 @@ void Game::resolveCollisions() {
         }
     }
 
+    // Enemy body contact vs player — any alive enemy that overlaps the player deals 1 damage.
+    // takeDamage() is no-op during the invuln window so this can't spam.
+    if (!p.dead && !godMode_) {
+        for (auto& e : enemies_) {
+            if (!e.alive) continue;
+            float overlap = e.size * 0.5f + PLAYER_SIZE * 0.5f;
+            Vec2  delta   = p.pos - e.pos;
+            float dist    = delta.length();
+            if (dist < overlap) {
+                // Push both apart
+                Vec2 push = (dist > 0.1f) ? delta.normalized() : Vec2{1,0};
+                float pen  = overlap - dist;
+                e.pos   -= push * (pen * 0.4f);
+                p.pos   += push * (pen * 0.6f);
+                e.vel   -= push * 120.0f;
+                // Damage (respects invuln — won't fire every frame)
+                bool hurt = !p.invulnerable;
+                p.takeDamage(1);
+                if (hurt && !p.dead) {
+                    camera_.addShake(1.2f);
+                    rumble(0.38f, 100, 1.0f, 0.6f);
+                    if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                }
+                if (hurt && p.dead) {
+                    camera_.addShake(4.0f);
+                    rumble(0.92f, 340, 1.50f, 0.82f);
+                    if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
+                    auto& net2 = NetworkManager::instance();
+                    if (!net2.isInGame()) spawnPlayerDeathEffect(p.pos);
+                    if (net2.isInGame())  net2.sendPlayerDied(net2.localPlayerId(), 0);
+                }
+            }
+        }
+    }
+
     // ── Local co-op / MP-splitscreen: damage for extra players (slots 1–3) ──
     bool anyLocalSplitscreen = coopPlayerCount_ > 1 &&
         (state_ == GameState::LocalCoopGame  || state_ == GameState::LocalCoopPaused ||
@@ -2740,6 +2775,28 @@ void Game::resolveCollisions() {
                     }
                 }
             }
+            // Enemy body contact vs this co-op slot
+            for (auto& e : enemies_) {
+                if (!e.alive) continue;
+                float overlap = e.size * 0.5f + PLAYER_SIZE * 0.5f;
+                Vec2  delta   = cp.pos - e.pos;
+                float dist    = delta.length();
+                if (dist < overlap) {
+                    Vec2 push = (dist > 0.1f) ? delta.normalized() : Vec2{1,0};
+                    float pen = overlap - dist;
+                    e.pos  -= push * (pen * 0.4f);
+                    cp.pos += push * (pen * 0.6f);
+                    e.vel  -= push * 120.0f;
+                    bool hurt = !cp.invulnerable;
+                    cp.takeDamage(1);
+                    if (hurt) {
+                        coopSlots_[ci].camera.addShake(1.2f);
+                        rumbleForSlot(ci, 0.38f, 100, 1.0f, 0.6f);
+                        if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                    }
+                }
+            }
+
             // Player bullets vs other co-op players (PvP)
             if (currentRules_.pvpEnabled) {
                 for (auto& b : bullets_) {
