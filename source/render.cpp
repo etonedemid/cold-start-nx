@@ -73,35 +73,9 @@ void Game::render() {
             if (tex) {
                 bool showDash   = e.isDashing    || e.netIsDashing;
                 bool showCharge = e.dashCharging || e.netDashCharging;
-                bool isMelee    = isMeleeEnemyType(e.type);
 
-                // Gradient ghost trail + speed-streak during dash
-                if (showDash && isMelee) {
-                    Vec2 trailDir = (e.dashDir.lengthSq() > 0.001f) ? e.dashDir : Vec2{1,0};
-                    static const SDL_Color kTrail[6] = {
-                        {255, 210,  60, 110}, {255, 140,  30,  90},
-                        {230,  55,  25,  70}, {190,  30,  30,  50},
-                        {140,  15,  15,  32}, { 80,   8,   8,  16},
-                    };
-                    for (int t = 0; t < 6; t++) {
-                        Vec2 tp = e.pos - trailDir * e.size * 0.52f * (float)(t + 1);
-                        renderSpriteEx(tex, tp, e.rotation + M_PI/2,
-                                       drawScale * (1.0f - t * 0.06f), kTrail[t]);
-                    }
-                    // Speed-streak lines
-                    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-                    Vec2 perp = Vec2{-trailDir.y, trailDir.x};
-                    for (int l = -1; l <= 1; l++) {
-                        Vec2 off = perp * (e.size * 0.18f * l);
-                        Vec2 ls = camera_.worldToScreen(e.pos + off - trailDir * e.size * 0.2f);
-                        Vec2 le = camera_.worldToScreen(e.pos + off - trailDir * e.size * 1.7f);
-                        SDL_SetRenderDrawColor(renderer_, 255, 170, 50, l == 0 ? 200 : 110);
-                        SDL_RenderDrawLine(renderer_, (int)ls.x, (int)ls.y, (int)le.x, (int)le.y);
-                    }
-                }
-
-                // Legs before body (melee only)
-                if (isMelee) {
+                // Legs under body — all enemy types
+                {
                     auto& eLegs = !enemyLegSprites_.empty() ? enemyLegSprites_ : legSprites_;
                     if (!eLegs.empty()) {
                         int li = e.legAnimFrame % (int)eLegs.size();
@@ -109,11 +83,14 @@ void Game::render() {
                     }
                 }
 
-                // Body sprite
+                // Body tint
                 if (showDash) {
-                    renderSpriteEx(tex, e.pos, e.rotation + M_PI/2, drawScale, {255, 30, 30, 255});
+                    // Strike frame: bright white-orange flash
+                    Uint8 fl = (Uint8)(180 + (int)(sinf(gameTime_ * 80.0f) * 75.0f + 75.0f) / 2);
+                    renderSpriteEx(tex, e.pos, e.rotation + M_PI/2, drawScale, {255, fl, 60, 255});
                 } else if (showCharge) {
-                    Uint8 pulse = (Uint8)(120 + (int)(sinf(gameTime_ * 28.0f) * 100.0f + 100.0f) / 2);
+                    // Wind-up: pulsing angry red
+                    Uint8 pulse = (Uint8)(80 + (int)(sinf(gameTime_ * 28.0f) * 80.0f + 80.0f) / 2);
                     renderSpriteEx(tex, e.pos, e.rotation + M_PI/2, drawScale, {255, pulse, pulse, 255});
                 } else if (e.damageFlash > 0 || e.flashTimer > 0) {
                     Uint8 redness = (Uint8)(255.0f * std::min(1.0f, e.damageFlash + e.flashTimer));
@@ -125,24 +102,6 @@ void Game::render() {
                     SDL_Color base = enemyBaseTint(e.type);
                     renderSpriteEx(tex, e.pos, e.rotation + M_PI/2, drawScale,
                                    {base.r, (Uint8)(base.g * hpRatio), (Uint8)(base.b * hpRatio), 255});
-                }
-
-                // Expanding charge rings (drawn on top of body so they read clearly)
-                if (showCharge && isMelee) {
-                    Vec2 sp = camera_.worldToScreen(e.pos);
-                    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-                    for (int ri = 0; ri < 3; ri++) {
-                        float t = fmodf(gameTime_ * 2.8f + ri * 0.333f, 1.0f);
-                        float r = e.size * (0.45f + t * 1.6f);
-                        Uint8 a = (Uint8)((1.0f - t) * 180.0f);
-                        SDL_SetRenderDrawColor(renderer_, 255, 70, 70, a);
-                        for (int i = 0; i < 18; i++) {
-                            float a1 = i * 6.2832f / 18.0f, a2 = (i+1) * 6.2832f / 18.0f;
-                            SDL_RenderDrawLine(renderer_,
-                                (int)(sp.x + cosf(a1)*r), (int)(sp.y + sinf(a1)*r),
-                                (int)(sp.x + cosf(a2)*r), (int)(sp.y + sinf(a2)*r));
-                        }
-                    }
                 }
             }
         }
@@ -312,26 +271,16 @@ void Game::render() {
             if (tex) {
                 bool showDash   = e.isDashing    || e.netIsDashing;
                 bool showCharge = e.dashCharging || e.netDashCharging;
-                bool isMelee    = isMeleeEnemyType(e.type);
-                if (showDash && isMelee) {
-                    Vec2 trailDir = (e.dashDir.lengthSq() > 0.001f) ? e.dashDir : Vec2{1,0};
-                    static const SDL_Color kTrail[6] = {
-                        {255,210,60,110},{255,140,30,90},{230,55,25,70},
-                        {190,30,30,50},{140,15,15,32},{80,8,8,16},
-                    };
-                    for (int t = 0; t < 6; t++)
-                        renderSpriteEx(tex, e.pos - trailDir*e.size*0.52f*(float)(t+1),
-                                       e.rotation+(float)M_PI/2, drawScale*(1.0f-t*0.06f), kTrail[t]);
-                }
-                if (isMelee && !legSprites_.empty()) {
-                    int li = e.legAnimFrame % (int)legSprites_.size();
-                    SDL_Color lt = enemyBaseTint(e.type);
-                    renderSpriteEx(legSprites_[li], e.pos, e.legRotation+(float)M_PI/2, 1.5f, lt);
+                auto& eLegs = !enemyLegSprites_.empty() ? enemyLegSprites_ : legSprites_;
+                if (!eLegs.empty()) {
+                    int li = e.legAnimFrame % (int)eLegs.size();
+                    renderSpriteEx(eLegs[li], e.pos, e.legRotation+(float)M_PI/2, 1.5f, enemyBaseTint(e.type));
                 }
                 if (showDash) {
-                    renderSpriteEx(tex, e.pos, e.rotation+(float)M_PI/2, drawScale, {255,30,30,255});
+                    Uint8 fl = (Uint8)(180+(int)(sinf(gameTime_*80.0f)*75.0f+75.0f)/2);
+                    renderSpriteEx(tex, e.pos, e.rotation+(float)M_PI/2, drawScale, {255,fl,60,255});
                 } else if (showCharge) {
-                    Uint8 pulse = (Uint8)(120+(int)(sinf(gameTime_*28.0f)*100.0f+100.0f)/2);
+                    Uint8 pulse = (Uint8)(80+(int)(sinf(gameTime_*28.0f)*80.0f+80.0f)/2);
                     renderSpriteEx(tex, e.pos, e.rotation+(float)M_PI/2, drawScale, {255,pulse,pulse,255});
                 } else if (e.damageFlash > 0 || e.flashTimer > 0) {
                     Uint8 redness = (Uint8)(255.0f*std::min(1.0f,e.damageFlash+e.flashTimer));
@@ -343,20 +292,6 @@ void Game::render() {
                     SDL_Color base = enemyBaseTint(e.type);
                     renderSpriteEx(tex, e.pos, e.rotation+(float)M_PI/2, drawScale,
                                    {base.r,(Uint8)(base.g*hpRatio),(Uint8)(base.b*hpRatio),255});
-                }
-                if (showCharge && isMelee) {
-                    Vec2 sp = camera_.worldToScreen(e.pos);
-                    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-                    for (int ri = 0; ri < 3; ri++) {
-                        float t = fmodf(gameTime_*2.8f+ri*0.333f, 1.0f);
-                        float r = e.size*(0.45f+t*1.6f);
-                        SDL_SetRenderDrawColor(renderer_, 255, 70, 70, (Uint8)((1.0f-t)*180.0f));
-                        for (int i = 0; i < 18; i++) {
-                            float a1=i*6.2832f/18.0f, a2=(i+1)*6.2832f/18.0f;
-                            SDL_RenderDrawLine(renderer_,(int)(sp.x+cosf(a1)*r),(int)(sp.y+sinf(a1)*r),
-                                                         (int)(sp.x+cosf(a2)*r),(int)(sp.y+sinf(a2)*r));
-                        }
-                    }
                 }
             }
         }
@@ -469,15 +404,25 @@ void Game::render() {
             SDL_Texture* tex = enemySpriteTex(e.type);
             float drawScale = e.renderScale;
             if (tex) {
-                bool isMelee = isMeleeEnemyType(e.type);
-                if (isMelee && !legSprites_.empty()) {
-                    int li = e.legAnimFrame % (int)legSprites_.size();
-                    renderSpriteEx(legSprites_[li], e.pos, e.legRotation+(float)M_PI/2, 1.5f, enemyBaseTint(e.type));
+                auto& eLegs = !enemyLegSprites_.empty() ? enemyLegSprites_ : legSprites_;
+                if (!eLegs.empty()) {
+                    int li = e.legAnimFrame % (int)eLegs.size();
+                    renderSpriteEx(eLegs[li], e.pos, e.legRotation+(float)M_PI/2, 1.5f, enemyBaseTint(e.type));
                 }
-                float hpRatio = std::max(0.0f,std::min(1.0f,e.maxHp>0?e.hp/e.maxHp:1.0f));
-                SDL_Color base = enemyBaseTint(e.type);
-                renderSpriteEx(tex, e.pos, e.rotation+(float)M_PI/2, drawScale,
-                               {base.r,(Uint8)(base.g*hpRatio),(Uint8)(base.b*hpRatio),255});
+                bool showDash = e.isDashing || e.netIsDashing;
+                bool showCharge = e.dashCharging || e.netDashCharging;
+                if (showDash) {
+                    Uint8 fl = (Uint8)(180+(int)(sinf(gameTime_*80.0f)*75.0f+75.0f)/2);
+                    renderSpriteEx(tex, e.pos, e.rotation+(float)M_PI/2, drawScale, {255,fl,60,255});
+                } else if (showCharge) {
+                    Uint8 pulse = (Uint8)(80+(int)(sinf(gameTime_*28.0f)*80.0f+80.0f)/2);
+                    renderSpriteEx(tex, e.pos, e.rotation+(float)M_PI/2, drawScale, {255,pulse,pulse,255});
+                } else {
+                    float hpRatio = std::max(0.0f,std::min(1.0f,e.maxHp>0?e.hp/e.maxHp:1.0f));
+                    SDL_Color base = enemyBaseTint(e.type);
+                    renderSpriteEx(tex, e.pos, e.rotation+(float)M_PI/2, drawScale,
+                                   {base.r,(Uint8)(base.g*hpRatio),(Uint8)(base.b*hpRatio),255});
+                }
             }
         }
         if (!player_.dead && !legSprites_.empty()) {
@@ -598,15 +543,25 @@ void Game::render() {
             SDL_Texture* tex = enemySpriteTex(e.type);
             float drawScale = e.renderScale;
             if (tex) {
-                bool isMelee = isMeleeEnemyType(e.type);
-                if (isMelee && !legSprites_.empty()) {
-                    int li = e.legAnimFrame % (int)legSprites_.size();
-                    renderSpriteEx(legSprites_[li], e.pos, e.legRotation+(float)M_PI/2, 1.5f, enemyBaseTint(e.type));
+                auto& eLegs = !enemyLegSprites_.empty() ? enemyLegSprites_ : legSprites_;
+                if (!eLegs.empty()) {
+                    int li = e.legAnimFrame % (int)eLegs.size();
+                    renderSpriteEx(eLegs[li], e.pos, e.legRotation+(float)M_PI/2, 1.5f, enemyBaseTint(e.type));
                 }
-                float hpRatio = std::max(0.0f,std::min(1.0f,e.maxHp>0?e.hp/e.maxHp:1.0f));
-                SDL_Color base = enemyBaseTint(e.type);
-                renderSpriteEx(tex, e.pos, e.rotation+(float)M_PI/2, drawScale,
-                               {base.r,(Uint8)(base.g*hpRatio),(Uint8)(base.b*hpRatio),255});
+                bool showDash = e.isDashing || e.netIsDashing;
+                bool showCharge = e.dashCharging || e.netDashCharging;
+                if (showDash) {
+                    Uint8 fl = (Uint8)(180+(int)(sinf(gameTime_*80.0f)*75.0f+75.0f)/2);
+                    renderSpriteEx(tex, e.pos, e.rotation+(float)M_PI/2, drawScale, {255,fl,60,255});
+                } else if (showCharge) {
+                    Uint8 pulse = (Uint8)(80+(int)(sinf(gameTime_*28.0f)*80.0f+80.0f)/2);
+                    renderSpriteEx(tex, e.pos, e.rotation+(float)M_PI/2, drawScale, {255,pulse,pulse,255});
+                } else {
+                    float hpRatio = std::max(0.0f,std::min(1.0f,e.maxHp>0?e.hp/e.maxHp:1.0f));
+                    SDL_Color base = enemyBaseTint(e.type);
+                    renderSpriteEx(tex, e.pos, e.rotation+(float)M_PI/2, drawScale,
+                                   {base.r,(Uint8)(base.g*hpRatio),(Uint8)(base.b*hpRatio),255});
+                }
             }
         }
         if (!player_.dead && !legSprites_.empty()) {
