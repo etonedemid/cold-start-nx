@@ -93,6 +93,7 @@ struct GameConfig {
     bool shaderGlitch = true;
     bool shaderNeonEdge = true;
     bool saveIncomingModsPermanently = false;
+    bool devConsole = false;    // enable dev console (~); disabled in multiplayer
 };
 
 enum class DecalType : uint8_t { Blood, Scorch };
@@ -395,6 +396,14 @@ private:
     MapPack currentPack_;           // Currently playing pack
     bool playingPack_ = false;      // In pack campaign mode
     CharacterDef packCharDef_;      // Character loaded from pack
+
+    // ── Dev console ──
+    bool consoleOpen_  = false;
+    bool godMode_      = false;
+    char consoleBuf_[256] = {};
+    std::vector<std::string> consoleLog_;
+    void consoleExec(const char* cmd);
+    void consoleOut(const char* line);
 
     // ── Visual Polish ──
     float waveAnnounceTimer_ = 0;  // countdown for wave banner display

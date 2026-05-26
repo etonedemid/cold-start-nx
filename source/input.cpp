@@ -418,6 +418,46 @@ void Game::handleInput() {
             editor_.handleInput(e);
         }
 
+        // Dev console intercepts events when open (single-player only)
+        if (config_.devConsole && consoleOpen_) {
+            if (e.type == SDL_KEYDOWN) {
+                SDL_Keycode sym = e.key.keysym.sym;
+                if (sym == SDLK_BACKQUOTE) { consoleOpen_ = false; continue; }
+                if (sym == SDLK_ESCAPE)    { consoleOpen_ = false; continue; }
+                if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) {
+                    if (consoleBuf_[0] != '\0') consoleExec(consoleBuf_);
+                    consoleBuf_[0] = '\0';
+                    continue;
+                }
+                if (sym == SDLK_BACKSPACE) {
+                    int len = (int)strlen(consoleBuf_);
+                    if (len > 0) consoleBuf_[len - 1] = '\0';
+                    continue;
+                }
+            }
+            if (e.type == SDL_TEXTINPUT) {
+                size_t cur = strlen(consoleBuf_);
+                if (cur + strlen(e.text.text) < sizeof(consoleBuf_) - 1)
+                    strcat(consoleBuf_, e.text.text);
+                continue;
+            }
+            // Swallow all other events when console is open (don't fire game inputs)
+            if (e.type != SDL_QUIT) continue;
+        }
+
+        // Toggle dev console with ~ (tilde / backtick) — single-player only
+        if (e.type == SDL_KEYDOWN && !e.key.repeat) {
+            if (e.key.keysym.sym == SDLK_BACKQUOTE) {
+                auto& net = NetworkManager::instance();
+                if (config_.devConsole && !net.isInGame()) {
+                    consoleOpen_ = !consoleOpen_;
+                    if (consoleOpen_) SDL_StartTextInput();
+                    else              SDL_StopTextInput();
+                    continue;
+                }
+            }
+        }
+
         // Centralized soft keyboard handles ALL text input
         if (softKB_.active) {
             if (handleSoftKBEvent(e)) continue;
