@@ -16,7 +16,7 @@ void Game::renderMultiplayerMenu() {
     const int leftWinW = 300;
     const int leftWinH = UI::W98::TitleH + 14 + 3*(btnH+btnGap) + 10;
     const int leftWinX = 60;
-    const int leftWinY = (SCREEN_H - leftWinH) / 2;
+    const int leftWinY = 50;
     ui_.drawWin98Window(leftWinX, leftWinY, leftWinW, leftWinH, "Multiplayer");
 
     struct MenuItem { const char* label; };
@@ -26,10 +26,10 @@ void Game::renderMultiplayerMenu() {
     int by = leftWinY + UI::W98::TitleH + 14;
     for (int i = 0; i < 3; i++) {
         if (ui_.win98Button(i, items[i].label, bx, by, leftWinW - padX*2, btnH, multiMenuSelection_ == i)) {
-            multiMenuSelection_ = i;
+            multiMenuSelection_ = i; menuSelection_ = i;
             confirmInput_ = true;
         }
-        if (ui_.hoveredItem == i && !usingGamepad_) multiMenuSelection_ = i;
+        if (ui_.hoveredItem == i && !usingGamepad_) { multiMenuSelection_ = i; menuSelection_ = i; }
         by += btnH + btnGap;
     }
 
@@ -62,9 +62,9 @@ void Game::renderMultiplayerMenu() {
             int rowTop = listY + (i - startIdx) * (rowH + rowGap);
 
             bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, listX, rowTop, listW, rowH);
-            if (hovered && !usingGamepad_) { multiMenuSelection_ = 3 + i; sel = true; }
+            if (hovered && !usingGamepad_) { multiMenuSelection_ = 3 + i; menuSelection_ = 3 + i; sel = true; }
             if (hovered) ui_.hoveredItem = 10 + (i - startIdx);
-            if (hovered && ui_.mouseClicked) { multiMenuSelection_ = 3 + i; confirmInput_ = true; }
+            if (hovered && ui_.mouseClicked) { multiMenuSelection_ = 3 + i; menuSelection_ = 3 + i; confirmInput_ = true; }
 
             // Draw as a Win98 button (reuses the 3D look)
             ui_.win98Button(10 + (i - startIdx), s.name.c_str(), listX, rowTop, listW, rowH, sel);

@@ -105,13 +105,13 @@ constexpr float GUNNER_RENDER_SCALE = 4.6f;
 // Boss enemies — spawned at waves 25, 50, 100
 constexpr int   BOSS_WAVES[]         = {25, 50, 100};
 constexpr float BOSS_BRUTE_HP        = 750.0f;
-constexpr float BOSS_BRUTE_SPEED     = 315.0f;
+constexpr float BOSS_BRUTE_SPEED     = 420.0f;
 constexpr float BOSS_BRUTE_SIZE      = 80.0f;
 constexpr float BOSS_BRUTE_DASH_DIST = 115.0f;
-constexpr float BOSS_BRUTE_DASH_FORCE= 150.0f;
-constexpr float BOSS_BRUTE_DASH_DELAY= 0.45f;
+constexpr float BOSS_BRUTE_DASH_FORCE= 190.0f;
+constexpr float BOSS_BRUTE_DASH_DELAY= 0.38f;
 constexpr float BOSS_BRUTE_DASH_DUR  = 0.28f;
-constexpr float BOSS_BRUTE_DASH_CD   = 1.10f;
+constexpr float BOSS_BRUTE_DASH_CD   = 0.90f;
 constexpr int   BOSS_BRUTE_DASH_DMG  = 5;
 constexpr float BOSS_BRUTE_SCALE     = 6.5f;
 
@@ -139,11 +139,11 @@ constexpr float BOSS_MAX_STUN        = 0.20f;
 // Brute — bullet damage reduction (tank archetype, force melee engagement)
 constexpr float BRUTE_BULLET_REDUCTION = 0.50f;   // bullets deal 50% damage
 
-// Boss Brute — long-range charge (unlocked on enrage at 50% HP)
-constexpr float BOSS_BRUTE_CHARGE_RANGE = 460.0f; // charge triggers up to this distance
-constexpr float BOSS_BRUTE_CHARGE_SPEED = 880.0f; // charge velocity
-constexpr float BOSS_BRUTE_CHARGE_DUR   = 0.40f;  // seconds the charge lasts
-constexpr float BOSS_BRUTE_CHARGE_CD    = 3.8f;   // cooldown between charges
+// Boss Brute — long-range charge (available always; enrage halves the cooldown)
+constexpr float BOSS_BRUTE_CHARGE_RANGE = 680.0f; // charge triggers up to this distance
+constexpr float BOSS_BRUTE_CHARGE_SPEED = 1150.0f; // charge velocity
+constexpr float BOSS_BRUTE_CHARGE_DUR   = 0.45f;  // seconds the charge lasts
+constexpr float BOSS_BRUTE_CHARGE_CD    = 5.5f;   // base cooldown (halved on enrage)
 
 // Milestone waves — guaranteed first appearance of each elite type
 constexpr int MILESTONE_BRUTE_WAVE  = 40;
@@ -162,7 +162,7 @@ constexpr int   MAX_BOMBS         = 100;
 
 // Parry
 constexpr float PARRY_WINDOW   = 0.25f;
-constexpr float PARRY_COOLDOWN = 1.0f;
+constexpr float PARRY_COOLDOWN = 5.0f;
 constexpr float PARRY_DASH_SPEED    = 1050.0f;  // Match scout dash force
 constexpr float PARRY_DASH_DURATION = 0.15f;    // Match scout dash duration
 constexpr float PARRY_DMG            = 4.0f;

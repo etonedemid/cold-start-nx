@@ -79,7 +79,7 @@ void Game::render() {
                     auto& eLegs = !enemyLegSprites_.empty() ? enemyLegSprites_ : legSprites_;
                     if (!eLegs.empty()) {
                         int li = e.legAnimFrame % (int)eLegs.size();
-                        renderSpriteEx(eLegs[li], e.pos, e.legRotation+(float)M_PI/2, 1.5f, enemyBaseTint(e.type));
+                        renderSpriteEx(eLegs[li], e.pos, e.legRotation+(float)M_PI/2, e.renderScale * 0.5f, enemyBaseTint(e.type));
                     }
                 }
 
@@ -368,9 +368,8 @@ void Game::render() {
         renderWallOverlay();
         renderRoofOverlay();
         renderShadingPass();
-        renderUI();
 
-        // Render goal indicator for custom maps
+        // Goal indicator — drawn before UI so HUD sits on top
         if (playingCustomMap_ && customGoalOpen_) {
             MapTrigger* goal = customMap_.findEndTrigger();
             if (goal) {
@@ -379,9 +378,11 @@ void Game::render() {
                 SDL_Rect gr = {(int)(gp.x - goal->width/2), (int)(gp.y - goal->height/2),
                               (int)goal->width, (int)goal->height};
                 SDL_RenderFillRect(renderer_, &gr);
-                drawTextCentered("EXIT", (int)gp.y - 8, 16, {50, 255, 100, 255});
+                ui_.drawText("EXIT", (int)gp.x - ui_.textWidth("EXIT", 16)/2, (int)gp.y - 8, 16, {50, 255, 100, 255});
             }
         }
+
+        renderUI();
 
         if (state_ == GameState::CustomPaused) renderPauseMenu();
         if (state_ == GameState::CustomDead)   renderDeathScreen();
@@ -476,9 +477,8 @@ void Game::render() {
         renderWallOverlay();
         renderRoofOverlay();
         renderShadingPass();
-        renderUI();
 
-        // Goal indicator
+        // Goal indicator — drawn before UI so HUD sits on top
         if (customGoalOpen_) {
             MapTrigger* goal = customMap_.findEndTrigger();
             if (goal) {
@@ -487,9 +487,11 @@ void Game::render() {
                 SDL_Rect gr = {(int)(gp.x - goal->width/2), (int)(gp.y - goal->height/2),
                               (int)goal->width, (int)goal->height};
                 SDL_RenderFillRect(renderer_, &gr);
-                drawTextCentered("EXIT", (int)gp.y - 8, 16, {50, 255, 100, 255});
+                ui_.drawText("EXIT", (int)gp.x - ui_.textWidth("EXIT", 16)/2, (int)gp.y - 8, 16, {50, 255, 100, 255});
             }
         }
+
+        renderUI();
 
         if (state_ == GameState::PackPaused) renderPauseMenu();
         if (state_ == GameState::PackDead) renderDeathScreen();
@@ -685,41 +687,47 @@ void Game::render() {
         renderPostFXComposite(gameplayView);
     }
 
-    // Dev console overlay — rendered last so it's always on top
+    // Dev console overlay — Windows CMD style, rendered last so it's always on top
     if (consoleOpen_) {
-        const int conH   = 220;
-        const int padX   = 8;
+        const int conH   = 240;
+        const int titleH = 20;
+        const int padX   = 6;
         const int lineH  = 14;
 
         SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
 
-        // Dark background
-        SDL_SetRenderDrawColor(renderer_, 10, 10, 10, 210);
-        SDL_Rect bg = {0, 0, SCREEN_W, conH};
+        // Title bar — classic Windows CMD navy blue
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 128, 255);
+        SDL_Rect titleBar = {0, 0, SCREEN_W, titleH};
+        SDL_RenderFillRect(renderer_, &titleBar);
+        ui_.drawText("streameditor v0.3", padX, 3, 11, {255, 255, 255, 255});
+
+        // Black content area
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 245);
+        SDL_Rect bg = {0, titleH, SCREEN_W, conH - titleH};
         SDL_RenderFillRect(renderer_, &bg);
 
-        // Green top border line
-        SDL_SetRenderDrawColor(renderer_, 0, 220, 80, 255);
+        // Bottom separator
+        SDL_SetRenderDrawColor(renderer_, 80, 80, 80, 255);
         SDL_RenderDrawLine(renderer_, 0, conH, SCREEN_W, conH);
 
-        // Log lines (newest at bottom)
-        int maxLines = (conH - lineH - 6) / lineH;
+        // Log lines (newest at bottom), reserve one row for input
+        int maxLines = (conH - titleH - lineH - 4) / lineH;
         int start = (int)consoleLog_.size() - maxLines;
         if (start < 0) start = 0;
         for (int i = start; i < (int)consoleLog_.size(); i++) {
             int row = i - start;
-            SDL_Color col = {0, 200, 80, 255};
-            // Commands echoed first: show in brighter white
-            if (!consoleLog_[i].empty() && consoleLog_[i][0] != ' ')
-                col = {200, 255, 200, 255};
-            ui_.drawText(consoleLog_[i].c_str(), padX, 4 + row * lineH, 11, col);
+            // Commands echoed (no leading space): bright white; output: light gray
+            SDL_Color col = (!consoleLog_[i].empty() && consoleLog_[i][0] != ' ')
+                            ? SDL_Color{255, 255, 255, 255}
+                            : SDL_Color{192, 192, 192, 255};
+            ui_.drawText(consoleLog_[i].c_str(), padX, titleH + 2 + row * lineH, 11, col);
         }
 
-        // Input line
-        char inputLine[260];
-        snprintf(inputLine, sizeof(inputLine), "> %s_", consoleBuf_);
-        SDL_Color inputCol = {80, 255, 140, 255};
-        ui_.drawText(inputLine, padX, conH - lineH - 2, 11, inputCol);
+        // Input prompt — CMD style
+        char inputLine[280];
+        snprintf(inputLine, sizeof(inputLine), "C:\\COLDSTART> %s_", consoleBuf_);
+        ui_.drawText(inputLine, padX, conH - lineH - 2, 11, {255, 255, 255, 255});
     }
 
     SDL_RenderPresent(renderer_);
@@ -919,15 +927,21 @@ void Game::renderAimCrosshair(const Camera& camera, const Player& player, Vec2 a
                               float distance, SDL_Color color, int size) {
     if (player.dead || aimDir.lengthSq() <= 0.01f) return;
 
-    Vec2 chWorld = player.pos + aimDir.normalized() * distance;
+    Vec2 chWorld  = player.pos + aimDir.normalized() * distance;
     Vec2 chScreen = camera.worldToScreen(chWorld);
-    SDL_SetRenderDrawColor(renderer_, color.r, color.g, color.b, color.a);
-    SDL_RenderDrawLine(renderer_, (int)(chScreen.x - size), (int)chScreen.y,
-                                  (int)(chScreen.x + size), (int)chScreen.y);
-    SDL_RenderDrawLine(renderer_, (int)chScreen.x, (int)(chScreen.y - size),
-                                  (int)chScreen.x, (int)(chScreen.y + size));
-    SDL_Rect dot = {(int)chScreen.x - 1, (int)chScreen.y - 1, 3, 3};
-    SDL_RenderFillRect(renderer_, &dot);
+    int  cx = (int)chScreen.x, cy = (int)chScreen.y;
+
+    const int gap = 4, len = size, half = 1;
+    SDL_Rect arms[4] = {
+        {cx - half, cy - gap - len, 2, len},   // up
+        {cx - half, cy + gap,       2, len},   // down
+        {cx - gap - len, cy - half, len, 2},   // left
+        {cx + gap,       cy - half, len, 2},   // right
+    };
+    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 210);
+    for (auto& r : arms) { SDL_Rect o = {r.x-1,r.y-1,r.w+2,r.h+2}; SDL_RenderFillRect(renderer_, &o); }
+    SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 235);
+    for (auto& r : arms) SDL_RenderFillRect(renderer_, &r);
 }
 
 // Bypass SDL_RenderCopyExF entirely — compute corners on CPU and submit raw
@@ -1600,32 +1614,32 @@ void Game::renderMinimap() {
 void Game::renderUI() {
     // ── Win98 STATUS panel (top-left) ─────────────────────────────────────────
     {
-        const int panW = 160, panH = 88;
+        const int panW = 210, panH = 124;
         const int panX = 8,   panY = 8;
         const int tH   = UI::W98::TitleH;
-        const int cx   = panX + 8;
-        const int iW   = panW - 16;
-        int cy = panY + tH + 5;
+        const int cx   = panX + 10;
+        const int iW   = panW - 20;
+        int cy = panY + tH + 6;
 
         ui_.drawWin98Window(panX, panY, panW, panH, "STATUS");
 
-        // HP bar — sunken progress bar
+        // HP bar
         {
-            ui_.drawWin98Bevel(cx, cy, iW, 14, false);
+            ui_.drawWin98Bevel(cx, cy, iW, 16, false);
             int hpMax = std::max(1, player_.maxHp);
             int hpNow = std::max(0, player_.hp);
             int fillW = (iW - 2) * hpNow / hpMax;
-            SDL_Color hpC = (player_.hp <= 1)          ? SDL_Color{200, 40,  40,  255} :
-                            (player_.hp * 3 < hpMax)   ? SDL_Color{200, 130, 30,  255} :
-                                                         SDL_Color{30,  140, 60,  255};
+            SDL_Color hpC = (player_.hp <= 1)        ? SDL_Color{200, 40,  40,  255} :
+                            (player_.hp * 3 < hpMax) ? SDL_Color{200, 130, 30,  255} :
+                                                       SDL_Color{30,  140, 60,  255};
             SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
             SDL_SetRenderDrawColor(renderer_, hpC.r, hpC.g, hpC.b, 255);
-            SDL_Rect fill = {cx + 1, cy + 1, fillW, 12};
+            SDL_Rect fill = {cx + 1, cy + 1, fillW, 14};
             SDL_RenderFillRect(renderer_, &fill);
             char hpStr[16]; snprintf(hpStr, sizeof(hpStr), "%d / %d", hpNow, hpMax);
-            int tw = ui_.textWidth(hpStr, 10);
-            ui_.drawText(hpStr, cx + (iW - tw) / 2, cy + 2, 10, UI::W98::White);
-            cy += 17;
+            int tw = ui_.textWidth(hpStr, 11);
+            ui_.drawText(hpStr, cx + (iW - tw) / 2, cy + 2, 11, UI::W98::White);
+            cy += 20;
         }
 
         // Weapon + ammo
@@ -1639,8 +1653,8 @@ void Game::renderUI() {
             } else {
                 snprintf(wpnBuf, sizeof(wpnBuf), "AXE");
             }
-            ui_.drawText(wpnBuf, cx, cy, 11, UI::W98::Black);
-            cy += 14;
+            ui_.drawText(wpnBuf, cx, cy, 13, UI::W98::Black);
+            cy += 17;
         }
 
         // Bombs
@@ -1649,8 +1663,8 @@ void Game::renderUI() {
             for (auto& b : bombs_) if (b.alive && !b.hasDashed) orbiting++;
             int total = orbiting + player_.bombCount;
             char bombBuf[24]; snprintf(bombBuf, sizeof(bombBuf), "Bombs: %d", total);
-            ui_.drawText(bombBuf, cx, cy, 11, UI::W98::Black);
-            cy += 14;
+            ui_.drawText(bombBuf, cx, cy, 13, UI::W98::Black);
+            cy += 17;
         }
 
         // Kill counter (shown when bomb-progress tracking is active)
@@ -1658,30 +1672,47 @@ void Game::renderUI() {
             char killBuf[32];
             snprintf(killBuf, sizeof(killBuf), "Kills: %d/%d",
                      player_.killCounter, upgrades_.killsPerBomb);
-            ui_.drawText(killBuf, cx, cy, 10, UI::W98::Shadow);
-            cy += 13;
+            ui_.drawText(killBuf, cx, cy, 11, UI::W98::Shadow);
+            cy += 15;
         }
 
+        // Parry cooldown bar
+        {
+            bool ready = player_.canParry;
+            float cdFill = ready ? 1.0f
+                                 : 1.0f - (player_.parryCdTimer / PARRY_COOLDOWN);
+            cdFill = std::max(0.0f, std::min(1.0f, cdFill));
+            ui_.drawWin98Bevel(cx, cy, iW, 14, false);
+            SDL_Color barC = ready ? SDL_Color{50, 180, 255, 255}
+                                   : SDL_Color{80, 80, 140, 255};
+            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+            SDL_SetRenderDrawColor(renderer_, barC.r, barC.g, barC.b, 255);
+            SDL_Rect pFill = {cx + 1, cy + 1, (int)((iW - 2) * cdFill), 12};
+            if (pFill.w > 0) SDL_RenderFillRect(renderer_, &pFill);
+            const char* parryLabel = ready ? "PARRY  READY" : "PARRY";
+            int tw = ui_.textWidth(parryLabel, 10);
+            ui_.drawText(parryLabel, cx + (iW - tw) / 2, cy + 2, 10, UI::W98::White);
+        }
     }
 
     // ── Win98 GAME panel (top-right) — timer + FPS ────────────────────────────
     {
-        const int panW = 150, panH = 80;
+        const int panW = 180, panH = 90;
         const int panX = SCREEN_W - panW - 8, panY = 8;
-        const int cx   = panX + 8;
-        int cy = panY + UI::W98::TitleH + 5;
+        const int cx   = panX + 10;
+        int cy = panY + UI::W98::TitleH + 6;
 
         ui_.drawWin98Window(panX, panY, panW, panH, "GAME");
 
         int mins = (int)gameTime_ / 60;
         int secs = (int)gameTime_ % 60;
         char timeBuf[16]; snprintf(timeBuf, sizeof(timeBuf), "%d:%02d", mins, secs);
-        ui_.drawText(timeBuf, cx, cy, 18, UI::W98::Navy);
-        cy += 22;
+        ui_.drawText(timeBuf, cx, cy, 22, UI::W98::Navy);
+        cy += 26;
 
         int fps = (dt_ > 0.0001f) ? (int)(1.0f / dt_) : 0;
         char fpsBuf[16]; snprintf(fpsBuf, sizeof(fpsBuf), "FPS: %d", fps);
-        ui_.drawText(fpsBuf, cx, cy, 12, UI::W98::Shadow);
+        ui_.drawText(fpsBuf, cx, cy, 13, UI::W98::Shadow);
     }
 
     // Minimap (bottom-right, unchanged)
@@ -1936,15 +1967,19 @@ void Game::renderUI() {
 
 #ifndef __SWITCH__
     if (!drewGamepadCrosshair) {
-        // Gameplay crosshair (same style as editor cursor, but slightly smaller)
         int mx, my;
         SDL_GetMouseState(&mx, &my);
-        const int sz = 12;
-        SDL_SetRenderDrawColor(renderer_, 0, 255, 228, 200);
-        SDL_RenderDrawLine(renderer_, mx - sz, my, mx + sz, my);
-        SDL_RenderDrawLine(renderer_, mx, my - sz, mx, my + sz);
-        SDL_Rect dot = {mx - 1, my - 1, 3, 3};
-        SDL_RenderFillRect(renderer_, &dot);
+        const int gap = 4, len = 8, half = 1;
+        SDL_Rect arms[4] = {
+            {mx - half, my - gap - len, 2, len},
+            {mx - half, my + gap,       2, len},
+            {mx - gap - len, my - half, len, 2},
+            {mx + gap,       my - half, len, 2},
+        };
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 210);
+        for (auto& r : arms) { SDL_Rect o = {r.x-1,r.y-1,r.w+2,r.h+2}; SDL_RenderFillRect(renderer_, &o); }
+        SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 235);
+        for (auto& r : arms) SDL_RenderFillRect(renderer_, &r);
     }
 #endif
 }
@@ -3252,7 +3287,7 @@ void Game::updateCustomMapGoal() {
         // Count alive enemies
         int alive = 0;
         for (auto& e : enemies_) if (e.alive) alive++;
-        customGoalOpen_ = (alive == 0 && customEnemiesTotal_ > 0);
+        customGoalOpen_ = (alive == 0);
         break;
     }
     case GoalCondition::Immediate:
