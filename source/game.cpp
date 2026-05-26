@@ -992,6 +992,7 @@ void Game::saveConfig() {
     fprintf(f, "shaderGlitch=%d\n", config_.shaderGlitch ? 1 : 0);
     fprintf(f, "shaderNeonEdge=%d\n", config_.shaderNeonEdge ? 1 : 0);
     fprintf(f, "saveIncomingModsPermanently=%d\n", config_.saveIncomingModsPermanently ? 1 : 0);
+    fprintf(f, "devConsole=%d\n", config_.devConsole ? 1 : 0);
     fclose(f);
     printf("Config saved to config.txt\n");
 }
@@ -1025,10 +1026,99 @@ void Game::loadConfig() {
         else if (sscanf(line, "shaderGlitch=%d", &ival) == 1) config_.shaderGlitch = (ival != 0);
         else if (sscanf(line, "shaderNeonEdge=%d", &ival) == 1) config_.shaderNeonEdge = (ival != 0);
         else if (sscanf(line, "saveIncomingModsPermanently=%d", &ival) == 1) config_.saveIncomingModsPermanently = (ival != 0);
+        else if (sscanf(line, "devConsole=%d", &ival) == 1) config_.devConsole = (ival != 0);
     }
     clampResolutionConfig(config_);
     fclose(f);
     printf("Config loaded from config.txt\n");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Dev console
+// ═════════════════════════════════════════════════════════════════════════════
+
+void Game::consoleOut(const char* line) {
+    consoleLog_.push_back(line);
+    if (consoleLog_.size() > 100) consoleLog_.erase(consoleLog_.begin());
+    printf("[console] %s\n", line);
+}
+
+void Game::consoleExec(const char* cmd) {
+    consoleOut(cmd);   // echo command
+    char tok[64] = {}, rest[192] = {};
+    sscanf(cmd, "%63s %191[^\n]", tok, rest);
+
+    if (strcmp(tok, "wave") == 0) {
+        int n = 0;
+        if (sscanf(rest, "%d", &n) == 1 && n >= 1) {
+            waveNumber_ = n - 1;  // incremented at start of next wave
+            wavePauseTimer_ = 0;
+            waveActive_ = false;
+            bossWaveActive_ = false;
+            char msg[64]; snprintf(msg, sizeof(msg), "Wave set to %d (starts next)", n);
+            consoleOut(msg);
+        } else { consoleOut("usage: wave <number>"); }
+    } else if (strcmp(tok, "hp") == 0) {
+        int n = 0;
+        if (sscanf(rest, "%d", &n) == 1 && n >= 1) {
+            player_.hp = std::min(n, player_.maxHp);
+            char msg[64]; snprintf(msg, sizeof(msg), "HP set to %d", player_.hp);
+            consoleOut(msg);
+        } else { consoleOut("usage: hp <number>"); }
+    } else if (strcmp(tok, "god") == 0) {
+        godMode_ = !godMode_;
+        consoleOut(godMode_ ? "God mode ON" : "God mode OFF");
+    } else if (strcmp(tok, "clear") == 0) {
+        for (auto& e : enemies_) e.alive = false;
+        consoleOut("All enemies killed");
+    } else if (strcmp(tok, "spawn") == 0) {
+        char typeName[64] = {};
+        int count = 1;
+        sscanf(rest, "%63s %d", typeName, &count);
+        EnemyType etype = EnemyType::Melee;
+        bool known = true;
+        if      (strcmp(typeName, "melee")      == 0) etype = EnemyType::Melee;
+        else if (strcmp(typeName, "shooter")    == 0) etype = EnemyType::Shooter;
+        else if (strcmp(typeName, "brute")      == 0) etype = EnemyType::Brute;
+        else if (strcmp(typeName, "scout")      == 0) etype = EnemyType::Scout;
+        else if (strcmp(typeName, "sniper")     == 0) etype = EnemyType::Sniper;
+        else if (strcmp(typeName, "gunner")     == 0) etype = EnemyType::Gunner;
+        else if (strcmp(typeName, "boss_brute") == 0) etype = EnemyType::BossBrute;
+        else if (strcmp(typeName, "boss_sniper")== 0) etype = EnemyType::BossSniper;
+        else if (strcmp(typeName, "boss_gunner")== 0) etype = EnemyType::BossGunner;
+        else { consoleOut("unknown type — melee/shooter/brute/scout/sniper/gunner/boss_brute/boss_sniper/boss_gunner"); known = false; }
+        if (known) {
+            count = std::max(1, std::min(count, 20));
+            for (int i = 0; i < count; i++) spawnEnemy(pickEnemySpawnPos(), etype);
+            char msg[64]; snprintf(msg, sizeof(msg), "Spawned %d %s", count, typeName);
+            consoleOut(msg);
+        }
+    } else if (strcmp(tok, "give") == 0) {
+        // match by name (case-sensitive); reconstruct full name from tok+rest
+        char fullName[192] = {};
+        snprintf(fullName, sizeof(fullName), "%s", rest);
+        bool found = false;
+        for (int i = 0; i < (int)UpgradeType::COUNT; i++) {
+            if (strcmp(getUpgradeInfo((UpgradeType)i).name, fullName) == 0) {
+                applyUpgrade((UpgradeType)i);
+                char msg[80]; snprintf(msg, sizeof(msg), "Gave upgrade: %s", fullName);
+                consoleOut(msg); found = true; break;
+            }
+        }
+        if (!found) consoleOut("usage: give <upgrade_name>  (e.g. give Speed Up)");
+    } else if (strcmp(tok, "bombs") == 0) {
+        int n = 0;
+        if (sscanf(rest, "%d", &n) == 1) {
+            player_.bombCount = std::max(0, std::min(n, MAX_BOMBS));
+            char msg[64]; snprintf(msg, sizeof(msg), "Bombs set to %d", player_.bombCount);
+            consoleOut(msg);
+        } else { consoleOut("usage: bombs <number>"); }
+    } else if (strcmp(tok, "help") == 0) {
+        consoleOut("Commands: wave N | hp N | god | clear | spawn TYPE [N] | give NAME | bombs N | help");
+    } else if (tok[0] != '\0') {
+        char msg[128]; snprintf(msg, sizeof(msg), "Unknown command: %s  (type help)", tok);
+        consoleOut(msg);
+    }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

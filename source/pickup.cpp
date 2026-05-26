@@ -92,6 +92,26 @@ void PlayerUpgrades::apply(UpgradeType type) {
     }
 }
 
+// Returns true when a boolean upgrade is already fully applied so a duplicate is a no-op
+static bool isBoolUpgradeOwned(UpgradeType t, const PlayerUpgrades& upg) {
+    switch (t) {
+    case UpgradeType::Magnet:        return upg.hasMagnet;
+    case UpgradeType::Ricochet:      return upg.hasRicochet;
+    case UpgradeType::Piercing:      return upg.hasPiercing;
+    case UpgradeType::TripleShot:    return upg.hasTripleShot;
+    case UpgradeType::StunRounds:    return upg.hasStunRounds;
+    case UpgradeType::Scavenger:     return upg.hasScavenger;
+    case UpgradeType::ExplosiveTips: return upg.hasExplosiveTips;
+    case UpgradeType::ChainLightning:return upg.hasChainLightning;
+    case UpgradeType::Bloodlust:     return upg.hasBloodlust;
+    case UpgradeType::ShockEdge:     return upg.hasShockEdge;
+    case UpgradeType::AutoReloader:  return upg.hasAutoReload;
+    case UpgradeType::Vampire:       return upg.hasVampire;
+    case UpgradeType::LastStand:     return upg.hasLastStand;
+    default: return false;
+    }
+}
+
 // ── Random upgrade roll ──
 UpgradeType rollRandomUpgrade() {
     // Step 1: roll a quality tier
@@ -117,6 +137,20 @@ UpgradeType rollRandomUpgrade() {
         }
     }
     return UpgradeType::SpeedUp;
+}
+
+UpgradeType rollRandomUpgrade(const PlayerUpgrades& upg, int wave) {
+    // After wave 25: allow all duplicates — no filtering
+    if (wave > 25) return rollRandomUpgrade();
+
+    // Early game (≤ wave 25): exclude boolean upgrades that are already owned
+    // so every early drop feels unique and impactful.
+    for (int attempt = 0; attempt < 20; attempt++) {
+        UpgradeType t = rollRandomUpgrade();
+        if (!isBoolUpgradeOwned(t, upg)) return t;
+    }
+    // Fallback: return anything (stat upgrades always stack)
+    return rollRandomUpgrade();
 }
 
 // ── Procedural pixel-art crate drawing ──

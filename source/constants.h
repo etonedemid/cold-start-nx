@@ -136,6 +136,20 @@ constexpr float SNIPER_PANIC_RANGE   = 180.0f;  // sprint away if player closer 
 // Stun: bosses shrug it off — max duration regardless of upgrade source
 constexpr float BOSS_MAX_STUN        = 0.20f;
 
+// Brute — bullet damage reduction (tank archetype, force melee engagement)
+constexpr float BRUTE_BULLET_REDUCTION = 0.50f;   // bullets deal 50% damage
+
+// Boss Brute — long-range charge (unlocked on enrage at 50% HP)
+constexpr float BOSS_BRUTE_CHARGE_RANGE = 460.0f; // charge triggers up to this distance
+constexpr float BOSS_BRUTE_CHARGE_SPEED = 880.0f; // charge velocity
+constexpr float BOSS_BRUTE_CHARGE_DUR   = 0.40f;  // seconds the charge lasts
+constexpr float BOSS_BRUTE_CHARGE_CD    = 3.8f;   // cooldown between charges
+
+// Milestone waves — guaranteed first appearance of each elite type
+constexpr int MILESTONE_BRUTE_WAVE  = 40;
+constexpr int MILESTONE_SNIPER_WAVE = 60;
+constexpr int MILESTONE_GUNNER_WAVE = 80;
+
 // Bomb
 constexpr float BOMB_ORBIT_SPEED  = 80.0f;
 constexpr float BOMB_DASH_SPEED   = 1000.0f;

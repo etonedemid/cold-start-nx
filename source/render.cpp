@@ -1713,6 +1713,9 @@ void Game::renderUI() {
         int   y     = annoSlideY(t, waveMaxT, 4);
 
         bool isBoss = (waveAnnounceNum_ == 25 || waveAnnounceNum_ == 50 || waveAnnounceNum_ == 100);
+        bool isMilestone = (waveAnnounceNum_ == MILESTONE_BRUTE_WAVE  ||
+                            waveAnnounceNum_ == MILESTONE_SNIPER_WAVE ||
+                            waveAnnounceNum_ == MILESTONE_GUNNER_WAVE);
 
         // Win98 window frame with coloured title
         SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
@@ -1724,13 +1727,15 @@ void Game::renderUI() {
         ui_.drawWin98Bevel(notifX, y, notifW, notifH, true);
 
         // Title bar
-        SDL_Color barCol = isBoss ? SDL_Color{140, 20, 20, 255} : SDL_Color{0, 0, 128, 255};
+        SDL_Color barCol = isBoss      ? SDL_Color{140, 20,  20,  255} :
+                           isMilestone ? SDL_Color{120, 60,  0,   255} :
+                                         SDL_Color{0,   0,   128, 255};
         SDL_SetRenderDrawColor(renderer_, barCol.r, barCol.g, barCol.b, (Uint8)(alpha * 255));
         SDL_Rect titleBar = {notifX + 3, y + 3, notifW - 6, UI::W98::TitleH - 4};
         SDL_RenderFillRect(renderer_, &titleBar);
 
         // Title text
-        const char* titleTxt = isBoss ? "!! SYSTEM ALERT !!" : "SYSTEM ALERT";
+        const char* titleTxt = isBoss ? "!! SYSTEM ALERT !!" : (isMilestone ? "! SYSTEM ALERT !" : "SYSTEM ALERT");
         int tw = ui_.textWidth(titleTxt, 11);
         SDL_Color titleCol = {255, 255, 255, (Uint8)(alpha * 255)};
         ui_.drawText(titleTxt, notifX + (notifW - tw) / 2, y + 5, 11, titleCol);
@@ -1743,6 +1748,13 @@ void Game::renderUI() {
                                    (waveAnnounceNum_ == 50)  ? "SNIPER PRIME" : "CHAINGUNNER";
             snprintf(waveTxt, sizeof(waveTxt), "Wave %d — BOSS: %s", waveAnnounceNum_, bossName);
             SDL_Color c = {220, 60, 60, (Uint8)(alpha * 255)};
+            int bw = ui_.textWidth(waveTxt, 13);
+            ui_.drawText(waveTxt, notifX + (notifW - bw) / 2, bodyY, 13, c);
+        } else if (isMilestone) {
+            const char* eliteName = (waveAnnounceNum_ == MILESTONE_BRUTE_WAVE)  ? "BRUTE" :
+                                    (waveAnnounceNum_ == MILESTONE_SNIPER_WAVE) ? "SNIPER" : "GUNNER";
+            snprintf(waveTxt, sizeof(waveTxt), "Wave %d — ELITE: %s", waveAnnounceNum_, eliteName);
+            SDL_Color c = {220, 140, 40, (Uint8)(alpha * 255)};
             int bw = ui_.textWidth(waveTxt, 13);
             ui_.drawText(waveTxt, notifX + (notifW - bw) / 2, bodyY, 13, c);
         } else {
