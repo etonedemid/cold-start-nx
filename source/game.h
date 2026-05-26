@@ -228,9 +228,6 @@ private:
 
     // ── Log-off confirmation ──
     bool  logOffConfirm_     = false;
-    // ── Input debounce (prevents double-fire across frames) ──
-    float menuInputCooldown_ = 0.0f;
-
     // ── Chat window (lobby) ──
     int  chatWinX_         = 860;
     int  chatWinY_         = 460;
@@ -422,6 +419,7 @@ private:
     std::vector<SDL_Texture*> defaultPlayerDeathSprites_;
     std::vector<SDL_Texture*> defaultLegSprites_;
     std::vector<SDL_Texture*> bombSprites_;
+    std::vector<SDL_Texture*> enemyLegSprites_;
     SDL_Texture* enemySprite_   = nullptr;
     SDL_Texture* shooterSprite_ = nullptr;
     SDL_Texture* bruteSprite_   = nullptr;
@@ -435,6 +433,7 @@ private:
     SDL_Texture* enemyBulletSprite_ = nullptr;
     SDL_Texture* shieldSprite_  = nullptr;
     SDL_Texture* mainmenuBg_   = nullptr;
+    SDL_Texture* discordTex_   = nullptr;
     SDL_Texture* bloodTex_     = nullptr;
     SDL_Texture* scorchTex_    = nullptr;
     SDL_Texture* floorTex_     = nullptr;
@@ -658,34 +657,40 @@ private:
     int         menuNavStickPrev_= 0;        // previous analog-stick nav direction (-1/0/+1)
     int         hostSetupScrollY_= 0;        // scroll offset (px) for HOST OPTIONS rows
 
-    // ── Centralized soft keyboard ──
+    // ── Unified onscreen keyboard (movable window, QWERTY layout) ──
     struct SoftKeyboard {
-        bool     active     = false;
-        const char* palette = nullptr;
-        int      cols       = 16;
-        int      charIdx    = 0;
-        int      maxLen     = 32;
-        int      heldButton = -1;
-        Uint32   repeatAt   = 0;
+        bool  active  = false;
         std::string* target = nullptr;
-        std::function<void(bool confirmed)> onDone;
-        int      renderX    = 0;
-        int      renderY    = 0;
-        int      cellW      = 0;
-        int      cellH      = 0;
-        int      rows       = 0;
-        SDL_Rect delRect    = {0, 0, 0, 0};
-        SDL_Rect okRect     = {0, 0, 0, 0};
-        SDL_Rect cancelRect = {0, 0, 0, 0};
+        int   maxLen  = 32;
+        std::function<void(bool)> onDone;
 
-        void open(const char* pal, int c, std::string* tgt, int max,
-                  std::function<void(bool confirmed)> done = nullptr);
+        // Movable window position; -1 = auto-center on first open
+        int  winX = -1, winY = -1;
+        bool dragging  = false;
+        int  dragOffX = 0, dragOffY = 0;
+        SDL_Rect titleBar = {0,0,0,0};
+
+        bool shiftOn = false;  // shift key active
+
+        // Gamepad navigation (row, col into logical key grid)
+        int  gpRow = 4, gpCol = 0;
+        int  heldNav = -1;      // held D-pad button for key-repeat
+        Uint32 repeatAt = 0;
+
+        // Per-frame hit table built by renderSoftKB, consumed by handleSoftKBEvent
+        struct Hit { SDL_Rect r; char ch, chSh; int act; int row, col; };
+        std::vector<Hit> hits;
+
+        // act codes: 0=insert, 1=backspace, 2=enter(OK), 3=shift, 4=space, 5=cancel
+
+        void open(std::string* tgt, int max,
+                  std::function<void(bool)> done = nullptr);
         void close(bool confirmed);
     };
     SoftKeyboard softKB_;
     bool handleSoftKBEvent(SDL_Event& e);
     void updateSoftKBRepeat();
-    void renderSoftKB(int centerY);
+    void renderSoftKB();
     std::string presetNameBuf_;  // buffer for naming host presets
     int         ipCharIdx_   = 0;            // palette index for IP char picker
     int  multiMenuSelection_ = 0;

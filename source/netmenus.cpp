@@ -324,7 +324,7 @@ void Game::renderHostSetup() {
     if (ui_.hoveredItem == 13 && !usingGamepad_) { hostSetupSelection_ = 13; menuSelection_ = 13; }
 
     if (softKB_.active) {
-        renderSoftKB(py + panelH - 44);
+        renderSoftKB();
     }
 
     ui_.drawWin98StatusBar(SCREEN_H - 26, "Navigate with arrows/stick  |  Enter: Edit/Apply  |  Esc: Cancel");
@@ -402,7 +402,7 @@ void Game::renderJoinMenu() {
     }
 
     if (softKB_.active) {
-        renderSoftKB(fieldY + 6);
+        renderSoftKB();
     } else {
         ui_.drawWin98Bevel(fieldX, fieldY, fieldW, 2, false);
         fieldY += 8;
@@ -1880,7 +1880,7 @@ void Game::renderModMenu() {
                 bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, listX, ry, listW, rowH);
                 if (hovered && !usingGamepad_) { modMenuSelection_ = i; sel = true; }
                 if (hovered) ui_.hoveredItem = i % 60;
-                if (hovered && ui_.mouseClicked) { modMenuSelection_ = i; confirmInput_ = true; }
+                if (hovered && ui_.mouseClicked) { modMenuSelection_ = i; ui_.mouseClicked = false; }
 
                 if (sel) {
                     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
@@ -1985,19 +1985,26 @@ void Game::renderModMenu() {
 
     SDL_RenderSetClipRect(renderer_, nullptr);
 
-    // ── Close button ──
+    // ── Bottom buttons ──
     const int btnY = winY + winH - 42;
     auto& modsList = mm.mods();
-    bool closeSel = (modMenuTab_ == 0) ? (modMenuSelection_ >= (int)modsList.size()) : false;
-    if (ui_.win98Button(62, "Close", winX + winW - pad - 86, btnY, 86, 26, closeSel)) {
-        if (modMenuTab_ == 0) modMenuSelection_ = (int)modsList.size();
-        confirmInput_ = true;
-    }
-    if (ui_.hoveredItem == 62 && !usingGamepad_) {
-        if (modMenuTab_ == 0) modMenuSelection_ = (int)modsList.size();
+
+    // Toggle button (Mods tab only, enabled when a mod row is selected)
+    if (modMenuTab_ == 0 && !modsList.empty() && modMenuSelection_ < (int)modsList.size()) {
+        const char* togLbl = modsList[modMenuSelection_].enabled ? "Disable" : "Enable";
+        if (ui_.win98Button(63, togLbl, winX + pad, btnY, 86, 26, false)) {
+            std::string id = modsList[modMenuSelection_].id;
+            mm.setEnabled(id, !modsList[modMenuSelection_].enabled);
+            applyModOverrides();
+        }
     }
 
-    { UI::HintPair hints[] = { {UI::Action::Confirm, "Toggle/Select"}, {UI::Action::Back, "Close"} };
+    // Close button — uses backInput_ so it never accidentally toggles a mod
+    if (ui_.win98Button(62, "Close", winX + winW - pad - 86, btnY, 86, 26, false)) {
+        backInput_ = true;
+    }
+
+    { UI::HintPair hints[] = { {UI::Action::Confirm, "Toggle"}, {UI::Action::Back, "Close"} };
       ui_.drawHintBar(hints, 2); }
 }
 

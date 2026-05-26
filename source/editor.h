@@ -185,6 +185,13 @@ private:
     float origTrigW_ = 0, origTrigH_ = 0;
     float origTrigX_ = 0, origTrigY_ = 0;
 
+    // Move handles (grab ball + directional arrows)
+    bool  draggingMove_  = false;
+    float moveObjOrigX_  = 0;
+    float moveObjOrigY_  = 0;
+    int   moveDragSX_    = 0;
+    int   moveDragSY_    = 0;
+
     // Test play
     bool wantsTestPlay_ = false;
 
@@ -254,6 +261,7 @@ private:
     void renderTriggers(SDL_Renderer* renderer);
     void renderEntitySpawns(SDL_Renderer* renderer);
     void renderPropertiesPanel(SDL_Renderer* renderer);
+    void renderMoveHandles(SDL_Renderer* renderer);
     void rebuildFilteredPalette();
     void renderGrid(SDL_Renderer* renderer);
     void drawEditorText(SDL_Renderer* renderer, const char* text, int x, int y, int size, SDL_Color color);
