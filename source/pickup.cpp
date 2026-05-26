@@ -34,6 +34,9 @@ static const UpgradeInfo s_upgradeTable[] = {
     { "Auto Reloader",   "Reload triggers automatically",{100, 220, 180, 255}, false, UpgradeQuality::Uncommon },  // AutoReloader
     { "Vampire",         "Killing an enemy restores 1 HP",       {220, 50,  50,  255}, false,  UpgradeQuality::Rare     },  // Vampire
     { "Last Stand",      "At 1 HP: +100% dmg and +30% speed",   {255, 80, 255, 255},  false,  UpgradeQuality::Epic     },  // LastStand
+    { "Quick Parry",     "-1s parry cooldown",                   {80,  200, 255, 255}, false,  UpgradeQuality::Uncommon },  // QuickParry
+    { "Parry Surge",     "Parry deals 2x damage, harder knockback", {50, 255, 180, 255}, false, UpgradeQuality::Rare    },  // ParrySurge
+    { "Reactive Parry",  "Parry window lasts twice as long",     {120, 255, 220, 255}, false,  UpgradeQuality::Rare     },  // ReactiveParry
     { "Slow Down",       "-15% movement speed",                  {150, 50,  50,  255}, true,   UpgradeQuality::Cursed   },  // SlowDown
     { "Glass Cannon",    "+50% damage, -2 HP",                   {255, 50,  255, 255}, true,   UpgradeQuality::Cursed   },  // GlassCannon
 };
@@ -88,6 +91,9 @@ void PlayerUpgrades::apply(UpgradeType type) {
     case UpgradeType::AutoReloader: hasAutoReload = true; break;
     case UpgradeType::Vampire:      hasVampire = true; break;
     case UpgradeType::LastStand:    hasLastStand = true; break;
+    case UpgradeType::QuickParry:   parryCdReduction = std::min(parryCdReduction + 1.0f, 4.0f); break; // cap at 4s (1s min CD)
+    case UpgradeType::ParrySurge:   hasParrySurge = true; break;
+    case UpgradeType::ReactiveParry: hasReactiveParry = true; break;
     default: break;
     }
 }
@@ -108,6 +114,8 @@ static bool isBoolUpgradeOwned(UpgradeType t, const PlayerUpgrades& upg) {
     case UpgradeType::AutoReloader:  return upg.hasAutoReload;
     case UpgradeType::Vampire:       return upg.hasVampire;
     case UpgradeType::LastStand:     return upg.hasLastStand;
+    case UpgradeType::ParrySurge:    return upg.hasParrySurge;
+    case UpgradeType::ReactiveParry: return upg.hasReactiveParry;
     default: return false;
     }
 }

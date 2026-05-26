@@ -47,6 +47,10 @@ enum class UpgradeType : uint8_t {
     AutoReloader,   // automatically reload when ammo hits 0
     Vampire,        // each kill restores 1 HP
     LastStand,      // at 1 HP: +100% damage and +30% speed
+    // Parry upgrades
+    QuickParry,     // -1s parry cooldown (stackable)
+    ParrySurge,     // parry deals 2x damage, stronger knockback
+    ReactiveParry,  // parry window is 2x wider
     // Negative (cursed) — rare
     SlowDown,       // -movement speed
     GlassCannon,    // +damage but -HP
@@ -114,6 +118,9 @@ struct PlayerUpgrades {
     bool  hasAutoReload   = false;
     bool  hasVampire      = false;
     bool  hasLastStand    = false;
+    float parryCdReduction = 0.0f;  // seconds shaved off parry cooldown (QuickParry, stacks)
+    bool  hasParrySurge   = false;  // parry contact/reflect deals 2x damage
+    bool  hasReactiveParry = false; // parry window doubled
     int   killsPerBomb    = KILLS_PER_BOMB;
     float bombDashSpeedMulti = 1.0f;
     float bulletSpeedMulti = 1.0f;

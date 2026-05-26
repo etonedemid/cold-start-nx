@@ -425,13 +425,39 @@ void Game::handleInput() {
                 if (sym == SDLK_BACKQUOTE) { consoleOpen_ = false; continue; }
                 if (sym == SDLK_ESCAPE)    { consoleOpen_ = false; continue; }
                 if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) {
-                    if (consoleBuf_[0] != '\0') consoleExec(consoleBuf_);
+                    if (consoleBuf_[0] != '\0') {
+                        consoleExec(consoleBuf_);
+                        if (consoleHistory_.empty() || consoleHistory_.back() != consoleBuf_)
+                            consoleHistory_.push_back(consoleBuf_);
+                    }
                     consoleBuf_[0] = '\0';
+                    consoleHistoryIdx_ = -1;
                     continue;
                 }
                 if (sym == SDLK_BACKSPACE) {
                     int len = (int)strlen(consoleBuf_);
                     if (len > 0) consoleBuf_[len - 1] = '\0';
+                    continue;
+                }
+                if (sym == SDLK_UP) {
+                    if (!consoleHistory_.empty()) {
+                        consoleHistoryIdx_ = std::min(consoleHistoryIdx_ + 1, (int)consoleHistory_.size() - 1);
+                        const auto& h = consoleHistory_[(int)consoleHistory_.size() - 1 - consoleHistoryIdx_];
+                        strncpy(consoleBuf_, h.c_str(), sizeof(consoleBuf_) - 1);
+                        consoleBuf_[sizeof(consoleBuf_) - 1] = '\0';
+                    }
+                    continue;
+                }
+                if (sym == SDLK_DOWN) {
+                    if (consoleHistoryIdx_ > 0) {
+                        consoleHistoryIdx_--;
+                        const auto& h = consoleHistory_[(int)consoleHistory_.size() - 1 - consoleHistoryIdx_];
+                        strncpy(consoleBuf_, h.c_str(), sizeof(consoleBuf_) - 1);
+                        consoleBuf_[sizeof(consoleBuf_) - 1] = '\0';
+                    } else {
+                        consoleHistoryIdx_ = -1;
+                        consoleBuf_[0] = '\0';
+                    }
                     continue;
                 }
             }

@@ -477,7 +477,7 @@ void Game::renderCustomWinScreen() {
     const int winH = UI::W98::TitleH + 14 + 20 + 14 + 2 + 14 + btnH + 14;
     const int winX = (SCREEN_W - winW) / 2;
     const int winY = (SCREEN_H - winH) / 2;
-    ui_.drawWin98Window(winX, winY, winW, winH, "Level Complete!");
+    ui_.drawWin98Window(winX, winY, winW, winH, "Status update");
 
     char timeStr[64];
     int mins = (int)gameTime_ / 60;
