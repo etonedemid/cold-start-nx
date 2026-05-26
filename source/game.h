@@ -401,6 +401,8 @@ private:
     bool godMode_      = false;
     char consoleBuf_[256] = {};
     std::vector<std::string> consoleLog_;
+    std::vector<std::string> consoleHistory_;
+    int  consoleHistoryIdx_ = -1;   // -1 = not browsing; 0 = most recent
     void consoleExec(const char* cmd);
     void consoleOut(const char* line);
 

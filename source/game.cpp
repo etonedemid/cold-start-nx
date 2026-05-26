@@ -673,6 +673,10 @@ void Game::run() {
             updateDiscordPresence();
         }
 
+        // Advance to next track whenever current one finishes, regardless of pause/dead state
+        if (actionMusicActive_ && !Mix_PlayingMusic())
+            playActionMusic();
+
         if (state_ == GameState::Playing || state_ == GameState::PlayingCustom
             || state_ == GameState::PlayingPack
             || state_ == GameState::MultiplayerGame
@@ -831,9 +835,6 @@ void Game::update() {
         float speed   = (target > lowHpTint_) ? 2.0f : 4.0f; // fade in slower, fade out faster
         lowHpTint_ += (target - lowHpTint_) * std::min(1.0f, speed * dt);
     }
-
-    if (actionMusicActive_ && !Mix_PlayingMusic())
-        playActionMusic();
 
     // Only run gameplay logic in active playing states
     bool isPlayingState =
@@ -1092,18 +1093,43 @@ void Game::consoleExec(const char* cmd) {
             consoleOut(msg);
         }
     } else if (strcmp(tok, "give") == 0) {
-        // match by name (case-sensitive); reconstruct full name from tok+rest
-        char fullName[192] = {};
-        snprintf(fullName, sizeof(fullName), "%s", rest);
+        auto ciPrefix = [](const char* name, const char* query) {
+            while (*query) {
+                if (tolower((unsigned char)*name) != tolower((unsigned char)*query)) return false;
+                name++; query++;
+            }
+            return true;
+        };
+        // Try exact match first, then case-insensitive prefix
         bool found = false;
+        int  prefixMatch = -1;
         for (int i = 0; i < (int)UpgradeType::COUNT; i++) {
-            if (strcmp(getUpgradeInfo((UpgradeType)i).name, fullName) == 0) {
+            const char* n = getUpgradeInfo((UpgradeType)i).name;
+            if (strcmp(n, rest) == 0) {
                 applyUpgrade((UpgradeType)i);
-                char msg[80]; snprintf(msg, sizeof(msg), "Gave upgrade: %s", fullName);
+                char msg[80]; snprintf(msg, sizeof(msg), " Gave: %s", n);
                 consoleOut(msg); found = true; break;
             }
+            if (prefixMatch < 0 && rest[0] != '\0' && ciPrefix(n, rest))
+                prefixMatch = i;
         }
-        if (!found) consoleOut("usage: give <upgrade_name>  (e.g. give Speed Up)");
+        if (!found && prefixMatch >= 0) {
+            const char* n = getUpgradeInfo((UpgradeType)prefixMatch).name;
+            applyUpgrade((UpgradeType)prefixMatch);
+            char msg[80]; snprintf(msg, sizeof(msg), " Gave: %s", n);
+            consoleOut(msg); found = true;
+        }
+        if (!found) {
+            consoleOut(" Unknown upgrade. All upgrades:");
+            std::string row;
+            int col = 0;
+            for (int i = 0; i < (int)UpgradeType::COUNT; i++) {
+                if (col > 0) row += "  |  ";
+                row += getUpgradeInfo((UpgradeType)i).name;
+                if (++col == 4) { consoleOut((" " + row).c_str()); row.clear(); col = 0; }
+            }
+            if (!row.empty()) consoleOut((" " + row).c_str());
+        }
     } else if (strcmp(tok, "bombs") == 0) {
         int n = 0;
         if (sscanf(rest, "%d", &n) == 1) {
@@ -1112,7 +1138,9 @@ void Game::consoleExec(const char* cmd) {
             consoleOut(msg);
         } else { consoleOut("usage: bombs <number>"); }
     } else if (strcmp(tok, "help") == 0) {
-        consoleOut("Commands: wave N | hp N | god | clear | spawn TYPE [N] | give NAME | bombs N | help");
+        consoleOut(" wave N | hp N | god | clear | bombs N | help");
+        consoleOut(" spawn melee|shooter|brute|scout|sniper|gunner|boss_* [N]");
+        consoleOut(" give <upgrade_name>");
     } else if (tok[0] != '\0') {
         char msg[128]; snprintf(msg, sizeof(msg), "Unknown command: %s  (type help)", tok);
         consoleOut(msg);

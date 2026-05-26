@@ -1174,7 +1174,7 @@ void MapEditor::render(SDL_Renderer* renderer) {
 
         // Tile count info
         char countStr[64];
-        snprintf(countStr, sizeof(countStr), "Triggers: %d  Enemies: %d",
+        snprintf(countStr, sizeof(countStr), "Triggers: %d  Entities: %d",
                  (int)map_.triggers.size(), (int)map_.enemySpawns.size());
         drawEditorText(renderer, countStr, 120, screenH_ - 24, 12, {100, 100, 110, 255});
 
@@ -2615,15 +2615,19 @@ void MapEditor::renderCursor(SDL_Renderer* renderer) {
 
     float cx = useGamepad_ ? cursorX_ : touchX_;
     float cy = useGamepad_ ? cursorY_ : touchY_;
-    int sz = 16;
 
-    // Crosshair cursor
-    SDL_SetRenderDrawColor(renderer, 0, 255, 228, 200);
-    SDL_RenderDrawLine(renderer, (int)cx - sz, (int)cy, (int)cx + sz, (int)cy);
-    SDL_RenderDrawLine(renderer, (int)cx, (int)cy - sz, (int)cx, (int)cy + sz);
-    // Center dot
-    SDL_Rect dot = {(int)cx - 2, (int)cy - 2, 4, 4};
-    SDL_RenderFillRect(renderer, &dot);
+    const int gap = 5, len = 12, half = 1;
+    int icx = (int)cx, icy = (int)cy;
+    SDL_Rect arms[4] = {
+        {icx - half, icy - gap - len, 2, len},
+        {icx - half, icy + gap,       2, len},
+        {icx - gap - len, icy - half, len, 2},
+        {icx + gap,       icy - half, len, 2},
+    };
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 210);
+    for (auto& r : arms) { SDL_Rect o = {r.x-1,r.y-1,r.w+2,r.h+2}; SDL_RenderFillRect(renderer, &o); }
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 235);
+    for (auto& r : arms) SDL_RenderFillRect(renderer, &r);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
