@@ -131,7 +131,7 @@ void Game::updatePickups(float dt) {
 void Game::spawnCrate(Vec2 pos) {
     PickupCrate crate;
     crate.pos = pos;
-    crate.contents = rollRandomUpgrade();
+    crate.contents = rollRandomUpgrade(upgrades_, waveNumber_);
     crates_.push_back(crate);
 
     // Notify network
