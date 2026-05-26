@@ -3,6 +3,10 @@
 
 # COLD START  `v1.7.0`
 
+This project falls under gnu public general license EXCEPT for music, consult authors before distributing this/using in your projects
+Most sounds are from https://pixabay.com/
+AI disclosure: code
+
 COLD START is a top-down action shooter built in C++ with SDL2 for PC and Nintendo Switch homebrew. It combines fast combat, local content editing, multiplayer support, and a lightweight modding pipeline aimed at rapid iteration.
 
 ## Highlights
