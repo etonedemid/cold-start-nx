@@ -3,7 +3,7 @@
 
 # COLD START  `v1.7.0`
 
-This project falls under gnu public general license EXCEPT for music, consult authors before distributing this/using in your projects
+This project falls under gnu public general license EXCEPT for music, consult authors before distributing this/using in your projects.
 Most sounds are from https://pixabay.com/
 AI disclosure: code
 
