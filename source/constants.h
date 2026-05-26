@@ -45,7 +45,7 @@ constexpr float ENEMY_BULLET_LIFETIME= 3.0f;
 constexpr float SNIPER_BULLET_SPEED_MULTI = 3.0f;
 
 // Melee enemy
-constexpr float ENEMY_SPEED      = 220.0f;
+constexpr float ENEMY_SPEED      = 330.0f;
 constexpr float ENEMY_VISION_DIST= 700.0f;
 constexpr float ENEMY_VISION_ANGLE= 120.0f;
 constexpr float ENEMY_HP         = 3.0f;
@@ -60,14 +60,14 @@ constexpr float MELEE_INERTIA    = 14.0f; // velocity smoothing factor (higher =
 constexpr float SHOOTER_INERTIA  = 8.0f;  // velocity smoothing for shooter enemies
 
 // Shooter enemy
-constexpr float SHOOTER_SPEED       = 140.0f;
+constexpr float SHOOTER_SPEED       = 210.0f;
 constexpr float SHOOTER_SHOOT_CD    = 1.0f;
 constexpr float SHOOTER_HP          = 3.0f;
 constexpr float SHOOTER_SIZE        = 64.0f;
 constexpr float SHOOTER_RENDER_SCALE= 4.5f;
 
 // Enemy variants
-constexpr float BRUTE_SPEED         = 160.0f;
+constexpr float BRUTE_SPEED         = 240.0f;
 constexpr float BRUTE_HP            = 7.0f;
 constexpr float BRUTE_SIZE          = 64.0f;
 constexpr float BRUTE_DASH_DIST     = 98.0f;
@@ -78,7 +78,7 @@ constexpr float BRUTE_DASH_CD       = 2.0f;
 constexpr int   BRUTE_DASH_DMG      = 3;
 constexpr float BRUTE_RENDER_SCALE  = 4.2f;
 
-constexpr float SCOUT_SPEED         = 300.0f;
+constexpr float SCOUT_SPEED         = 450.0f;
 constexpr float SCOUT_HP            = 2.0f;
 constexpr float SCOUT_SIZE          = 40.0f;
 constexpr float SCOUT_DASH_DIST     = 68.0f;
@@ -89,13 +89,13 @@ constexpr float SCOUT_DASH_CD       = 0.72f;
 constexpr int   SCOUT_DASH_DMG      = 1;
 constexpr float SCOUT_RENDER_SCALE  = 2.6f;
 
-constexpr float SNIPER_SPEED        = 110.0f;
+constexpr float SNIPER_SPEED        = 165.0f;
 constexpr float SNIPER_HP           = 3.0f;
 constexpr float SNIPER_SIZE         = 60.0f;
 constexpr float SNIPER_SHOOT_CD     = 1.65f;
 constexpr float SNIPER_RENDER_SCALE = 4.8f;
 
-constexpr float GUNNER_SPEED        = 155.0f;
+constexpr float GUNNER_SPEED        = 233.0f;
 constexpr float GUNNER_HP           = 4.0f;
 constexpr float GUNNER_SIZE         = 62.0f;
 constexpr float GUNNER_SHOOT_CD     = 1.25f;
@@ -105,7 +105,7 @@ constexpr float GUNNER_RENDER_SCALE = 4.6f;
 // Boss enemies — spawned at waves 25, 50, 100
 constexpr int   BOSS_WAVES[]         = {25, 50, 100};
 constexpr float BOSS_BRUTE_HP        = 750.0f;
-constexpr float BOSS_BRUTE_SPEED     = 210.0f;
+constexpr float BOSS_BRUTE_SPEED     = 315.0f;
 constexpr float BOSS_BRUTE_SIZE      = 80.0f;
 constexpr float BOSS_BRUTE_DASH_DIST = 115.0f;
 constexpr float BOSS_BRUTE_DASH_FORCE= 150.0f;
@@ -116,14 +116,14 @@ constexpr int   BOSS_BRUTE_DASH_DMG  = 5;
 constexpr float BOSS_BRUTE_SCALE     = 6.5f;
 
 constexpr float BOSS_SNIPER_HP       = 750.0f;
-constexpr float BOSS_SNIPER_SPEED    = 100.0f;
+constexpr float BOSS_SNIPER_SPEED    = 150.0f;
 constexpr float BOSS_SNIPER_SIZE     = 80.0f;
 constexpr float BOSS_SNIPER_SHOOT_CD = 0.75f;
 constexpr float BOSS_SNIPER_SCALE    = 7.0f;
 constexpr float BOSS_SNIPER_PANIC_RANGE = 210.0f; // sprint away if player closer than this
 
 constexpr float BOSS_GUNNER_HP       = 750.0f;
-constexpr float BOSS_GUNNER_SPEED    = 140.0f;
+constexpr float BOSS_GUNNER_SPEED    = 210.0f;
 constexpr float BOSS_GUNNER_SIZE     = 76.0f;
 constexpr float BOSS_GUNNER_SHOOT_CD = 0.75f;
 constexpr int   BOSS_GUNNER_BURST    = 8;

@@ -684,6 +684,44 @@ void Game::render() {
         SDL_SetRenderTarget(renderer_, nullptr);
         renderPostFXComposite(gameplayView);
     }
+
+    // Dev console overlay — rendered last so it's always on top
+    if (consoleOpen_) {
+        const int conH   = 220;
+        const int padX   = 8;
+        const int lineH  = 14;
+
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+
+        // Dark background
+        SDL_SetRenderDrawColor(renderer_, 10, 10, 10, 210);
+        SDL_Rect bg = {0, 0, SCREEN_W, conH};
+        SDL_RenderFillRect(renderer_, &bg);
+
+        // Green top border line
+        SDL_SetRenderDrawColor(renderer_, 0, 220, 80, 255);
+        SDL_RenderDrawLine(renderer_, 0, conH, SCREEN_W, conH);
+
+        // Log lines (newest at bottom)
+        int maxLines = (conH - lineH - 6) / lineH;
+        int start = (int)consoleLog_.size() - maxLines;
+        if (start < 0) start = 0;
+        for (int i = start; i < (int)consoleLog_.size(); i++) {
+            int row = i - start;
+            SDL_Color col = {0, 200, 80, 255};
+            // Commands echoed first: show in brighter white
+            if (!consoleLog_[i].empty() && consoleLog_[i][0] != ' ')
+                col = {200, 255, 200, 255};
+            ui_.drawText(consoleLog_[i].c_str(), padX, 4 + row * lineH, 11, col);
+        }
+
+        // Input line
+        char inputLine[260];
+        snprintf(inputLine, sizeof(inputLine), "> %s_", consoleBuf_);
+        SDL_Color inputCol = {80, 255, 140, 255};
+        ui_.drawText(inputLine, padX, conH - lineH - 2, 11, inputCol);
+    }
+
     SDL_RenderPresent(renderer_);
 }
 
