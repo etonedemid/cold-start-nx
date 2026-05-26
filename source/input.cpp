@@ -419,7 +419,7 @@ void Game::handleInput() {
         }
 
         // Dev console intercepts events when open (single-player only)
-        if (config_.devConsole && consoleOpen_) {
+        if (consoleOpen_) {
             if (e.type == SDL_KEYDOWN) {
                 SDL_Keycode sym = e.key.keysym.sym;
                 if (sym == SDLK_BACKQUOTE) { consoleOpen_ = false; continue; }
@@ -449,7 +449,7 @@ void Game::handleInput() {
         if (e.type == SDL_KEYDOWN && !e.key.repeat) {
             if (e.key.keysym.sym == SDLK_BACKQUOTE) {
                 auto& net = NetworkManager::instance();
-                if (config_.devConsole && !net.isInGame()) {
+                if (!net.isInGame()) {
                     consoleOpen_ = !consoleOpen_;
                     if (consoleOpen_) SDL_StartTextInput();
                     else              SDL_StopTextInput();

@@ -93,7 +93,6 @@ struct GameConfig {
     bool shaderGlitch = true;
     bool shaderNeonEdge = true;
     bool saveIncomingModsPermanently = false;
-    bool devConsole = false;    // enable dev console (~); disabled in multiplayer
 };
 
 enum class DecalType : uint8_t { Blood, Scorch };
