@@ -695,6 +695,27 @@ void Game::updateEnemies(float dt) {
         if (isBossType(e.type) && e.stunTimer > BOSS_MAX_STUN) e.stunTimer = BOSS_MAX_STUN;
         if (e.stunTimer > 0) { e.stunTimer -= dt; continue; }
 
+        // Boss enrage at 50% HP
+        if (isBossType(e.type) && !e.bossEnraged && e.hp < e.maxHp * 0.5f) {
+            e.bossEnraged = true;
+            e.speed *= 1.30f;
+            if (isShooterEnemyType(e.type)) {
+                e.shootCooldownBase *= 0.60f;
+                e.shootCooldown = std::min(e.shootCooldown, e.shootCooldownBase);
+            }
+            if (e.type == EnemyType::BossGunner) {
+                e.shotsPerBurst = 12;
+                e.burstGap = BOSS_GUNNER_BURST_GAP * 0.55f;
+            } else if (e.type == EnemyType::BossSniper) {
+                e.shotsPerBurst = 3;
+                e.burstGap = 0.18f;
+                e.shootSpread = 0.10f;
+            } else if (e.type == EnemyType::BossBrute) {
+                e.dashCooldown    *= 0.65f;
+                e.dashDelay       *= 0.70f;
+            }
+        }
+
         // Damage flash decay
         if (e.damageFlash > 0) e.damageFlash -= dt * 2.5f;
 
@@ -794,7 +815,16 @@ void Game::updateEnemies(float dt) {
         }
 
         // Behavior
-        if (e.isDashing) {
+        if (e.bossCharging) {
+            // BossBrute long-range charge: drive straight at locked direction
+            e.vel = e.bossChargeDir * BOSS_BRUTE_CHARGE_SPEED;
+            e.dashTimer -= dt;
+            if (e.dashTimer <= 0) {
+                e.bossCharging = false;
+                e.bossChargeCdTimer = BOSS_BRUTE_CHARGE_CD;
+                e.vel = {0, 0};
+            }
+        } else if (e.isDashing) {
             enemyDash(e, dt);
         } else if (e.dashCharging) {
             e.dashDelayTimer -= dt;
@@ -817,8 +847,10 @@ void Game::updateEnemies(float dt) {
             e.dashCdTimer -= dt;
             if (e.dashCdTimer <= 0) e.dashOnCd = false;
         }
+        if (e.bossChargeCdTimer > 0) e.bossChargeCdTimer -= dt;
 
-        // Body rotation: melee enemies gaze at player; shooters set rotation in enemyChase
+        // Body rotation: melee enemies gaze at player, clamped to ±30° of movement direction.
+        // Shooters track the player freely inside enemyChase.
         bool shooterChasing = isShooterEnemyType(e.type) && e.state == EnemyState::Chase;
         if (isMeleeEnemyType(e.type) && e.state == EnemyState::Chase) {
             Vec2 tgt = getEnemyTargetPos(e);
@@ -827,6 +859,17 @@ void Game::updateEnemies(float dt) {
             while (diff >  (float)M_PI) diff -= 2.0f * (float)M_PI;
             while (diff < -(float)M_PI) diff += 2.0f * (float)M_PI;
             e.rotation += diff * std::min(1.0f, dt * 7.0f);
+
+            // Clamp body rotation to ±30° of movement (leg) direction when actually moving
+            if (e.vel.lengthSq() > 100.0f) {
+                constexpr float kMaxBodyTurn = (float)M_PI / 6.0f;  // 30 degrees
+                float legDir = e.legRotation;
+                float bodyOff = e.rotation - legDir;
+                while (bodyOff >  (float)M_PI) bodyOff -= 2.0f * (float)M_PI;
+                while (bodyOff < -(float)M_PI) bodyOff += 2.0f * (float)M_PI;
+                if (bodyOff >  kMaxBodyTurn) e.rotation = legDir + kMaxBodyTurn;
+                if (bodyOff < -kMaxBodyTurn) e.rotation = legDir - kMaxBodyTurn;
+            }
         } else if (!shooterChasing && e.vel.lengthSq() > 1.0f && !e.isDashing && !e.dashCharging) {
             e.rotation = atan2f(e.vel.y, e.vel.x);
         }
@@ -1025,19 +1068,34 @@ void Game::enemyChase(Enemy& e, float dt) {
         return;
     }
 
-    // Melee: strafe/orbit in a band above strike range, charge straight when close
-    const float strafeInner = e.dashDistance + 50.0f;
-    const float strafeOuter = e.dashDistance + 270.0f;
-    if (!e.dashOnCd && dist > strafeInner && dist < strafeOuter) {
+    // Melee: light prowl/circle only when dash is on cooldown and very close to strike range.
+    // Otherwise always charge straight — enemies should feel relentless.
+    const float strafeInner = e.dashDistance + e.strafeOrbitOffset;
+    const float strafeOuter = e.dashDistance + 100.0f + e.strafeOrbitOffset;
+    bool inOrbitBand = e.dashOnCd && dist > strafeInner && dist < strafeOuter;
+    if (inOrbitBand) {
         Vec2 toTarget = toPlayer.normalized();
         Vec2 perp = Vec2{-toTarget.y, toTarget.x};
         float sideSign = (sinf(gameTime_ * 1.3f + e.pos.x * 0.01f) > 0) ? 1.0f : -1.0f;
-        Vec2 orbit = (toTarget * 0.35f + perp * sideSign * 0.94f).normalized();
-        Vec2 desired = steerToward(e.pos, e.pos + orbit * 200.0f, e.speed * 0.75f, dt);
+        // Mostly forward, slight sidestep — never full orbit
+        Vec2 orbit = (toTarget * 0.78f + perp * sideSign * 0.40f).normalized();
+        Vec2 desired = steerToward(e.pos, e.pos + orbit * 200.0f, e.speed * 0.85f, dt);
         e.vel = Vec2::lerp(e.vel, desired, dt * MELEE_INERTIA);
     } else {
         Vec2 desired = steerToward(e.pos, targetPos, e.speed, dt);
         e.vel = Vec2::lerp(e.vel, desired, dt * MELEE_INERTIA);
+    }
+
+    // BossBrute: long-range charge when enraged and in medium band
+    if (e.type == EnemyType::BossBrute && e.bossEnraged && !e.bossCharging
+        && e.bossChargeCdTimer <= 0 && !e.dashCharging && !e.isDashing
+        && dist > e.dashDistance && dist < BOSS_BRUTE_CHARGE_RANGE) {
+        e.bossCharging  = true;
+        e.bossChargeDir = toPlayer.normalized();
+        e.dashTimer     = BOSS_BRUTE_CHARGE_DUR;
+        e.flashTimer    = BOSS_BRUTE_CHARGE_DUR * 0.6f;  // brief flash cue
+        e.vel = {0, 0};
+        return;
     }
 
     // Start dash when close — lock direction immediately
@@ -2161,6 +2219,15 @@ void Game::updateSpawning(float dt) {
             waveActive_ = true;
             waveSpawnTimer_ = 0;
 
+            // ── Milestone: guaranteed first appearance of elite types ──
+            if (waveNumber_ == MILESTONE_BRUTE_WAVE) {
+                spawnEnemy(pickEnemySpawnPos(), EnemyType::Brute);
+            } else if (waveNumber_ == MILESTONE_SNIPER_WAVE) {
+                spawnEnemy(pickEnemySpawnPos(), EnemyType::Sniper);
+            } else if (waveNumber_ == MILESTONE_GUNNER_WAVE) {
+                spawnEnemy(pickEnemySpawnPos(), EnemyType::Gunner);
+            }
+
             // ── Sync wave start to clients ──
             if (sendNetEvents) {
                 auto& net = NetworkManager::instance();
@@ -2168,7 +2235,9 @@ void Game::updateSpawning(float dt) {
             }
 
             // ── Visual polish: wave announcement banner ──
-            waveAnnounceTimer_ = 2.5f;
+            waveAnnounceTimer_ = (waveNumber_ == MILESTONE_BRUTE_WAVE ||
+                                   waveNumber_ == MILESTONE_SNIPER_WAVE ||
+                                   waveNumber_ == MILESTONE_GUNNER_WAVE) ? 3.5f : 2.5f;
             waveAnnounceNum_ = waveNumber_;
         }
     }
@@ -2181,6 +2250,8 @@ void Game::spawnEnemy(Vec2 pos, EnemyType type) {
     e.wanderTarget = pos;
     e.nextWanderTime = gameTime_ + 1.0f;
     e.renderScale = 3.0f;
+    // Randomize orbit offset so melee enemies don't all pile up at the same radius
+    e.strafeOrbitOffset = ((rand() % 161) - 80);  // -80 .. +80 px
     switch (type) {
         case EnemyType::Shooter:
             e.hp = SHOOTER_HP * config_.enemyHpScale;
@@ -2510,7 +2581,8 @@ void Game::resolveCollisions() {
                 triggerChainLightning(b, b.pos, (int)ei);
                 // State changes are authoritative on: offline, P2P host, or dedicated-server lobby-host
                 if (simAuth) {
-                    e.hp -= b.damage;
+                    float dmg = b.damage * (1.0f - e.bulletDamageReduction);
+                    e.hp -= dmg;
                     if (upgrades_.hasStunRounds) e.stunTimer = std::max(e.stunTimer, 0.75f);
                     // Aggro — target the player who shot this bullet
                     e.state = EnemyState::Chase;
@@ -2531,11 +2603,11 @@ void Game::resolveCollisions() {
 
     // Enemy bullets vs player
     for (auto& b : enemyBullets_) {
-        if (!b.alive || p.dead) continue;
+        if (!b.alive || p.dead || godMode_) continue;
         if (circleOverlap(b.pos, b.size, p.pos, PLAYER_SIZE * 0.5f)) {
             if (p.isParrying) {
-                // Parry reflects!
-                b.vel = b.vel * -1.0f;
+                // Parry reflects — fire back at sniper-bullet speed
+                b.vel = b.vel.normalized() * -(ENEMY_BULLET_SPEED * SNIPER_BULLET_SPEED_MULTI);
                 b.tag = TAG_BULLET;
                 b.damage = PARRY_REFLECT_DAMAGE;
                 bullets_.push_back(b);
@@ -2562,8 +2634,8 @@ void Game::resolveCollisions() {
     }
 
     // Melee enemies vs player — arc-based strike check (front cone + reach)
-    if (!p.dead) for (auto& e : enemies_) {
-        if (!e.alive || !(e.isDashing || e.netIsDashing)) continue;
+    if (!p.dead && !godMode_) for (auto& e : enemies_) {
+        if (!e.alive || !(e.isDashing || e.bossCharging || e.netIsDashing)) continue;
         Vec2 toP = p.pos - e.pos;
         float dist = toP.length();
         float reach = e.size * 0.5f + PLAYER_SIZE * 0.5f + 28.0f;
@@ -2628,7 +2700,7 @@ void Game::resolveCollisions() {
                 bool eSwept = sweptCircleOverlap(b.pos, b.vel, 1.0f / 30.0f, cp.pos, eHitR);
                 if (ePoint || eSwept) {
                     if (cp.isParrying) {
-                        b.vel = b.vel * -1.0f; b.tag = TAG_BULLET;
+                        b.vel = b.vel.normalized() * -(ENEMY_BULLET_SPEED * SNIPER_BULLET_SPEED_MULTI); b.tag = TAG_BULLET;
                         b.damage = PARRY_REFLECT_DAMAGE;
                         bullets_.push_back(b); b.alive = false;
                         coopSlots_[ci].camera.addShake(2.2f);
@@ -2644,7 +2716,7 @@ void Game::resolveCollisions() {
                 }
             }
             for (auto& e : enemies_) {
-                if (!e.alive || !(e.isDashing || e.netIsDashing)) continue;
+                if (!e.alive || !(e.isDashing || e.bossCharging || e.netIsDashing)) continue;
                 Vec2 toCP = cp.pos - e.pos;
                 float cpDist = toCP.length();
                 float cpReach = e.size * 0.5f + PLAYER_SIZE * 0.5f + 28.0f;
@@ -3051,7 +3123,7 @@ void Game::killEnemy(Enemy& e, bool trackKill) {
             Pickup pu;
             float angle = (float)i / 3.0f * 2.0f * (float)M_PI;
             pu.pos = {e.pos.x + cosf(angle) * 50.0f, e.pos.y + sinf(angle) * 50.0f};
-            pu.type = rollRandomUpgrade();
+            pu.type = rollRandomUpgrade(upgrades_, waveNumber_);
             pickups_.push_back(pu);
         }
     }

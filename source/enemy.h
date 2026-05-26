@@ -76,6 +76,18 @@ struct Enemy {
     int   legAnimFrame = 0;
     float legRotation  = 0;
 
+    // Per-enemy randomized orbit offset — prevents enemies piling up at the same radius
+    float strafeOrbitOffset = 0.0f;  // set at spawn, range ±80 px
+
+    // Damage resistance
+    float bulletDamageReduction = 0.0f;  // fraction of bullet damage absorbed (0=none, 0.5=50%)
+
+    // Boss-specific
+    bool  bossEnraged      = false;
+    bool  bossCharging     = false;   // BossBrute long-range charge (enrage-exclusive)
+    float bossChargeCdTimer= 0;
+    Vec2  bossChargeDir    = {0,0};
+
     // Stun
     float stunTimer    = 0;
 

@@ -135,3 +135,6 @@ void drawPickupPixelArt(SDL_Renderer* r, int cx, int cy, int size, UpgradeType t
 
 // ── Crate spawn logic ──
 UpgradeType rollRandomUpgrade();
+// Wave-aware version: for waves ≤ 25, filters out boolean upgrades already owned so
+// early-game offers feel varied. After wave 25, all duplicates are allowed.
+UpgradeType rollRandomUpgrade(const PlayerUpgrades& upg, int wave);
