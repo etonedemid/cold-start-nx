@@ -199,6 +199,12 @@ void Context::beginFrame(float frameDt, bool gamepad) {
     mouseClicked  = mouseDown && !wasDown;
     mouseReleased = !mouseDown && wasDown;
 
+    // Suppress clicks for N frames after any button fires to prevent double-fire
+    if (clickCooldownFrames > 0) {
+        --clickCooldownFrames;
+        mouseClicked = false;
+    }
+
     // Evict old text cache entries occasionally (every ~10 seconds)
     static int evictCounter = 0;
     if (++evictCounter > 600) { textCache.evict(600); evictCounter = 0; }
@@ -342,6 +348,8 @@ bool Context::menuItem(int idx, const char* label, int cx, int y, int w, int h,
     if (hovered && mouseClicked) {
         clickedItem = idx;
         activated = true;
+        mouseClicked = false;
+        clickCooldownFrames = 3;
     }
 
     // Animate focus (smooth interpolation)
@@ -459,9 +467,10 @@ int Context::sliderRow(int idx, const char* label, const char* value,
     if (rightKey) delta = +1;
 
     if (hovered && mouseClicked) {
-        // Left half = decrease, right half = increase
         if (mouseX < cx) delta = -1;
         else delta = +1;
+        mouseClicked = false;
+        clickCooldownFrames = 3;
     }
 
     return delta;
@@ -572,7 +581,7 @@ bool Context::win98Button(int idx, const char* label, int x, int y, int w, int h
     if (hovered) hoveredItem = idx;
 
     bool activated = false;
-    if (hovered && mouseClicked) { clickedItem = idx; activated = true; buttonFired = true; }
+    if (hovered && mouseClicked) { clickedItem = idx; activated = true; buttonFired = true; mouseClicked = false; clickCooldownFrames = 3; }
 
     bool pressed = hovered && mouseDown;
 
@@ -595,8 +604,17 @@ bool Context::win98Button(int idx, const char* label, int x, int y, int w, int h
         SDL_SetTextureColorMod(te.texture, 0, 0, 0);
         SDL_SetTextureAlphaMod(te.texture, 255);
         int ox = pressed ? 1 : 0;
-        SDL_Rect dst = {x+(w-te.width)/2+ox, y+(h-te.height)/2+ox, te.width, te.height};
-        SDL_RenderCopy(renderer, te.texture, nullptr, &dst);
+        int tx = x + (w - te.width) / 2 + ox;
+        int ty = y + (h - te.height) / 2 + ox;
+        // Clip text horizontally to button interior so wide labels never overflow
+        int srcX = 0, drawW = te.width;
+        if (tx < x + 2)              { srcX = x + 2 - tx; drawW -= srcX; tx = x + 2; }
+        if (tx + drawW > x + w - 2)    drawW = x + w - 2 - tx;
+        if (drawW > 0) {
+            SDL_Rect src = {srcX, 0, drawW, te.height};
+            SDL_Rect dst = {tx, ty, drawW, te.height};
+            SDL_RenderCopy(renderer, te.texture, &src, &dst);
+        }
     }
 
     return activated;

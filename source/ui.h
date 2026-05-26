@@ -131,6 +131,9 @@ struct Context {
     // Set to true for one frame when any win98Button/menuItem fires
     bool buttonFired = false;
 
+    // Frames remaining where clicks are suppressed after any button fires
+    int clickCooldownFrames = 0;
+
     void init(SDL_Renderer* r);
     void beginFrame(float dt, bool gamepad);
     void endFrame();

@@ -500,6 +500,8 @@ void Game::loadAssets() {
         if (t) bombSprites_.push_back(t);
     }
 
+    enemyLegSprites_ = a.loadAnim("sprites/enemy/legs-", 8, 1);
+
     // Single sprites
     enemySprite_   = a.tex("sprites/enemy/melee.png");
     shooterSprite_ = a.tex("sprites/enemy/shooter.png");
@@ -515,6 +517,7 @@ void Game::loadAssets() {
     enemyBulletSprite_ = bulletSprite_;
     shieldSprite_  = a.tex("sprites/effects/shield.png");
     mainmenuBg_   = a.tex("sprites/ui/mainmenu.png");
+    discordTex_   = a.tex("sprites/discord.png");
     ui_.desktopBg = a.tex("sprites/AVA desktop.png");
     bloodTex_     = a.tex("sprites/effects/blood.png");
     scorchTex_    = a.tex("sprites/effects/scorch.png");

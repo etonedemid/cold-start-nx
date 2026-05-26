@@ -592,6 +592,43 @@ void MapEditor::handleInput(SDL_Event& e) {
             return;
         }
 
+        // ── Grab ball drag start (Select tool, something selected) ──
+        if (e.button.button == SDL_BUTTON_LEFT && currentTool_ == EditorTool::Select &&
+            (selectedTrigger_ >= 0 || selectedEnemy_ >= 0)) {
+            int cx, cy;
+            if (selectedEnemy_ >= 0 && selectedEnemy_ < (int)map_.enemySpawns.size()) {
+                cx = worldToScreenX(map_.enemySpawns[selectedEnemy_].x);
+                cy = worldToScreenY(map_.enemySpawns[selectedEnemy_].y);
+            } else if (selectedTrigger_ < (int)map_.triggers.size()) {
+                cx = worldToScreenX(map_.triggers[selectedTrigger_].x);
+                cy = worldToScreenY(map_.triggers[selectedTrigger_].y);
+            } else { cx = cy = -1; }
+
+            const int ballR = 9;
+            int bdx = mouseX_ - cx, bdy = mouseY_ - cy;
+            if (bdx*bdx + bdy*bdy <= ballR*ballR) {
+                pushUndo();
+                draggingMove_ = true;
+                moveDragSX_ = mouseX_; moveDragSY_ = mouseY_;
+                if (selectedEnemy_ >= 0 && selectedEnemy_ < (int)map_.enemySpawns.size()) {
+                    moveObjOrigX_ = map_.enemySpawns[selectedEnemy_].x;
+                    moveObjOrigY_ = map_.enemySpawns[selectedEnemy_].y;
+                } else if (selectedTrigger_ < (int)map_.triggers.size()) {
+                    moveObjOrigX_ = map_.triggers[selectedTrigger_].x;
+                    moveObjOrigY_ = map_.triggers[selectedTrigger_].y;
+                }
+                mouseDown_ = false;
+                return;
+            }
+        }
+
+        // ── Context/properties panel (left sidebar) blocks map interaction ──
+        if (e.button.button == SDL_BUTTON_LEFT && showUI_ &&
+            mouseX_ < 8 + 220 && mouseY_ >= uiToolbarH()) {
+            mouseDown_ = false;
+            return;
+        }
+
         // ── Map area click: Select tool handles trigger selection + resize start ──
         if (e.button.button == SDL_BUTTON_LEFT && currentTool_ == EditorTool::Select &&
             mouseX_ < screenW_ - uiPaletteW() && mouseY_ > uiToolbarH()) {
@@ -664,7 +701,7 @@ void MapEditor::handleInput(SDL_Event& e) {
                 }
             }
             rectStartTX_ = -1; rectStartTY_ = -1;
-            mouseDown_ = false; draggingResize_ = false;
+            mouseDown_ = false; draggingResize_ = false; draggingMove_ = false;
             undoPushedForStroke_ = false;
         }
         if (e.button.button == SDL_BUTTON_RIGHT) {
@@ -676,6 +713,19 @@ void MapEditor::handleInput(SDL_Event& e) {
     if (e.type == SDL_MOUSEMOTION) {
         mouseX_ = e.motion.x;
         mouseY_ = e.motion.y;
+
+        // ── Move drag ──
+        if (draggingMove_) {
+            float wdx = (mouseX_ - moveDragSX_) / zoom_;
+            float wdy = (mouseY_ - moveDragSY_) / zoom_;
+            if (selectedEnemy_ >= 0 && selectedEnemy_ < (int)map_.enemySpawns.size()) {
+                map_.enemySpawns[selectedEnemy_].x = moveObjOrigX_ + wdx;
+                map_.enemySpawns[selectedEnemy_].y = moveObjOrigY_ + wdy;
+            } else if (selectedTrigger_ >= 0 && selectedTrigger_ < (int)map_.triggers.size()) {
+                map_.triggers[selectedTrigger_].x = moveObjOrigX_ + wdx;
+                map_.triggers[selectedTrigger_].y = moveObjOrigY_ + wdy;
+            }
+        }
 
         // ── Resize drag ──
         if (draggingResize_ && selectedTrigger_ >= 0) {
@@ -856,8 +906,10 @@ void MapEditor::update(float dt) {
     // Reset undo stroke flag when no buttons held
     if (!mouseDown_ && !rightDown_) undoPushedForStroke_ = false;
 
-    // Paint/erase on mouse hold (only in map area, not dragging resize)
-    if (!draggingResize_ && mouseX_ < screenW_ - uiPaletteW() && mouseY_ > uiToolbarH()) {
+    // Paint/erase on mouse hold (only in map area, not over any UI panel)
+    const bool overLeftPanel = showUI_ && mouseX_ < 8 + 220 && mouseY_ >= uiToolbarH();
+    if (!draggingResize_ && !draggingMove_ && !overLeftPanel &&
+        mouseX_ < screenW_ - uiPaletteW() && mouseY_ > uiToolbarH()) {
         float wx = screenToWorldX(mouseX_);
         float wy = screenToWorldY(mouseY_);
         int tx = (int)(wx / TILE_SIZE);
@@ -1095,15 +1147,18 @@ void MapEditor::render(SDL_Renderer* renderer) {
         }
     }
 
+    // ── Move handles (arrows + grab ball) for selected object ──
+    if (currentTool_ == EditorTool::Select)
+        renderMoveHandles(renderer);
+
     if (showUI_) {
         renderToolbar(renderer);
         renderPalette(renderer);
     }
 
-    // ── Properties panel for selected entity/trigger ──
-    if (showUI_ && (selectedEnemy_ >= 0 || selectedTrigger_ >= 0)) {
+    // ── Properties / context panel ──
+    if (showUI_)
         renderPropertiesPanel(renderer);
-    }
 
     // ── Status bar (bottom-left) ──
     {
@@ -1274,98 +1329,116 @@ void MapEditor::renderEntitySpawns(SDL_Renderer* renderer) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  Move Handles — grab ball for selected object
+// ═════════════════════════════════════════════════════════════════════════════
+
+void MapEditor::renderMoveHandles(SDL_Renderer* renderer) {
+    if (currentTool_ != EditorTool::Select) return;
+
+    int cx, cy;
+    if (selectedEnemy_ >= 0 && selectedEnemy_ < (int)map_.enemySpawns.size()) {
+        cx = worldToScreenX(map_.enemySpawns[selectedEnemy_].x);
+        cy = worldToScreenY(map_.enemySpawns[selectedEnemy_].y);
+    } else if (selectedTrigger_ >= 0 && selectedTrigger_ < (int)map_.triggers.size()) {
+        auto& t = map_.triggers[selectedTrigger_];
+        int hrx = worldToScreenX(t.x - t.width/2);
+        int hry = worldToScreenY(t.y - t.height/2);
+        int hrw = (int)(t.width * zoom_); int hrh = (int)(t.height * zoom_);
+        cx = hrx + hrw/2; cy = hry + hrh/2;
+    } else {
+        return;
+    }
+
+    const int ballR = 9;
+    const Uint8 fillA = draggingMove_ ? 255 : 220;
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+    SDL_SetRenderDrawColor(renderer, 255, 220, 50, fillA);
+    for (int dy = -ballR; dy <= ballR; dy++) {
+        int dx2 = (int)sqrtf((float)(ballR * ballR - dy * dy));
+        SDL_RenderDrawLine(renderer, cx - dx2, cy + dy, cx + dx2, cy + dy);
+    }
+    SDL_SetRenderDrawColor(renderer, 80, 50, 0, 200);
+    for (int a = 0; a < 32; a++) {
+        float ang = a * 6.2832f / 32.0f;
+        SDL_RenderDrawPoint(renderer,
+            cx + (int)((ballR + 0.5f) * cosf(ang)),
+            cy + (int)((ballR + 0.5f) * sinf(ang)));
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  Properties Panel (inspector for selected entity/trigger)
 // ═════════════════════════════════════════════════════════════════════════════
 
 void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
+    if (!ui_) return;
+
     const int panelW = 220;
-    const int panelH = 260;
     const int panelX = 8;
     const int panelY = TOOLBAR_H + 8;
     char buf[128];
 
-    // Panel background
-    if (ui_) ui_->drawPanel(panelX, panelY, panelW, panelH);
-    else {
-        SDL_SetRenderDrawColor(renderer, 10, 12, 24, 230);
-        SDL_Rect bg = {panelX, panelY, panelW, panelH};
-        SDL_RenderFillRect(renderer, &bg);
-        SDL_SetRenderDrawColor(renderer, 0, 120, 110, 60);
-        SDL_RenderDrawRect(renderer, &bg);
-    }
-
-    int y = panelY + 8;
-    int lx = panelX + 10;
-    int vx = panelX + 100;
+    // Layout constants
+    const int pad    = 8;
+    const int lblW   = 60;
+    const int btnSz  = 20;
+    // fieldW: panelW - 2*pad - lblW - gap1 - btnSz - gap2 - btnSz - gap3 = 220-16-60-4-20-2-20-2 = 96
+    const int fieldW = 96;
+    const int rowH   = 28;
+    const int lx     = panelX + pad;
+    const int arLx   = panelX + pad + lblW + 4;
+    const int fldx   = arLx + btnSz + 2;
+    const int arRx   = fldx + fieldW + 2;
+    // read-only field: spans from arLx to panel right interior edge
+    const int roFldW = panelW - pad - (arLx - panelX);  // 140
 
     if (selectedEnemy_ >= 0 && selectedEnemy_ < (int)map_.enemySpawns.size()) {
         auto& es = map_.enemySpawns[selectedEnemy_];
-        drawEditorText(renderer, "ENTITY", lx, y, 14, UI::Color::Cyan);
-        y += 24;
-
-        // Separator
-        SDL_SetRenderDrawColor(renderer, 0, 120, 110, 40);
-        SDL_RenderDrawLine(renderer, lx, y, panelX + panelW - 10, y);
-        y += 8;
+        // TitleH(22) + top_pad(8) + 3 rows(84) + gap(8) + delete(26) + bot_pad(8)
+        const int panelH = UI::W98::TitleH + 8 + 3 * rowH + 8 + 26 + 8;
+        ui_->drawWin98Window(panelX, panelY, panelW, panelH, "Entity");
+        int y = panelY + UI::W98::TitleH + 8;
 
         // Type
-        static const char* eNames[] = {"Melee", "Shooter", "Crate", "Upgrade", "Brute", "Scout", "Sniper", "Gunner"};
-        const char* typeName = (es.enemyType < ENTITY_TYPE_COUNT) ? eNames[es.enemyType] : "Unknown";
-        drawEditorText(renderer, "Type", lx, y, 12, UI::Color::Gray);
-        // Left arrow
-        bool hoverL = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY, vx - 16, y - 2, 14, 18);
-        drawEditorText(renderer, "\xe2\x97\x80", vx - 16, y, 11, hoverL ? UI::Color::White : UI::Color::Yellow);
-        drawEditorText(renderer, typeName, vx + 4, y, 12, UI::Color::Cyan);
-        int tw = ui_ ? ui_->textWidth(typeName, 12) : (int)strlen(typeName) * 8;
-        bool hoverR = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY, vx + tw + 8, y - 2, 14, 18);
-        drawEditorText(renderer, "\xe2\x96\xb6", vx + tw + 8, y, 11, hoverR ? UI::Color::White : UI::Color::Yellow);
-        if (hoverL && ui_ && ui_->mouseClicked) {
+        static const char* eNames[] = {"Melee","Shooter","Crate","Upgrade","Brute","Scout","Sniper","Gunner"};
+        ui_->drawText("Type", lx, y + 5, 11, UI::W98::Black);
+        if (ui_->win98Button(200, "<", arLx, y, btnSz, btnSz, false)) {
             pushUndo();
             es.enemyType = (es.enemyType + ENTITY_TYPE_COUNT - 1) % ENTITY_TYPE_COUNT;
         }
-        if (hoverR && ui_ && ui_->mouseClicked) {
+        ui_->drawWin98TextField(fldx, y, fieldW, btnSz,
+            (es.enemyType < ENTITY_TYPE_COUNT) ? eNames[es.enemyType] : "?", false);
+        if (ui_->win98Button(201, ">", arRx, y, btnSz, btnSz, false)) {
             pushUndo();
             es.enemyType = (es.enemyType + 1) % ENTITY_TYPE_COUNT;
         }
-        y += 22;
+        y += rowH;
 
-        // Wave Group
-        drawEditorText(renderer, "Wave", lx, y, 12, UI::Color::Gray);
-        snprintf(buf, sizeof(buf), "%d", es.waveGroup);
-        bool hoverWL = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY, vx - 16, y - 2, 14, 18);
-        drawEditorText(renderer, "\xe2\x97\x80", vx - 16, y, 11, hoverWL ? UI::Color::White : UI::Color::Yellow);
-        drawEditorText(renderer, buf, vx + 4, y, 12, UI::Color::Cyan);
-        tw = ui_ ? ui_->textWidth(buf, 12) : (int)strlen(buf) * 8;
-        bool hoverWR = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY, vx + tw + 8, y - 2, 14, 18);
-        drawEditorText(renderer, "\xe2\x96\xb6", vx + tw + 8, y, 11, hoverWR ? UI::Color::White : UI::Color::Yellow);
-        if (hoverWL && ui_ && ui_->mouseClicked) {
+        // Wave
+        ui_->drawText("Wave", lx, y + 5, 11, UI::W98::Black);
+        if (ui_->win98Button(202, "<", arLx, y, btnSz, btnSz, false)) {
             pushUndo();
             if (es.waveGroup > 0) es.waveGroup--;
         }
-        if (hoverWR && ui_ && ui_->mouseClicked) {
+        snprintf(buf, sizeof(buf), "%d", es.waveGroup);
+        ui_->drawWin98TextField(fldx, y, fieldW, btnSz, buf, false);
+        if (ui_->win98Button(203, ">", arRx, y, btnSz, btnSz, false)) {
             pushUndo();
             if (es.waveGroup < 255) es.waveGroup++;
         }
-        y += 22;
+        y += rowH;
 
-        // Position
-        drawEditorText(renderer, "Pos", lx, y, 12, UI::Color::Gray);
+        // Pos (read-only)
         snprintf(buf, sizeof(buf), "%.0f, %.0f", es.x, es.y);
-        drawEditorText(renderer, buf, vx, y, 12, UI::Color::HintGray);
-        y += 22;
+        ui_->drawText("Pos", lx, y + 5, 11, UI::W98::Black);
+        ui_->drawWin98TextField(arLx, y, roFldW, btnSz, buf, false);
+        y += rowH;
 
-        // Delete button
+        // Delete
         y += 8;
-        bool hoverDel = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY,
-                            lx, y - 2, panelW - 20, 22);
-        SDL_SetRenderDrawColor(renderer, hoverDel ? 80 : 40, 20, 20, 200);
-        SDL_Rect delBg = {lx, y - 2, panelW - 20, 22};
-        SDL_RenderFillRect(renderer, &delBg);
-        SDL_SetRenderDrawColor(renderer, 200, 60, 60, 200);
-        SDL_RenderDrawRect(renderer, &delBg);
-        drawEditorText(renderer, "DELETE", lx + (panelW - 20) / 2 - 20, y, 12,
-                       hoverDel ? UI::Color::White : UI::Color::Red);
-        if (hoverDel && ui_ && ui_->mouseClicked) {
+        if (ui_->win98Button(210, "Delete", lx, y, panelW - pad * 2, 26, false)) {
             pushUndo();
             map_.enemySpawns.erase(map_.enemySpawns.begin() + selectedEnemy_);
             selectedEnemy_ = -1;
@@ -1373,93 +1446,167 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
     }
     else if (selectedTrigger_ >= 0 && selectedTrigger_ < (int)map_.triggers.size()) {
         auto& t = map_.triggers[selectedTrigger_];
-        drawEditorText(renderer, "TRIGGER", lx, y, 14, UI::Color::Yellow);
-        y += 24;
 
-        SDL_SetRenderDrawColor(renderer, 0, 120, 110, 40);
-        SDL_RenderDrawLine(renderer, lx, y, panelX + panelW - 10, y);
-        y += 8;
-
-        // Type
-        static const char* tTypeNames[] = {"Start", "End", "Crate", "Effect", "SpawnR", "SpawnB", "SpawnG", "SpawnY"};
+        static const char* tTypeNames[] = {"Start","End","Crate","Effect","SpnR","SpnB","SpnG","SpnY"};
         static const TriggerType kTypes[] = {
             TriggerType::LevelStart, TriggerType::LevelEnd, TriggerType::Crate, TriggerType::Effect,
             TriggerType::TeamSpawnRed, TriggerType::TeamSpawnBlue, TriggerType::TeamSpawnGreen, TriggerType::TeamSpawnYellow,
         };
         int typeIdx = 0;
         for (int j = 0; j < 8; j++) { if (kTypes[j] == t.type) { typeIdx = j; break; } }
-        drawEditorText(renderer, "Type", lx, y, 12, UI::Color::Gray);
-        bool hoverTL = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY, vx - 16, y - 2, 14, 18);
-        drawEditorText(renderer, "\xe2\x97\x80", vx - 16, y, 11, hoverTL ? UI::Color::White : UI::Color::Yellow);
-        drawEditorText(renderer, tTypeNames[typeIdx], vx + 4, y, 12, UI::Color::Cyan);
-        int tw = ui_ ? ui_->textWidth(tTypeNames[typeIdx], 12) : (int)strlen(tTypeNames[typeIdx]) * 8;
-        bool hoverTR = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY, vx + tw + 8, y - 2, 14, 18);
-        drawEditorText(renderer, "\xe2\x96\xb6", vx + tw + 8, y, 11, hoverTR ? UI::Color::White : UI::Color::Yellow);
-        if (hoverTL && ui_ && ui_->mouseClicked) {
+        bool hasCondRow = (t.type == TriggerType::LevelEnd);
+        // TitleH(22) + top_pad(8) + rows + gap(8) + delete(26) + bot_pad(8)
+        const int panelH = UI::W98::TitleH + 8 + (3 + (hasCondRow ? 1 : 0)) * rowH + 8 + 26 + 8;
+        ui_->drawWin98Window(panelX, panelY, panelW, panelH, "Trigger");
+        int y = panelY + UI::W98::TitleH + 8;
+
+        // Type
+        ui_->drawText("Type", lx, y + 5, 11, UI::W98::Black);
+        if (ui_->win98Button(220, "<", arLx, y, btnSz, btnSz, false)) {
             pushUndo();
             typeIdx = (typeIdx + 7) % 8;
             t.type = kTypes[typeIdx];
         }
-        if (hoverTR && ui_ && ui_->mouseClicked) {
+        ui_->drawWin98TextField(fldx, y, fieldW, btnSz, tTypeNames[typeIdx], false);
+        if (ui_->win98Button(221, ">", arRx, y, btnSz, btnSz, false)) {
             pushUndo();
             typeIdx = (typeIdx + 1) % 8;
             t.type = kTypes[typeIdx];
         }
-        y += 22;
+        y += rowH;
 
-        // Condition (only for LevelEnd)
-        if (t.type == TriggerType::LevelEnd) {
+        // Condition (LevelEnd only)
+        if (hasCondRow) {
             static const char* condNames[] = {"Open", "Kill All", "Trigger"};
             int condIdx = (int)t.condition;
             if (condIdx < 0 || condIdx > 2) condIdx = 0;
-            drawEditorText(renderer, "Goal", lx, y, 12, UI::Color::Gray);
-            bool hoverCL = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY, vx - 16, y - 2, 14, 18);
-            drawEditorText(renderer, "\xe2\x97\x80", vx - 16, y, 11, hoverCL ? UI::Color::White : UI::Color::Yellow);
-            drawEditorText(renderer, condNames[condIdx], vx + 4, y, 12, UI::Color::Cyan);
-            tw = ui_ ? ui_->textWidth(condNames[condIdx], 12) : (int)strlen(condNames[condIdx]) * 8;
-            bool hoverCR = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY, vx + tw + 8, y - 2, 14, 18);
-            drawEditorText(renderer, "\xe2\x96\xb6", vx + tw + 8, y, 11, hoverCR ? UI::Color::White : UI::Color::Yellow);
-            if (hoverCL && ui_ && ui_->mouseClicked) {
+            ui_->drawText("Goal", lx, y + 5, 11, UI::W98::Black);
+            if (ui_->win98Button(222, "<", arLx, y, btnSz, btnSz, false)) {
                 pushUndo();
                 condIdx = (condIdx + 2) % 3;
                 t.condition = (GoalCondition)condIdx;
             }
-            if (hoverCR && ui_ && ui_->mouseClicked) {
+            ui_->drawWin98TextField(fldx, y, fieldW, btnSz, condNames[condIdx], false);
+            if (ui_->win98Button(223, ">", arRx, y, btnSz, btnSz, false)) {
                 pushUndo();
                 condIdx = (condIdx + 1) % 3;
                 t.condition = (GoalCondition)condIdx;
             }
-            y += 22;
+            y += rowH;
         }
 
-        // Size
-        drawEditorText(renderer, "Size", lx, y, 12, UI::Color::Gray);
+        // Size (read-only)
         snprintf(buf, sizeof(buf), "%.0fx%.0f", t.width, t.height);
-        drawEditorText(renderer, buf, vx, y, 12, UI::Color::HintGray);
-        y += 22;
+        ui_->drawText("Size", lx, y + 5, 11, UI::W98::Black);
+        ui_->drawWin98TextField(arLx, y, roFldW, btnSz, buf, false);
+        y += rowH;
 
-        // Position
-        drawEditorText(renderer, "Pos", lx, y, 12, UI::Color::Gray);
+        // Pos (read-only)
         snprintf(buf, sizeof(buf), "%.0f, %.0f", t.x, t.y);
-        drawEditorText(renderer, buf, vx, y, 12, UI::Color::HintGray);
-        y += 22;
+        ui_->drawText("Pos", lx, y + 5, 11, UI::W98::Black);
+        ui_->drawWin98TextField(arLx, y, roFldW, btnSz, buf, false);
+        y += rowH;
 
-        // Delete button
+        // Delete
         y += 8;
-        bool hoverDel = ui_ && ui_->pointInRect(ui_->mouseX, ui_->mouseY,
-                            lx, y - 2, panelW - 20, 22);
-        SDL_SetRenderDrawColor(renderer, hoverDel ? 80 : 40, 20, 20, 200);
-        SDL_Rect delBg = {lx, y - 2, panelW - 20, 22};
-        SDL_RenderFillRect(renderer, &delBg);
-        SDL_SetRenderDrawColor(renderer, 200, 60, 60, 200);
-        SDL_RenderDrawRect(renderer, &delBg);
-        drawEditorText(renderer, "DELETE", lx + (panelW - 20) / 2 - 20, y, 12,
-                       hoverDel ? UI::Color::White : UI::Color::Red);
-        if (hoverDel && ui_ && ui_->mouseClicked) {
+        if (ui_->win98Button(230, "Delete", lx, y, panelW - pad * 2, 26, false)) {
             pushUndo();
             map_.triggers.erase(map_.triggers.begin() + selectedTrigger_);
             selectedTrigger_ = -1;
         }
+    }
+    else if (currentTool_ == EditorTool::Tile || currentTool_ == EditorTool::Erase) {
+        // Brush size + current tile preview
+        const int previewSz = 42;
+        const int panelH = UI::W98::TitleH + 8 + rowH + 6 + 1 + 6 + previewSz + 8;
+        ui_->drawWin98Window(panelX, panelY, panelW, panelH, "Brush Settings");
+        int y = panelY + UI::W98::TitleH + 8;
+
+        ui_->drawText("Brush", lx, y + 5, 11, UI::W98::Black);
+        if (ui_->win98Button(240, "<", arLx, y, btnSz, btnSz, false))
+            if (brushSize_ > 1) brushSize_--;
+        snprintf(buf, sizeof(buf), "%d", brushSize_);
+        ui_->drawWin98TextField(fldx, y, fieldW, btnSz, buf, false);
+        if (ui_->win98Button(241, ">", arRx, y, btnSz, btnSz, false))
+            if (brushSize_ < 9) brushSize_++;
+        y += rowH + 6;
+
+        SDL_SetRenderDrawColor(renderer, UI::W98::Shadow.r, UI::W98::Shadow.g, UI::W98::Shadow.b, 255);
+        SDL_RenderDrawLine(renderer, lx, y, panelX + panelW - pad, y);
+        y += 6;
+
+        if (selectedPalette_ >= 0 && selectedPalette_ < (int)palette_.size()) {
+            auto& pt = palette_[selectedPalette_];
+            ui_->drawWin98Bevel(lx - 1, y - 1, previewSz + 2, previewSz + 2, false);
+            SDL_Rect dst = {lx, y, previewSz, previewSz};
+            if (pt.texture) {
+                SDL_SetTextureColorMod(pt.texture, 255, 255, 255);
+                SDL_SetTextureAlphaMod(pt.texture, 255);
+                SDL_RenderCopy(renderer, pt.texture, nullptr, &dst);
+            } else {
+                SDL_SetRenderDrawColor(renderer, 192, 192, 192, 255);
+                SDL_RenderFillRect(renderer, &dst);
+            }
+            int tx = lx + previewSz + 6;
+            ui_->drawText(pt.name.c_str(), tx, y + 6, 11, UI::W98::Black);
+            ui_->drawText(pt.category.c_str(), tx, y + 22, 10, UI::W98::Shadow);
+        } else {
+            ui_->drawText("No tile selected", lx, y + previewSz / 2 - 6, 11, UI::W98::Shadow);
+        }
+    }
+    else if (currentTool_ == EditorTool::Trigger) {
+        static const char* tNames[] = {
+            "Level Start", "Level End", "Crate", "Effect",
+            "Spawn Red", "Spawn Blue", "Spawn Green", "Spawn Yellow",
+        };
+        static const TriggerType kT[] = {
+            TriggerType::LevelStart, TriggerType::LevelEnd, TriggerType::Crate, TriggerType::Effect,
+            TriggerType::TeamSpawnRed, TriggerType::TeamSpawnBlue, TriggerType::TeamSpawnGreen, TriggerType::TeamSpawnYellow,
+        };
+        const int itemH = 22;
+        const int panelH = UI::W98::TitleH + 8 + 8 * itemH + 8;
+        ui_->drawWin98Window(panelX, panelY, panelW, panelH, "Trigger Type");
+        int y = panelY + UI::W98::TitleH + 8;
+        const int btnW = panelW - pad * 2;
+        for (int i = 0; i < 8; i++) {
+            if (ui_->win98Button(240 + i, tNames[i], lx, y, btnW, itemH, triggerGhost_.type == kT[i]))
+                triggerGhost_.type = kT[i];
+            y += itemH;
+        }
+    }
+    else if (currentTool_ == EditorTool::Entity) {
+        static const char* eNames[] = {
+            "Melee", "Shooter", "Crate", "Upgrade Crate",
+            "Brute", "Scout", "Sniper", "Gunner",
+        };
+        const int itemH = 22;
+        const int panelH = UI::W98::TitleH + 8 + 8 * itemH + 8;
+        ui_->drawWin98Window(panelX, panelY, panelW, panelH, "Entity Type");
+        int y = panelY + UI::W98::TitleH + 8;
+        const int btnW = panelW - pad * 2;
+        for (int i = 0; i < 8; i++) {
+            if (ui_->win98Button(250 + i, eNames[i], lx, y, btnW, itemH, entitySpawnType_ == (uint8_t)i))
+                entitySpawnType_ = (uint8_t)i;
+            y += itemH;
+        }
+    }
+    else if (currentTool_ == EditorTool::Rect) {
+        const int halfW = (panelW - pad * 2 - 4) / 2;
+        const int panelH = UI::W98::TitleH + 8 + 26 + 8 + rowH + 8;
+        ui_->drawWin98Window(panelX, panelY, panelW, panelH, "Rect Settings");
+        int y = panelY + UI::W98::TitleH + 8;
+
+        if (ui_->win98Button(240, "Filled",  lx,              y, halfW, 26, rectFilled_))  rectFilled_ = true;
+        if (ui_->win98Button(241, "Outline", lx + halfW + 4,  y, halfW, 26, !rectFilled_)) rectFilled_ = false;
+        y += 26 + 8;
+
+        ui_->drawText("Brush", lx, y + 5, 11, UI::W98::Black);
+        if (ui_->win98Button(242, "<", arLx, y, btnSz, btnSz, false))
+            if (brushSize_ > 1) brushSize_--;
+        snprintf(buf, sizeof(buf), "%d", brushSize_);
+        ui_->drawWin98TextField(fldx, y, fieldW, btnSz, buf, false);
+        if (ui_->win98Button(243, ">", arRx, y, btnSz, btnSz, false))
+            if (brushSize_ < 9) brushSize_++;
     }
 }
 
@@ -1469,7 +1616,7 @@ void MapEditor::renderToolbar(SDL_Renderer* renderer) {
     SDL_SetRenderDrawColor(renderer, UI::W98::Silver.r, UI::W98::Silver.g, UI::W98::Silver.b, 255);
     SDL_Rect bg = {0, 0, screenW_, TOOLBAR_H};
     SDL_RenderFillRect(renderer, &bg);
-    // Bottom separator
+    // Bottom raised edge
     SDL_SetRenderDrawColor(renderer, UI::W98::Shadow.r, UI::W98::Shadow.g, UI::W98::Shadow.b, 255);
     SDL_RenderDrawLine(renderer, 0, TOOLBAR_H - 2, screenW_, TOOLBAR_H - 2);
     SDL_SetRenderDrawColor(renderer, UI::W98::White.r, UI::W98::White.g, UI::W98::White.b, 255);
@@ -1477,39 +1624,13 @@ void MapEditor::renderToolbar(SDL_Renderer* renderer) {
 
     if (!ui_) return;
 
-    // ── Tool buttons (IDs 100–105) ──
+    const int toolBtnW = 62, toolBtnH = TOOLBAR_H - 8, toolGap = 2, toolStartX = 4;
     const char* toolNames[] = {"Tile", "Trigger", "Entity", "Erase", "Select", "Rect"};
-    const int toolBtnW = 74, toolBtnH = TOOLBAR_H - 8, toolGap = 2, toolStartX = 4;
 
+    // ── Tool buttons (IDs 100–105) ──
     for (int i = 0; i < 6; i++) {
         int bx = toolStartX + i * (toolBtnW + toolGap);
-        bool sel = ((int)currentTool_ == i);
-
-        // Build label with subtitle for selected tool
-        char label[48];
-        const char* sub = "";
-        char subBuf[32] = "";
-        if (sel) {
-            if (i == 0 || i == 3) { snprintf(subBuf, sizeof(subBuf), "Brush:%d", brushSize_); sub = subBuf; }
-            else if (i == 5) { sub = rectFilled_ ? "Filled" : "Outline"; }
-            else if (i == 1) {
-                static const char* ttNames[] = {"Start","End","Crate","Effect","SpnR","SpnB","SpnG","SpnY"};
-                static const TriggerType kVT[] = {
-                    TriggerType::LevelStart, TriggerType::LevelEnd, TriggerType::Crate, TriggerType::Effect,
-                    TriggerType::TeamSpawnRed, TriggerType::TeamSpawnBlue, TriggerType::TeamSpawnGreen, TriggerType::TeamSpawnYellow,
-                };
-                int idx = 0; for (int j = 0; j < 8; j++) { if (kVT[j] == triggerGhost_.type) { idx = j; break; } }
-                sub = ttNames[idx];
-            }
-            else if (i == 2) {
-                static const char* eNames[] = {"Melee","Shooter","Crate","Upg","Brute","Scout","Sniper","Gunner"};
-                sub = (entitySpawnType_ < ENTITY_TYPE_COUNT) ? eNames[entitySpawnType_] : "?";
-            }
-        }
-        if (sub[0]) snprintf(label, sizeof(label), "%s\n%s", toolNames[i], sub);
-        else        snprintf(label, sizeof(label), "%s", toolNames[i]);
-
-        if (ui_->win98Button(100 + i, label, bx, 4, toolBtnW, toolBtnH, sel)) {
+        if (ui_->win98Button(100 + i, toolNames[i], bx, 4, toolBtnW, toolBtnH, (int)currentTool_ == i)) {
             currentTool_ = (EditorTool)i;
             selectedTrigger_ = -1;
             selectedEnemy_   = -1;
@@ -1517,10 +1638,35 @@ void MapEditor::renderToolbar(SDL_Renderer* renderer) {
         }
     }
 
+    // ── Vertical separator ──
+    auto drawSep = [&](int x) {
+        SDL_SetRenderDrawColor(renderer, UI::W98::Shadow.r, UI::W98::Shadow.g, UI::W98::Shadow.b, 255);
+        SDL_RenderDrawLine(renderer, x, 6, x, TOOLBAR_H - 6);
+        SDL_SetRenderDrawColor(renderer, UI::W98::White.r, UI::W98::White.g, UI::W98::White.b, 255);
+        SDL_RenderDrawLine(renderer, x + 1, 6, x + 1, TOOLBAR_H - 6);
+    };
+
+    // 6 buttons × (62+2) = 384, starting at x=4, so right edge = 388
+    int sepX = toolStartX + 6 * (toolBtnW + toolGap) + 2;  // 390
+    drawSep(sepX);
+
+    // ── Undo / Redo (IDs 112–113) ──
+    int auxX = sepX + 6;
+    if (ui_->win98Button(112, "Undo", auxX,      4, 48, toolBtnH, false)) undo();
+    if (ui_->win98Button(113, "Redo", auxX + 50, 4, 48, toolBtnH, false)) redo();
+
+    sepX = auxX + 100 + 2;  // 498
+    drawSep(sepX);
+
+    // ── Grid toggle (ID 114) ──
+    int gridX = sepX + 6;  // 504
+    if (ui_->win98Button(114, "Grid", gridX, 4, 48, toolBtnH, showGrid_))
+        showGrid_ = !showGrid_;
+
     // ── Center: map info ──
-    int centerX = toolStartX + 6 * (toolBtnW + toolGap) + 10;
+    int centerX = gridX + 54;  // 558
     int rightEdge = screenW_ - PALETTE_W - 230;
-    if (ui_ && centerX < rightEdge) {
+    if (centerX < rightEdge) {
         char info[128];
         snprintf(info, sizeof(info), "%s  %dx%d", map_.name.c_str(), map_.width, map_.height);
         ui_->drawText(info, centerX, 8, 12, UI::W98::Navy);
@@ -1625,7 +1771,11 @@ void MapEditor::renderPalette(SDL_Renderer* renderer) {
                 ui_->drawWin98Bevel(px + 3, y, PALETTE_W - 6, rowH - 2, true);
             }
 
-            if (hover && ui_->mouseClicked) selectedPalette_ = i;
+            if (hover && ui_->mouseClicked) {
+                selectedPalette_ = i;
+                ui_->mouseClicked = false;
+                ui_->clickCooldownFrames = 3;
+            }
 
             // Tile preview thumbnail (sunken inset)
             int imgX = px + 6, imgY = y + 2;
@@ -2324,10 +2474,10 @@ void MapEditor::handleGamepadInput(SDL_Event& e) {
 
         switch (btn) {
             case SDL_CONTROLLER_BUTTON_A: { // Place / confirm (like left click)
+                if (ui_ && ui_->clickCooldownFrames > 0) break;  // 3-frame cooldown
                 mouseDown_ = true;
                 mouseX_ = (int)cursorX_;
                 mouseY_ = (int)cursorY_;
-                // Simulate mouse click for toolbar/palette/map
                 SDL_Event fakeClick;
                 memset(&fakeClick, 0, sizeof(fakeClick));
                 fakeClick.type = SDL_MOUSEBUTTONDOWN;
@@ -2335,6 +2485,7 @@ void MapEditor::handleGamepadInput(SDL_Event& e) {
                 fakeClick.button.x = (int)cursorX_;
                 fakeClick.button.y = (int)cursorY_;
                 handleInput(fakeClick);
+                if (ui_) ui_->clickCooldownFrames = 3;
                 break;
             }
             case SDL_CONTROLLER_BUTTON_B: // Erase (like right click)

@@ -613,7 +613,7 @@ void Game::renderCharCreator() {
         std::string display = cc.textBuf + (((int)(ccBlink * 1.5f) % 2) == 0 ? "_" : " ");
         ui_.drawWin98TextField(lCX, contentY, lRW, rowH, display.c_str(), true);
         contentY += rowH + rowGap;
-        renderSoftKB(contentY + 2);
+        renderSoftKB();
         contentY += 150;
     } else {
         drawStatRow(0, "Name", cc.name.c_str(), false);
@@ -1214,7 +1214,7 @@ void Game::handleModSaveDialogEvent(const SDL_Event& e) {
         d.phase = ModSaveDialogState::NameNewMod;
         d.textEditing = true;
         d.gpCharIdx = 0;
-        softKB_.open(modNamePal, 8, &d.newModId, 24, [this](bool confirmed) {
+        softKB_.open(&d.newModId, 24, [this](bool confirmed) {
             auto& dialog = modSaveDialog_;
             dialog.textEditing = false;
             if (!dialog.isOpen()) return;
@@ -1358,7 +1358,7 @@ void Game::renderModSaveDialog() {
                     d.selIdx = i;
                     d.phase = ModSaveDialogState::NameNewMod;
                     d.textEditing = true;
-                    softKB_.open(modNamePal, 8, &d.newModId, 24, [this](bool confirmed) {
+                    softKB_.open(&d.newModId, 24, [this](bool confirmed) {
                         auto& dialog = modSaveDialog_;
                         dialog.textEditing = false;
                         if (!dialog.isOpen()) return;
@@ -1400,7 +1400,7 @@ void Game::renderModSaveDialog() {
         y += bh + 16;
 
         ui_.drawTextCentered("The shared on-screen keyboard handles naming here.", y, 11, UI::W98::Shadow);
-        renderSoftKB(y + 20);
+        renderSoftKB();
         y = panY + panH - 40;
         ui_.drawTextCentered("ENTER / OK confirms   ESC / CANCEL goes back", y, 11, UI::W98::Shadow);
     }
