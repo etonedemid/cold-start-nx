@@ -824,6 +824,22 @@ void Game::updateEnemies(float dt) {
             e.rotation = atan2f(e.vel.y, e.vel.x);
         }
 
+        // Leg animation for melee enemies
+        if (isMeleeEnemyType(e.type) && !legSprites_.empty()) {
+            float spd = e.vel.length();
+            if (spd > 1.0f) {
+                e.legRotation = atan2f(e.vel.y, e.vel.x);
+                e.legAnimTimer += dt * std::min(1.0f, spd / e.speed);
+                if (e.legAnimTimer > 0.08f) {
+                    e.legAnimTimer = 0;
+                    e.legAnimFrame = (e.legAnimFrame + 1) % (int)legSprites_.size();
+                }
+            } else {
+                e.legAnimTimer = 0;
+                e.legAnimFrame = 0;
+            }
+        }
+
         // Wall collision (slide)
         Vec2 newPos = e.pos + e.vel * dt;
         if (!map_.worldCollides(newPos.x, e.pos.y, e.size * 0.4f))
@@ -1002,9 +1018,21 @@ void Game::enemyChase(Enemy& e, float dt) {
         return;
     }
 
-    // Melee: charge toward target with inertia
-    Vec2 desired = steerToward(e.pos, targetPos, e.speed, dt);
-    e.vel = Vec2::lerp(e.vel, desired, dt * MELEE_INERTIA);
+    // Melee: strafe/orbit at medium range, then charge when close
+    float strafeInner = e.dashDistance * 1.1f;
+    float strafeOuter = e.dashDistance * 2.2f;
+    if (!e.dashOnCd && dist > strafeInner && dist < strafeOuter) {
+        // Circle the target — unique phase per enemy to avoid lock-step
+        Vec2 toTarget = toPlayer.normalized();
+        Vec2 perp = Vec2{-toTarget.y, toTarget.x};
+        float sideSign = (sinf(gameTime_ * 1.3f + e.pos.x * 0.01f) > 0) ? 1.0f : -1.0f;
+        Vec2 orbit = (toTarget * 0.35f + perp * sideSign * 0.94f).normalized();
+        Vec2 desired = steerToward(e.pos, e.pos + orbit * 200.0f, e.speed * 0.75f, dt);
+        e.vel = Vec2::lerp(e.vel, desired, dt * MELEE_INERTIA);
+    } else {
+        Vec2 desired = steerToward(e.pos, targetPos, e.speed, dt);
+        e.vel = Vec2::lerp(e.vel, desired, dt * MELEE_INERTIA);
+    }
 
     // Start dash when close — lock direction immediately
     if (dist < e.dashDistance && !e.dashOnCd && !e.dashCharging) {

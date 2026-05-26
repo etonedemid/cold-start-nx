@@ -1,16 +1,44 @@
-﻿// ─── input.cpp ─── Input handling and soft keyboard
+﻿// ─── input.cpp ─── Input handling and unified onscreen keyboard
 #include "game.h"
 #include "game_internal.h"
 #include <ctime>
-void Game::SoftKeyboard::open(const char* pal, int c, std::string* tgt, int max,
-                              std::function<void(bool confirmed)> done) {
-    active = true; palette = pal; cols = c; charIdx = 0;
-    heldButton = -1; repeatAt = 0; target = tgt; maxLen = max;
-    onDone = done;
-    renderX = renderY = cellW = cellH = rows = 0;
-    delRect = {0, 0, 0, 0};
-    okRect = {0, 0, 0, 0};
-    cancelRect = {0, 0, 0, 0};
+#include <cstring>
+
+// ── Key layout ────────────────────────────────────────────────────────────────
+// act: 0=insert ch, 1=backspace, 2=enter/OK, 3=shift, 4=space, 5=cancel
+struct KDef { char ch, chSh; int w, act; };
+
+// 5 rows; each row sums to 14 width-units (CW px each)
+static const KDef KROWS[5][14] = {
+    // Row 0: number/symbol row  (12 × 1u + bksp × 2u = 14u)
+    {{'1','!',1,0},{'2','@',1,0},{'3','#',1,0},{'4','$',1,0},{'5','%',1,0},
+     {'6','^',1,0},{'7','&',1,0},{'8','*',1,0},{'9','(',1,0},{'0',')',1,0},
+     {'-','_',1,0},{'=','+',1,0},{0,0,2,1},{0,0,0,0}},
+    // Row 1: QWERTY row  (12 × 1u + enter × 2u = 14u)
+    {{'q','Q',1,0},{'w','W',1,0},{'e','E',1,0},{'r','R',1,0},{'t','T',1,0},
+     {'y','Y',1,0},{'u','U',1,0},{'i','I',1,0},{'o','O',1,0},{'p','P',1,0},
+     {'[','{',1,0},{']','}',1,0},{0,0,2,2},{0,0,0,0}},
+    // Row 2: ASDF row + extras  (14 × 1u = 14u)
+    {{'a','A',1,0},{'s','S',1,0},{'d','D',1,0},{'f','F',1,0},{'g','G',1,0},
+     {'h','H',1,0},{'j','J',1,0},{'k','K',1,0},{'l','L',1,0},{';',':',1,0},
+     {'\'','"',1,0},{'.','>',1,0},{'@','`',1,0},{'#','~',1,0}},
+    // Row 3: ZXCV row + shift  (shift×2u + 10×1u + shift×2u = 14u)
+    {{0,0,2,3},{'z','Z',1,0},{'x','X',1,0},{'c','C',1,0},{'v','V',1,0},
+     {'b','B',1,0},{'n','N',1,0},{'m','M',1,0},{',','<',1,0},{'/','\?',1,0},
+     {'_','\\',1,0},{0,0,2,3},{0,0,0,0},{0,0,0,0}},
+    // Row 4: space + OK + cancel  (8u + 4u + 2u = 14u)
+    {{0,0,8,4},{0,0,4,2},{0,0,2,5},{0,0,0,0}}
+};
+// Number of logical keys (nav positions) per row
+static const int KROW_NCOLS[5] = {13, 13, 14, 12, 3};
+
+// ── OSK open / close ──────────────────────────────────────────────────────────
+
+void Game::SoftKeyboard::open(std::string* tgt, int max,
+                              std::function<void(bool)> done) {
+    active = true; target = tgt; maxLen = max; onDone = done;
+    shiftOn = false; heldNav = -1; repeatAt = 0;
+    hits.clear();
 #ifndef __SWITCH__
     SDL_StartTextInput();
 #endif
@@ -24,123 +52,174 @@ void Game::SoftKeyboard::close(bool confirmed) {
     auto cb = onDone;
     target = nullptr;
     onDone = nullptr;
-    heldButton = -1;
+    heldNav = -1;
+    hits.clear();
     if (cb) cb(confirmed);
 }
 
+// ── Gamepad D-pad repeat ──────────────────────────────────────────────────────
+
 void Game::updateSoftKBRepeat() {
     auto& kb = softKB_;
-    if (!kb.active || !kb.palette || kb.heldButton < 0) return;
+    if (!kb.active || kb.heldNav < 0) return;
     if (SDL_GetTicks() < kb.repeatAt) return;
-    int palLen = (int)strlen(kb.palette);
-    int delta = 0;
-    if (kb.heldButton == SDL_CONTROLLER_BUTTON_DPAD_LEFT)  delta = -1;
-    if (kb.heldButton == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) delta = +1;
-    if (kb.heldButton == SDL_CONTROLLER_BUTTON_DPAD_UP)    delta = -kb.cols;
-    if (kb.heldButton == SDL_CONTROLLER_BUTTON_DPAD_DOWN)  delta = +kb.cols;
-    if (delta != 0) kb.charIdx = (kb.charIdx + delta + palLen * 4) % palLen;
+    int btn = kb.heldNav;
+    int& row = kb.gpRow;
+    int& col = kb.gpCol;
+    if (btn == SDL_CONTROLLER_BUTTON_DPAD_LEFT)
+        col = (col - 1 + KROW_NCOLS[row]) % KROW_NCOLS[row];
+    else if (btn == SDL_CONTROLLER_BUTTON_DPAD_RIGHT)
+        col = (col + 1) % KROW_NCOLS[row];
+    else if (btn == SDL_CONTROLLER_BUTTON_DPAD_UP) {
+        row = (row - 1 + 5) % 5;
+        col = std::min(col, KROW_NCOLS[row] - 1);
+    } else if (btn == SDL_CONTROLLER_BUTTON_DPAD_DOWN) {
+        row = (row + 1) % 5;
+        col = std::min(col, KROW_NCOLS[row] - 1);
+    }
     kb.repeatAt = SDL_GetTicks() + 80;
 }
 
+// ── Event handling ────────────────────────────────────────────────────────────
+
 bool Game::handleSoftKBEvent(SDL_Event& e) {
     auto& kb = softKB_;
-    if (!kb.active || !kb.target || !kb.palette) return false;
-    int palLen = (int)strlen(kb.palette);
+    if (!kb.active || !kb.target) return false;
 
-    auto logicalPointFromMouse = [&](int px, int py, int& lx, int& ly) {
-        float fx = (float)px;
-        float fy = (float)py;
+    // Apply a key action (insert char, backspace, shift, etc.)
+    auto doAct = [&](int act, char ch, char chSh) {
+        switch (act) {
+            case 0: {  // insert
+                char c = kb.shiftOn ? chSh : ch;
+                if (c && (int)kb.target->size() < kb.maxLen) *kb.target += c;
+                if (kb.shiftOn) kb.shiftOn = false;  // auto-release shift
+                break;
+            }
+            case 1: if (!kb.target->empty()) kb.target->pop_back(); break;
+            case 2: kb.close(true);  break;
+            case 3: kb.shiftOn = !kb.shiftOn; break;
+            case 4:  // space
+                if ((int)kb.target->size() < kb.maxLen) *kb.target += ' ';
+                break;
+            case 5: kb.close(false); break;
+        }
+    };
+
+    // Logical (render-space) point from physical mouse coords
+    auto logPt = [&](int px, int py, int& lx, int& ly) {
+        float fx, fy;
         SDL_RenderWindowToLogical(renderer_, px, py, &fx, &fy);
-        lx = (int)fx;
-        ly = (int)fy;
+        lx = (int)fx; ly = (int)fy;
     };
 
-    auto handlePointer = [&](int x, int y) -> bool {
-        if (kb.delRect.w > 0 && ui_.pointInRect(x, y, kb.delRect.x, kb.delRect.y, kb.delRect.w, kb.delRect.h)) {
-            if (!kb.target->empty()) kb.target->pop_back();
+    // Hit-test and act on a point
+    auto hitTest = [&](int x, int y) -> bool {
+        // Title bar drag start
+        if (ui_.pointInRect(x, y, kb.titleBar.x, kb.titleBar.y,
+                            kb.titleBar.w, kb.titleBar.h)) {
+            kb.dragging = true;
+            kb.dragOffX = x - kb.winX;
+            kb.dragOffY = y - kb.winY;
             return true;
         }
-        if (kb.okRect.w > 0 && ui_.pointInRect(x, y, kb.okRect.x, kb.okRect.y, kb.okRect.w, kb.okRect.h)) {
-            kb.close(true);
-            return true;
+        // Key cells
+        for (auto& h : kb.hits) {
+            if (ui_.pointInRect(x, y, h.r.x, h.r.y, h.r.w, h.r.h)) {
+                doAct(h.act, h.ch, h.chSh);
+                // Move gamepad cursor to match tapped key
+                kb.gpRow = h.row; kb.gpCol = h.col;
+                return true;
+            }
         }
-        if (kb.cancelRect.w > 0 && ui_.pointInRect(x, y, kb.cancelRect.x, kb.cancelRect.y, kb.cancelRect.w, kb.cancelRect.h)) {
-            kb.close(false);
+        // Consume click anywhere inside the window
+        if (kb.winX >= 0 && ui_.pointInRect(x, y, kb.winX, kb.winY,
+                                             kb.titleBar.w, 240))
             return true;
-        }
-        if (kb.cellW <= 0 || kb.cellH <= 0 || kb.rows <= 0) return false;
-        int totalW = kb.cols * kb.cellW;
-        int totalH = kb.rows * kb.cellH;
-        if (!ui_.pointInRect(x, y, kb.renderX, kb.renderY, totalW, totalH)) return false;
-        int col = (x - kb.renderX) / kb.cellW;
-        int row = (y - kb.renderY) / kb.cellH;
-        int idx = row * kb.cols + col;
-        if (idx < 0 || idx >= palLen) return true;
-        kb.charIdx = idx;
-        if ((int)kb.target->size() < kb.maxLen) *kb.target += kb.palette[idx];
-        return true;
+        return false;
     };
 
+    // ── Physical keyboard ──
     if (e.type == SDL_TEXTINPUT) {
         for (const char* p = e.text.text; *p; p++) {
-            if (*p >= ' ' && *p <= '~' && *p != '=' && *p != '\n')
+            if (*p >= ' ' && *p <= '~' && *p != '\n')
                 if ((int)kb.target->size() < kb.maxLen) *kb.target += *p;
         }
         return true;
     }
     if (e.type == SDL_KEYDOWN) {
-        auto sym = e.key.keysym.sym;
-        if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) { kb.close(true); return true; }
-        if (sym == SDLK_ESCAPE) { kb.close(false); return true; }
+        SDL_Keycode sym = e.key.keysym.sym;
+        if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) { kb.close(true);  return true; }
+        if (sym == SDLK_ESCAPE)                           { kb.close(false); return true; }
         if (sym == SDLK_BACKSPACE && !kb.target->empty()) { kb.target->pop_back(); return true; }
-        // Ctrl+V paste
         if (sym == SDLK_v && (e.key.keysym.mod & KMOD_CTRL)) {
             if (SDL_HasClipboardText()) {
                 char* clip = SDL_GetClipboardText();
                 if (clip) {
-                    for (const char* p = clip; *p; p++) {
-                        if (*p >= ' ' && *p <= '~' && *p != '=' && *p != '\n')
+                    for (const char* p = clip; *p; p++)
+                        if (*p >= ' ' && *p <= '~' && *p != '\n')
                             if ((int)kb.target->size() < kb.maxLen) *kb.target += *p;
-                    }
                     SDL_free(clip);
                 }
             }
             return true;
         }
-        return true; // consume all keydowns while keyboard active
+        return true;
     }
+
+    // ── Mouse ──
     if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
-        int x = 0, y = 0;
-        logicalPointFromMouse(e.button.x, e.button.y, x, y);
-        return handlePointer(x, y);
+        int x, y; logPt(e.button.x, e.button.y, x, y);
+        return hitTest(x, y);
     }
+    if (e.type == SDL_MOUSEMOTION && kb.dragging) {
+        int x, y; logPt(e.motion.x, e.motion.y, x, y);
+        kb.winX = x - kb.dragOffX;
+        kb.winY = y - kb.dragOffY;
+        return true;
+    }
+    if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
+        kb.dragging = false;
+        return false;  // don't consume release
+    }
+
+    // ── Touch ──
     if (e.type == SDL_FINGERDOWN) {
         int x = (int)(e.tfinger.x * SCREEN_W);
         int y = (int)(e.tfinger.y * SCREEN_H);
-        return handlePointer(x, y);
+        hitTest(x, y);
+        return true;
     }
+
+    // ── Gamepad ──
     if (e.type == SDL_CONTROLLERBUTTONDOWN) {
         Uint8 btn = remapButton(e.cbutton.button);
+        int& row = kb.gpRow;
+        int& col = kb.gpCol;
         switch (btn) {
             case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
-                kb.charIdx = (kb.charIdx - 1 + palLen) % palLen;
-                kb.heldButton = btn; kb.repeatAt = SDL_GetTicks() + 350;
+                col = (col - 1 + KROW_NCOLS[row]) % KROW_NCOLS[row];
+                kb.heldNav = btn; kb.repeatAt = SDL_GetTicks() + 350;
                 break;
             case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-                kb.charIdx = (kb.charIdx + 1) % palLen;
-                kb.heldButton = btn; kb.repeatAt = SDL_GetTicks() + 350;
+                col = (col + 1) % KROW_NCOLS[row];
+                kb.heldNav = btn; kb.repeatAt = SDL_GetTicks() + 350;
                 break;
             case SDL_CONTROLLER_BUTTON_DPAD_UP:
-                kb.charIdx = (kb.charIdx - kb.cols + palLen) % palLen;
-                kb.heldButton = btn; kb.repeatAt = SDL_GetTicks() + 350;
+                row = (row - 1 + 5) % 5;
+                col = std::min(col, KROW_NCOLS[row] - 1);
+                kb.heldNav = btn; kb.repeatAt = SDL_GetTicks() + 350;
                 break;
             case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
-                kb.charIdx = (kb.charIdx + kb.cols) % palLen;
-                kb.heldButton = btn; kb.repeatAt = SDL_GetTicks() + 350;
+                row = (row + 1) % 5;
+                col = std::min(col, KROW_NCOLS[row] - 1);
+                kb.heldNav = btn; kb.repeatAt = SDL_GetTicks() + 350;
                 break;
-            case SDL_CONTROLLER_BUTTON_A:
-                if ((int)kb.target->size() < kb.maxLen) *kb.target += kb.palette[kb.charIdx];
+            case SDL_CONTROLLER_BUTTON_A: {
+                // Find hit for current gpRow/gpCol and activate
+                for (auto& h : kb.hits)
+                    if (h.row == row && h.col == col) { doAct(h.act, h.ch, h.chSh); break; }
                 break;
+            }
             case SDL_CONTROLLER_BUTTON_Y:
                 if (!kb.target->empty()) kb.target->pop_back();
                 break;
@@ -156,80 +235,129 @@ bool Game::handleSoftKBEvent(SDL_Event& e) {
     }
     if (e.type == SDL_CONTROLLERBUTTONUP) {
         Uint8 btn = remapButton(e.cbutton.button);
-        if (btn == (Uint8)kb.heldButton) kb.heldButton = -1;
+        if (btn == (Uint8)kb.heldNav) kb.heldNav = -1;
         return true;
     }
     return false;
 }
 
-void Game::renderSoftKB(int centerY) {
+// ── Rendering ─────────────────────────────────────────────────────────────────
+
+void Game::renderSoftKB() {
 #ifndef __SWITCH__
     if (!usingGamepad_ && !ui_.touchActive) return;
 #endif
     auto& kb = softKB_;
-    if (!kb.active || !kb.palette) return;
-    int palLen = (int)strlen(kb.palette);
+    if (!kb.active || !kb.target) return;
 
-    SDL_Color white = {255, 255, 255, 255};
-    SDL_Color gray  = {120, 120, 130, 255};
+    // Window dimensions
+    const int CW = 30, CH = 28;         // key cell width, height
+    const int PAD = 8;
+    const int TH  = UI::W98::TitleH;    // title bar height
+    const int CONTENT_W = 14 * CW;      // 420 px
+    const int PREVIEW_H = 24;
+    const int WIN_W = CONTENT_W + PAD * 2;   // 436 px
+    const int WIN_H = TH + PAD + PREVIEW_H + 4 + 5 * CH + PAD;
 
-    bool singleRow = (palLen <= kb.cols);
-    int cellW = singleRow ? 36 : 20;
-    int cellH = singleRow ? 36 : 26;
-    int cols = kb.cols;
-    int rows = (palLen + cols - 1) / cols;
-    int totalW = cols * cellW;
-    int startX = (SCREEN_W - totalW) / 2;
-    int palY = centerY;
-    kb.renderX = startX;
-    kb.renderY = palY;
-    kb.cellW = cellW;
-    kb.cellH = cellH;
-    kb.rows = rows;
+    // Auto-center on first use; clamp to screen
+    if (kb.winX < 0) { kb.winX = (SCREEN_W - WIN_W) / 2; kb.winY = (SCREEN_H - WIN_H) / 2; }
+    kb.winX = std::max(0, std::min(SCREEN_W - WIN_W, kb.winX));
+    kb.winY = std::max(0, std::min(SCREEN_H - WIN_H, kb.winY));
 
-    // Opaque background
-    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(renderer_, 15, 16, 28, 255);
-    SDL_Rect palBg = {startX - 8, palY - 8, totalW + 16, rows * cellH + 80};
-    SDL_RenderFillRect(renderer_, &palBg);
-    SDL_SetRenderDrawColor(renderer_, 0, 120, 110, 180);
-    SDL_RenderDrawRect(renderer_, &palBg);
+    ui_.drawWin98Window(kb.winX, kb.winY, WIN_W, WIN_H, "Keyboard");
+    kb.titleBar = {kb.winX, kb.winY, WIN_W, TH};
 
-    for (int i = 0; i < palLen; i++) {
-        int col = i % cols, row = i / cols;
-        int cx = startX + col * cellW;
-        int cy = palY + row * cellH;
-        bool sel = (i == kb.charIdx);
-        if (sel) {
-            SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 255);
-            SDL_Rect bg = {cx, cy, cellW - 2, cellH - 2};
-            SDL_RenderFillRect(renderer_, &bg);
+    int cx = kb.winX + PAD;
+    int cy = kb.winY + TH + PAD;
+
+    // ── Text preview ──
+    bool blink = (SDL_GetTicks() / 500) % 2 == 0;
+    std::string preview = *kb.target + (blink ? "|" : " ");
+    ui_.drawWin98TextField(cx, cy, CONTENT_W, PREVIEW_H, preview.c_str(), true);
+    cy += PREVIEW_H + 4;
+
+    // ── Keys ──
+    kb.hits.clear();
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+
+    // Draw a Win98-style beveled key cell
+    auto drawKey = [&](int x, int y, int w, int h, bool selected, bool isAction, bool shiftActive) {
+        // Face color
+        Uint8 fr = 212, fg = 208, fb = 200;  // standard key face
+        if (selected)    { fr = 0;  fg = 120; fb = 215; }  // blue highlight
+        else if (shiftActive) { fr = 180; fg = 210; fb = 255; }  // active shift
+        else if (isAction)    { fr = 195; fg = 193; fb = 185; }  // slightly darker action key
+        SDL_SetRenderDrawColor(renderer_, fr, fg, fb, 255);
+        SDL_Rect r = {x, y, w, h};
+        SDL_RenderFillRect(renderer_, &r);
+        // Raised bevel
+        SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 255);
+        SDL_RenderDrawLine(renderer_, x, y, x+w-2, y);
+        SDL_RenderDrawLine(renderer_, x, y, x, y+h-2);
+        SDL_SetRenderDrawColor(renderer_, 80, 80, 80, 255);
+        SDL_RenderDrawLine(renderer_, x+w-1, y, x+w-1, y+h-1);
+        SDL_RenderDrawLine(renderer_, x, y+h-1, x+w-1, y+h-1);
+        SDL_SetRenderDrawColor(renderer_, 140, 140, 140, 255);
+        SDL_RenderDrawLine(renderer_, x+w-2, y+1, x+w-2, y+h-2);
+        SDL_RenderDrawLine(renderer_, x+1, y+h-2, x+w-2, y+h-2);
+    };
+
+    SDL_Color cWhite = {255,255,255,255}, cBlack = {0,0,0,255};
+
+    for (int row = 0; row < 5; row++) {
+        int kx = cx;
+        int col = 0;
+        for (int ki = 0; ki < 14; ki++) {
+            const KDef& k = KROWS[row][ki];
+            if (k.w == 0) break;
+
+            int kw = k.w * CW - 2;
+            int kh = CH - 2;
+            bool gpSel      = (kb.gpRow == row && kb.gpCol == col);
+            bool isAction   = (k.act != 0);
+            bool shiftAct   = (k.act == 3 && kb.shiftOn);
+
+            drawKey(kx, cy, kw, kh, gpSel, isAction, shiftAct);
+
+            // Label
+            char lbuf[8] = {};
+            const char* lbl;
+            switch (k.act) {
+                case 1: lbl = "BKSP";  break;
+                case 2: lbl = "ENTR";  break;
+                case 3: lbl = "SHFT";  break;
+                case 4: lbl = "SPACE"; break;
+                case 5: lbl = "X";     break;
+                default:
+                    lbuf[0] = kb.shiftOn ? k.chSh : k.ch;
+                    lbl = lbuf;
+                    break;
+            }
+            int lblLen = (int)strlen(lbl);
+            int fs = (lblLen == 1) ? 14 : (lblLen <= 4) ? 10 : 8;
+            int tw = (int)(lblLen * fs * 0.62f);
+            drawText(lbl, kx + kw/2 - tw/2, cy + kh/2 - fs/2,
+                     fs, gpSel ? cWhite : cBlack);
+
+            // Store hit rect
+            SDL_Rect hr = {kx, cy, kw, kh};
+            kb.hits.push_back({hr, k.ch, k.chSh, k.act, row, col});
+
+            kx += k.w * CW;
+            col++;
         }
-        char ch[2] = { kb.palette[i], 0 };
-        int fontSize = singleRow ? (sel ? 22 : 18) : (sel ? 18 : 14);
-        int ox = singleRow ? 10 : 4;
-        int oy = singleRow ? 6 : 3;
-        drawText(ch, cx + ox, cy + oy, fontSize, sel ? white : gray);
+        cy += CH;
     }
 
-    int btnY = palY + rows * cellH + 12;
-    auto drawKbButton = [&](SDL_Rect rect, const char* label, SDL_Color color) {
-        bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, rect.x, rect.y, rect.w, rect.h);
-        SDL_SetRenderDrawColor(renderer_, 18, 24, 34, 255);
-        SDL_RenderFillRect(renderer_, &rect);
-        SDL_SetRenderDrawColor(renderer_, color.r, color.g, color.b, hovered ? 220 : 170);
-        SDL_RenderDrawRect(renderer_, &rect);
-        drawText(label, rect.x + 12, rect.y + 6, 14, color);
+    // ── Gamepad hint bar ──
+    UI::HintPair hints[] = {
+        {UI::Action::Navigate, "Navigate"},
+        {UI::Action::Confirm,  "Press"},
+        {UI::Action::Tab,      "Backspace"},
+        {UI::Action::Back,     "Cancel"},
+        {UI::Action::Bomb,     "OK"},
     };
-    kb.delRect = {startX, btnY, 88, 28};
-    kb.okRect = {startX + totalW / 2 - 44, btnY, 88, 28};
-    kb.cancelRect = {startX + totalW - 88, btnY, 88, 28};
-    drawKbButton(kb.delRect, "DEL", UI::Color::Yellow);
-    drawKbButton(kb.okRect, "OK", UI::Color::Green);
-    drawKbButton(kb.cancelRect, "CANCEL", {255, 120, 120, 255});
-
-    { UI::HintPair hints[] = { {UI::Action::Navigate, "Navigate"}, {UI::Action::Confirm, "Insert"}, {UI::Action::Tab, "Delete"}, {UI::Action::Back, "Close"}, {UI::Action::Bomb, "Confirm"} };
-      ui_.drawHintBar(hints, 5, palY + rows * cellH + 8); }
+    ui_.drawHintBar(hints, 5, kb.winY + WIN_H + 2);
 }
 
 
@@ -548,7 +676,7 @@ void Game::handleInput() {
         // Also set mouseClicked here so fast clicks (press+release within one frame) aren't missed.
         if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
             usingGamepad_ = false;
-            ui_.mouseClicked = true;
+            if (ui_.clickCooldownFrames == 0) ui_.mouseClicked = true;
         }
 
         // Touch events — convert to mouse-like behaviour for menu navigation
@@ -558,7 +686,7 @@ void Game::handleInput() {
             ui_.mouseX = (int)(e.tfinger.x * SCREEN_W);
             ui_.mouseY = (int)(e.tfinger.y * SCREEN_H);
             ui_.mouseDown = true;
-            ui_.mouseClicked = true;
+            if (ui_.clickCooldownFrames == 0) ui_.mouseClicked = true;
         }
         if (e.type == SDL_FINGERMOTION) {
             ui_.touchActive = true;
@@ -731,23 +859,9 @@ void Game::handleInput() {
     // Normalize move
     if (moveInput_.length() > 1.0f) moveInput_ = moveInput_.normalized();
 
-    // 100ms debounce: suppress all menu inputs for one cool-down window after
-    // any activation, preventing cross-frame double-fire from renderConfirm.
-    if (menuInputCooldown_ > 0.0f) {
-        menuInputCooldown_ -= dt_;
-        if (menuInputCooldown_ < 0.0f) menuInputCooldown_ = 0.0f;
-        renderConfirm = false;
-        renderBack    = false;
-        confirmInput_ = false;
-        backInput_    = false;
-    }
-
     // Merge render()-sourced inputs (mouse clicks) with event-sourced inputs
     confirmInput_ |= renderConfirm;
     backInput_    |= renderBack;
-
-    // Start debounce window whenever any activation fires
-    if (confirmInput_ || backInput_) menuInputCooldown_ = 0.1f;
 
     // Handle menu state transitions
     if (state_ == GameState::BiosIntro) {
@@ -871,13 +985,7 @@ void Game::handleInput() {
 #ifndef __SWITCH__
             else if (menuSelection_ == 9) {
                 // UPDATE — open release page
-                #if defined(_WIN32)
-                    system("start https://github.com/etonedemid/cold-start-nx/releases/latest");
-                #else
-                    system("xdg-open https://github.com/etonedemid/cold-start-nx/releases/latest 2>/dev/null || "
-                           "firefox https://github.com/etonedemid/cold-start-nx/releases/latest 2>/dev/null || "
-                           "google-chrome https://github.com/etonedemid/cold-start-nx/releases/latest 2>/dev/null");
-                #endif
+                SDL_OpenURL("https://github.com/etonedemid/cold-start-nx/releases/latest");
             }
             else if (menuSelection_ == 10) {
                 logOffConfirm_ = true;
@@ -1053,8 +1161,7 @@ void Game::handleInput() {
             else if (configSelection_ == CONFIG_USERNAME_INDEX && confirmInput_) {
                 // Edit username
                 usernameTyping_ = true;
-                softKB_.open("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-", 16,
-                             &config_.username, 32, [this](bool) {
+                softKB_.open(&config_.username, 32, [this](bool) {
                     usernameTyping_ = false;
                     if (config_.username.empty()) config_.username = "Player";
                     NetworkManager::instance().setUsername(config_.username);
@@ -1391,22 +1498,11 @@ void Game::handleInput() {
                 }
             }
 
-            // Mouse click handling for buttons (must happen before keyboard confirmInput_ check)
-            if (ui_.mouseClicked && !usingGamepad_) {
-                // Check if any button was clicked
-                if (ui_.prevHoveredItem == 6) { cc.field = 6; confirmInput_ = true; }
-                if (ui_.prevHoveredItem == 7) { cc.field = 7; confirmInput_ = true; }
-                if (ui_.prevHoveredItem == 8) { cc.field = 8; confirmInput_ = true; }
-                if (ui_.prevHoveredItem == 9) { cc.field = 9; confirmInput_ = true; }
-                if (ui_.prevHoveredItem == 10) { cc.field = 10; confirmInput_ = true; }
-            }
-
             // Name field: start text editing on confirm
             if (cc.field == 0 && confirmInput_) {
                 cc.textEditing = true;
                 cc.textBuf = cc.name;
-                softKB_.open("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 _-!@#.", 16,
-                             &cc.textBuf, 16, [this](bool confirmed) {
+                softKB_.open(&cc.textBuf, 16, [this](bool confirmed) {
                     charCreator_.textEditing = false;
                     if (confirmed) charCreator_.name = charCreator_.textBuf;
                 });
@@ -1675,7 +1771,7 @@ void Game::handleInput() {
         else if (hostSetupSelection_ == 1 && confirmInput_) {
             portStr_ = std::to_string(hostPort_);
             portTyping_ = true;
-            softKB_.open("0123456789", 10, &portStr_, 5, [this](bool) {
+            softKB_.open(&portStr_, 5, [this](bool) {
                 portTyping_ = false;
                 int v = portStr_.empty() ? 7777 : std::stoi(portStr_);
                 hostPort_ = std::max(1024, std::min(65535, v));
@@ -1684,8 +1780,7 @@ void Game::handleInput() {
         }
         else if (hostSetupSelection_ == 2 && confirmInput_) {
             mpUsernameTyping_ = true;
-            softKB_.open("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-", 16,
-                         &config_.username, 32, [this](bool) {
+            softKB_.open(&config_.username, 32, [this](bool) {
                 mpUsernameTyping_ = false;
                 if (config_.username.empty()) config_.username = "Player";
                 NetworkManager::instance().setUsername(config_.username);
@@ -1693,8 +1788,7 @@ void Game::handleInput() {
         }
         else if (hostSetupSelection_ == 3 && confirmInput_) {
             hostPasswordTyping_ = true;
-            softKB_.open("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-!@#$", 16,
-                         &lobbyPassword_, 32, [this](bool) {
+            softKB_.open(&lobbyPassword_, 32, [this](bool) {
                 hostPasswordTyping_ = false;
             });
         }
@@ -1784,7 +1878,7 @@ void Game::handleInput() {
                 if (joinMenuSelection_ == 0) {
                     // Edit address
                     ipTyping_ = true;
-                    softKB_.open("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-:", 11, &joinAddress_, 64, [this](bool confirmed) {
+                    softKB_.open(&joinAddress_, 64, [this](bool confirmed) {
                         ipTyping_ = false;
                         if (confirmed && !joinAddress_.empty()) joinGame();
                     });
@@ -1792,7 +1886,7 @@ void Game::handleInput() {
                     // Edit port
                     joinPortStr_ = std::to_string(joinPort_);
                     joinPortTyping_ = true;
-                    softKB_.open("0123456789", 10, &joinPortStr_, 5, [this](bool) {
+                    softKB_.open(&joinPortStr_, 5, [this](bool) {
                         joinPortTyping_ = false;
                         int v = joinPortStr_.empty() ? 7777 : std::stoi(joinPortStr_);
                         joinPort_ = std::max(1024, std::min(65535, v));
@@ -1801,8 +1895,7 @@ void Game::handleInput() {
                 } else if (joinMenuSelection_ == 2) {
                     // Edit username
                     mpUsernameTyping_ = true;
-                    softKB_.open("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-", 16,
-                                 &config_.username, 32, [this](bool) {
+                    softKB_.open(&config_.username, 32, [this](bool) {
                         mpUsernameTyping_ = false;
                         if (config_.username.empty()) config_.username = "Player";
                         NetworkManager::instance().setUsername(config_.username);
@@ -1810,8 +1903,7 @@ void Game::handleInput() {
                 } else if (joinMenuSelection_ == 3) {
                     // Edit password
                     joinPasswordTyping_ = true;
-                    softKB_.open("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-!@#$", 16,
-                                 &joinPassword_, 32, [this](bool) {
+                    softKB_.open(&joinPassword_, 32, [this](bool) {
                         joinPasswordTyping_ = false;
                     });
                 } else if (joinMenuSelection_ == 4) {
@@ -1926,8 +2018,7 @@ void Game::handleInput() {
             // Intercept confirm when cursor is on a preset row (prevents starting the game)
             if (confirmInput_ && lobbyKickCursor_ < 0 && lobbySettingsSel_ == _PSave) {
                 presetNameBuf_ = "My Preset";
-                softKB_.open("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 _-", 16,
-                             &presetNameBuf_, 32, [this](bool confirmed) {
+                softKB_.open(&presetNameBuf_, 32, [this](bool confirmed) {
                     if (confirmed && !presetNameBuf_.empty())
                         addServerPreset(presetNameBuf_, "arena", lobbySettings_.maxPlayers, hostPort_, 0, lobbySettings_);
                 });
