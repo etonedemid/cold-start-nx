@@ -71,6 +71,11 @@ struct Enemy {
     float shootSpread       = 0.0f;
     float renderScale       = 3.0f;
 
+    // Leg animation (melee enemies only — reuses player leg sprites as placeholder)
+    float legAnimTimer = 0;
+    int   legAnimFrame = 0;
+    float legRotation  = 0;
+
     // Stun
     float stunTimer    = 0;
 
