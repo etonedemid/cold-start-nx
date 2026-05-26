@@ -992,7 +992,6 @@ void Game::saveConfig() {
     fprintf(f, "shaderGlitch=%d\n", config_.shaderGlitch ? 1 : 0);
     fprintf(f, "shaderNeonEdge=%d\n", config_.shaderNeonEdge ? 1 : 0);
     fprintf(f, "saveIncomingModsPermanently=%d\n", config_.saveIncomingModsPermanently ? 1 : 0);
-    fprintf(f, "devConsole=%d\n", config_.devConsole ? 1 : 0);
     fclose(f);
     printf("Config saved to config.txt\n");
 }
@@ -1026,7 +1025,6 @@ void Game::loadConfig() {
         else if (sscanf(line, "shaderGlitch=%d", &ival) == 1) config_.shaderGlitch = (ival != 0);
         else if (sscanf(line, "shaderNeonEdge=%d", &ival) == 1) config_.shaderNeonEdge = (ival != 0);
         else if (sscanf(line, "saveIncomingModsPermanently=%d", &ival) == 1) config_.saveIncomingModsPermanently = (ival != 0);
-        else if (sscanf(line, "devConsole=%d", &ival) == 1) config_.devConsole = (ival != 0);
     }
     clampResolutionConfig(config_);
     fclose(f);
