@@ -3,7 +3,7 @@
 #include "vec2.h"
 
 // ── Version ──
-constexpr const char* GAME_VERSION = "1.6.0";
+constexpr const char* GAME_VERSION = "1.7.0";
 
 // Screen (window resolution - runtime configurable)
 inline int SCREEN_W = 1280;
@@ -158,7 +158,7 @@ constexpr float EXPLOSION_RADIUS  = 200.0f;
 constexpr float EXPLOSION_DAMAGE  = 10.0f;
 constexpr float EXPLOSION_DURATION= 1.1f;
 constexpr int   KILLS_PER_BOMB    = 5;
-constexpr int   MAX_BOMBS         = 5;
+constexpr int   MAX_BOMBS         = 100;
 
 // Parry
 constexpr float PARRY_WINDOW   = 0.25f;
