@@ -42,6 +42,9 @@ else()
     file(GLOB HEADERS source/*.h)
 endif()
 
+if(WIN32)
+    list(APPEND SOURCES ${CMAKE_SOURCE_DIR}/resources/app.rc)
+endif()
 add_executable(cold_start ${SOURCES} ${HEADERS})
 target_include_directories(cold_start PRIVATE source)
 

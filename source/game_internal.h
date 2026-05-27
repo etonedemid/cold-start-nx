@@ -2,6 +2,7 @@
 // ─── game_internal.h ─── Helpers shared across game_*.cpp translation units ──
 // Included only by game implementation files, not external consumers.
 #include "game.h"
+#include <SDL2/SDL_mixer.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -115,6 +116,10 @@ inline bool isShooterEnemyType(EnemyType type) {
 inline bool isBossType(EnemyType type) {
     return type == EnemyType::BossBrute || type == EnemyType::BossSniper || type == EnemyType::BossGunner;
 }
+
+// Play a sound with a random ±8% pitch shift. Cleans up after itself.
+void playSFX(Mix_Chunk* chunk, int volume);
+void initPitchSFX();  // call once after Mix_AllocateChannels
 
 inline bool isCrateSpawnType(uint8_t type) {
     return type == ENTITY_CRATE || type == ENTITY_UPGRADE_CRATE;

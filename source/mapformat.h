@@ -67,6 +67,20 @@ struct CSM_Header {
     uint8_t  reserved[32];
 };
 
+// ── Per-map player restrictions (stored in header reserved bytes [1..5]) ──
+struct MapPlayerConfig {
+    bool    enabled    = false;   // false = apply no restrictions (backward compat)
+    bool    hasGun     = true;
+    bool    hasMelee   = true;
+    bool    hasBombs   = true;
+    bool    hasParry   = true;
+    bool    hasPickups = true;
+    uint8_t maxHp      = 0;    // 0 = use global game config
+    uint8_t startBombs = 1;    // starting bomb count 0-9
+    uint8_t speedPct   = 100;  // movement speed percent 50-150
+    uint8_t damagePct  = 100;  // damage percent 50-150
+};
+
 // ── Map data container (loaded from .csm) ──
 struct CustomMap {
     CSM_Header header;
@@ -79,6 +93,7 @@ struct CustomMap {
     std::string name;
     std::string creator;
     uint8_t gameMode = 0;  // 0=Arena, 1=Sandbox
+    MapPlayerConfig playerConfig;
     std::string musicPath;   // optional music filename relative to map folder (empty = default)
     // Texture paths for TILE_CUSTOM_0..7 (empty = not used)
     std::string customTilePaths[8];
