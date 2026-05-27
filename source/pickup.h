@@ -30,7 +30,6 @@ enum class UpgradeType : uint8_t {
     BombPickup,     // +1 bomb
     Magnet,         // bullets home slightly
     Ricochet,       // bullets bounce off walls
-    Piercing,       // bullets go through enemies
     TripleShot,     // fire 3 bullets in spread
     Overclock,      // faster fire/reload
     HeavyRounds,    // more damage, slower handling
@@ -105,22 +104,21 @@ struct PlayerUpgrades {
     float reloadMulti     = 1.0f;  // reload time multiplier (<1 = faster)
     bool  hasBlindness    = false;
     float blindnessTimer  = 0;
-    bool  hasMagnet       = false;
-    bool  hasRicochet     = false;
-    bool  hasPiercing     = false;
-    bool  hasTripleShot   = false;
-    bool  hasStunRounds   = false;
-    bool  hasScavenger    = false;
-    bool  hasExplosiveTips = false;
-    bool  hasChainLightning = false;
-    bool  hasBloodlust    = false;
-    bool  hasShockEdge    = false;
-    bool  hasAutoReload   = false;
-    bool  hasVampire      = false;
-    bool  hasLastStand    = false;
+    int   hasMagnet          = 0;
+    int   hasRicochet        = 0;
+    int   hasTripleShot      = 0;
+    int   hasStunRounds      = 0;
+    int   hasScavenger       = 0;
+    int   hasExplosiveTips   = 0;
+    int   hasChainLightning  = 0;
+    int   hasBloodlust       = 0;
+    int   hasShockEdge       = 0;
+    int   hasAutoReload      = 0;
+    int   hasVampire         = 0;
+    int   hasLastStand       = 0;
     float parryCdReduction = 0.0f;  // seconds shaved off parry cooldown (QuickParry, stacks)
-    bool  hasParrySurge   = false;  // parry contact/reflect deals 2x damage
-    bool  hasReactiveParry = false; // parry window doubled
+    int   hasParrySurge      = 0;   // parry contact/reflect: (1+stacks)x damage
+    int   hasReactiveParry   = 0;   // parry window: (1+stacks)x wider
     int   killsPerBomb    = KILLS_PER_BOMB;
     float bombDashSpeedMulti = 1.0f;
     float bulletSpeedMulti = 1.0f;

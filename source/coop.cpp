@@ -89,7 +89,7 @@ void Game::startPackLevel() {
 
     enemies_.clear(); bullets_.clear(); enemyBullets_.clear();
     bombs_.clear(); explosions_.clear(); debris_.clear();
-    blood_.clear(); boxFragments_.clear();
+    blood_.clear(); tileBlood_.clear(); boxFragments_.clear();
     crates_.clear(); pickups_.clear();
     upgrades_.reset();
     sandboxMode_ = false;
@@ -236,7 +236,7 @@ void Game::startLocalCoopGame() {
     wavePauseTimer_ = WAVE_PAUSE_BASE; waveSpawnTimer_ = 0;
     enemies_.clear(); bullets_.clear(); enemyBullets_.clear();
     bombs_.clear(); explosions_.clear(); debris_.clear();
-    blood_.clear(); boxFragments_.clear();
+    blood_.clear(); tileBlood_.clear(); boxFragments_.clear();
     crates_.clear(); pickups_.clear();
     upgrades_.reset();
     crateSpawnTimer_ = 0;

@@ -1,4 +1,4 @@
-﻿// ─── combat.cpp ─── Player/enemy combat, AI, bullets, bombs
+// ─── combat.cpp ─── Player/enemy combat, AI, bullets, bombs
 #include "game.h"
 #include "game_internal.h"
 
@@ -77,7 +77,7 @@ void Game::updatePlayer(float dt) {
     Vec2 targetVel = {0, 0};
     p.moving = moveInput_.lengthSq() > 0.01f;
     if (p.moving) {
-        const float lastStandSpeedMult = (upgrades_.hasLastStand && p.hp <= 1) ? 1.3f : 1.0f;
+        const float lastStandSpeedMult = (upgrades_.hasLastStand && p.hp <= 1) ? (1.0f + 0.3f * upgrades_.hasLastStand) : 1.0f;
         targetVel = moveInput_.normalized() * p.speed * moveInput_.length() * lastStandSpeedMult;
     }
 
@@ -105,6 +105,26 @@ void Game::updatePlayer(float dt) {
     // Clamp to world
     p.pos.x = fmaxf(PLAYER_SIZE, fminf(map_.worldWidth() - PLAYER_SIZE, p.pos.x));
     p.pos.y = fmaxf(PLAYER_SIZE, fminf(map_.worldHeight() - PLAYER_SIZE, p.pos.y));
+
+    // Unstuck: parry dash or knockback can push the player into a wall corner.
+    // If we're embedded, spiral outward until a free cell is found.
+    if (!spectatorMode_ && map_.worldCollides(p.pos.x, p.pos.y, PLAYER_SIZE * 0.4f)) {
+        for (float r = 6.0f; r <= TILE_SIZE * 2.0f; r += 6.0f) {
+            bool freed = false;
+            for (int a = 0; a < 8; a++) {
+                float ang = a * (float)M_PI * 0.25f;
+                float tx = p.pos.x + cosf(ang) * r;
+                float ty = p.pos.y + sinf(ang) * r;
+                if (!map_.worldCollides(tx, ty, PLAYER_SIZE * 0.4f)) {
+                    p.pos = {tx, ty};
+                    p.vel = {0.0f, 0.0f};
+                    freed = true;
+                    break;
+                }
+            }
+            if (freed) break;
+        }
+    }
 
     // ── Rotation (aim) ──
     if (aimInput_.lengthSq() > 0.04f) {
@@ -169,7 +189,7 @@ void Game::updatePlayer(float dt) {
     }
     // ── Shooting ──
     p.fireCooldown -= dt;
-    if (!spectatorMode_ && p.activeWeapon == 0) {  // gun slot only
+    if (!spectatorMode_ && p.activeWeapon == 0 && p.canShoot) {  // gun slot only
     if (p.reloading) {
         p.reloadTimer -= dt;
         if (p.reloadTimer <= 0) {
@@ -178,12 +198,14 @@ void Game::updatePlayer(float dt) {
         }
     } else if (fireInput_ && p.fireCooldown <= 0 && p.ammo > 0) {
         spawnBullet(p.pos, p.rotation);
-        // Triple shot – two extra bullets at ±15°, costs 3 ammo, halves fire rate
+        // Triple shot – two extra bullets per stack at increasing spreads
         if (upgrades_.hasTripleShot) {
-            const float spread = 0.26f; // ~15 degrees
-            spawnBullet(p.pos, p.rotation + spread);
-            spawnBullet(p.pos, p.rotation - spread);
-            p.ammo = std::max(0, p.ammo - 3);
+            const float spread = 0.26f; // ~15 degrees per step
+            for (int s = 0; s < upgrades_.hasTripleShot; s++) {
+                spawnBullet(p.pos, p.rotation + spread * (s + 1));
+                spawnBullet(p.pos, p.rotation - spread * (s + 1));
+            }
+            p.ammo = std::max(0, p.ammo - (1 + 2 * upgrades_.hasTripleShot));
             p.fireCooldown = 2.0f / p.fireRate; // half fire rate
         } else {
             p.ammo--;
@@ -193,12 +215,12 @@ void Game::updatePlayer(float dt) {
         p.shootAnimTimer = 0.12f;
         camera_.addShake(1.2f);
         rumble(0.05f, 16, 0.22f, 0.92f);  // Even softer gun kick
-        if (sfxShoot_) { int ch = Mix_PlayChannel(-1, sfxShoot_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+        if (sfxShoot_) playSFX(sfxShoot_, config_.sfxVolume);
     } else if ((fireInput_ || upgrades_.hasAutoReload) && p.ammo <= 0 && !p.reloading) {
         // Auto-reload (fireInput or hasAutoReload flag)
         p.reloading = true;
         p.reloadTimer = p.reloadTime;
-        if (sfxReload_) { int ch = Mix_PlayChannel(-1, sfxReload_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+        if (sfxReload_) playSFX(sfxReload_, config_.sfxVolume);
     }
     } // gun slot only (!spectatorMode_ && activeWeapon==0)
 
@@ -228,7 +250,7 @@ void Game::updatePlayer(float dt) {
     if (p.meleeCooldown > 0) p.meleeCooldown -= dt;
     if (!spectatorMode_) {
         // Trigger: dedicated E key OR fire trigger when axe is equipped
-        bool doMelee = meleeInput_ || (p.activeWeapon == 1 && fireInput_);
+        bool doMelee = p.canMelee && (meleeInput_ || (p.activeWeapon == 1 && fireInput_));
         if (doMelee && !p.isMeleeSwinging && p.meleeCooldown <= 0) {
             p.isMeleeSwinging = true;
             p.meleeTimer      = 0.0f;
@@ -237,7 +259,7 @@ void Game::updatePlayer(float dt) {
             p.meleeBloodlustProc = false;
             p.vel = p.vel + Vec2::fromAngle(p.rotation) * (140.0f + std::min(60.0f, upgrades_.speedBonus * 0.12f));
             camera_.addShake(0.45f);
-            if (sfxSwoosh_) { int ch = Mix_PlayChannel(-1, sfxSwoosh_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+            if (sfxSwoosh_) playSFX(sfxSwoosh_, config_.sfxVolume);
         }
     }
     if (p.isMeleeSwinging) {
@@ -305,7 +327,7 @@ void Game::updatePlayer(float dt) {
                                            heavyBreak ? 0.70f : 0.60f);
                     screenFlashTimer_ = 0.06f;
                     screenFlashR_ = 255; screenFlashG_ = 200; screenFlashB_ = 50;
-                    if (sfxBreak_) { int ch = Mix_PlayChannel(-1, sfxBreak_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                    if (sfxBreak_) playSFX(sfxBreak_, config_.sfxVolume);
                     if (upgrades_.hasBloodlust) {
                         p.meleeBloodlustProc = true;
                         p.ammo = std::min(p.maxAmmo, p.ammo + 1);
@@ -314,8 +336,8 @@ void Game::updatePlayer(float dt) {
             };
             auto emitShockPulse = [&](Vec2 pos) {
                 if (!(upgrades_.hasShockEdge || upgrades_.hasStunRounds)) return;
-                float shockRadius = upgrades_.hasShockEdge ? 110.0f : 80.0f;
-                for (int i = 0; i < (upgrades_.hasShockEdge ? 10 : 6); i++) {
+                float shockRadius = upgrades_.hasShockEdge ? (80.0f + 30.0f * upgrades_.hasShockEdge) : 80.0f;
+                for (int i = 0; i < (upgrades_.hasShockEdge ? (4 + 6 * upgrades_.hasShockEdge) : 6); i++) {
                     BoxFragment f;
                     f.pos = pos;
                     float angle = (float)(rand() % 360) * (float)M_PI / 180.0f;
@@ -334,7 +356,7 @@ void Game::updatePlayer(float dt) {
                     if (!e.alive) continue;
                     if (Vec2::dist(pos, e.pos) > shockRadius) continue;
                     e.damageFlash = 1.0f;
-                    if (simAuth) e.stunTimer = std::max(e.stunTimer, upgrades_.hasShockEdge ? 1.1f : 0.7f);
+                    if (simAuth) e.stunTimer = std::max(e.stunTimer, upgrades_.hasShockEdge ? (0.6f + 0.5f * upgrades_.hasShockEdge) : 0.7f);
                 }
                 if (simAuth && upgrades_.hasShockEdge) {
                     int px = TileMap::toTile(pos.x);
@@ -374,7 +396,7 @@ void Game::updatePlayer(float dt) {
                     }
                     if (upgrades_.hasBloodlust) {
                         p.meleeBloodlustProc = true;
-                        p.ammo = std::min(p.maxAmmo, p.ammo + 1 + (upgrades_.hasScavenger ? 1 : 0));
+                        p.ammo = std::min(p.maxAmmo, p.ammo + 1 + upgrades_.hasScavenger);
                     }
                     if (net.isInGame()) {
                         uint32_t eIdx = (uint32_t)(&e - &enemies_[0]);
@@ -452,9 +474,9 @@ void Game::updatePlayer(float dt) {
                                        target.dead ? 138 : 92,
                                        target.dead ? 0.92f : 0.58f,
                                        target.dead ? 1.00f : 1.26f);
-                if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                if (sfxHurt_) playSFX(sfxHurt_, config_.sfxVolume / 4);
                 if (target.dead) {
-                    if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
+                    if (sfxDeath_) playSFX(sfxDeath_, config_.sfxVolume / 5);
                     if (net.isInGame()) net.sendPlayerDied(targetId, net.localPlayerId());
                 }
             };
@@ -540,7 +562,7 @@ void Game::updatePlayer(float dt) {
         p.bombCount--;
     }
     // ZL / RMB = Launch the nearest orbiting bomb
-    if (!spectatorMode_ && bombLaunchInput_) {
+    if (!spectatorMode_ && bombLaunchInput_ && player_.canBomb) {
         uint8_t localBombOwner2     = NetworkManager::instance().isInGame() ? NetworkManager::instance().localPlayerId() : (uint8_t)255;
         uint8_t localBombOwnerSlot2 = (uint8_t)std::clamp(activeLocalPlayerSlot_, 0, 3);
         Bomb* toFire = nullptr;
@@ -835,7 +857,7 @@ void Game::updateEnemies(float dt) {
                 e.isDashing = true;
                 e.dashTimer = e.dashDuration;
                 e.dashCharging = false;
-                if (sfxSwoosh_) { int ch = Mix_PlayChannel(-1, sfxSwoosh_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                if (sfxSwoosh_) playSFX(sfxSwoosh_, config_.sfxVolume);
             }
         } else if (e.state == EnemyState::Chase) {
             enemyChase(e, dt);
@@ -1155,7 +1177,7 @@ void Game::enemyShoot(Enemy& e, float dt) {
         Vec2 eRight = {-eFwd.y, eFwd.x};
         Vec2 muzzle = e.pos + eFwd * 14.0f + eRight * 14.0f;
         float bulletSpeed = ENEMY_BULLET_SPEED;
-        if (e.type == EnemyType::Sniper) {
+        if (e.type == EnemyType::Sniper || e.type == EnemyType::BossSniper) {
             bulletSpeed *= SNIPER_BULLET_SPEED_MULTI;
         }
         spawnEnemyBullet(muzzle, getEnemyTargetPos(e), spread, bulletSpeed);
@@ -1238,7 +1260,7 @@ void Game::updateBullets(float dt) {
                     // Wrap to [-π, π]
                     while (angleDiff >  (float)M_PI) angleDiff -= 2.0f * (float)M_PI;
                     while (angleDiff < -(float)M_PI) angleDiff += 2.0f * (float)M_PI;
-                    const float turnRate = 3.5f; // rad/s
+                    const float turnRate = std::min(3.5f * (float)upgrades_.hasMagnet, 10.0f); // rad/s, scales with stacks
                     currentAngle += std::clamp(angleDiff, -turnRate * dt, turnRate * dt);
                     b.vel = Vec2::fromAngle(currentAngle) * speed;
                 }
@@ -1253,7 +1275,7 @@ void Game::updateBullets(float dt) {
                 destroyBox(tx, ty);
                 if (b.explosive) spawnBulletExplosion(b.pos, b.damage, b.ownerId, b.ownerSubSlot, -1, bulletSimAuth);
                 b.alive = false;
-            } else if (upgrades_.hasRicochet && b.bounces < 3) {
+            } else if (upgrades_.hasRicochet && b.bounces < 3 * upgrades_.hasRicochet) {
                 // Determine which axis caused the collision
                 int prevTx = TileMap::toTile(b.pos.x - b.vel.x * dt);
                 int prevTy = TileMap::toTile(b.pos.y - b.vel.y * dt);
@@ -1360,8 +1382,8 @@ void Game::spawnBullet(Vec2 pos, float angle) {
     b.tag = TAG_BULLET;
     b.sprite = bulletSprite_;
     b.damage = std::max(1, (int)roundf(upgrades_.damageMulti *
-        (upgrades_.hasLastStand && player_.hp <= 1 ? 2.0f : 1.0f)));
-    b.piercing = upgrades_.hasPiercing;
+        (upgrades_.hasLastStand && player_.hp <= 1 ? (1.0f + (float)upgrades_.hasLastStand) : 1.0f)));
+    b.piercing = false;
     b.explosive = upgrades_.hasExplosiveTips;
     b.chainLightning = upgrades_.hasChainLightning;
 
@@ -1407,10 +1429,7 @@ void Game::spawnEnemyBullet(Vec2 pos, Vec2 target, float angleOffset, float spee
     enemyBullets_.push_back(b);
 
     // Enemy shoot SFX (quieter)
-    if (sfxEnemyShoot_) {
-        int ch = Mix_PlayChannel(-1, sfxEnemyShoot_, 0);
-        if (ch >= 0) Mix_Volume(ch, config_.sfxVolume * 2 / 5);
-    }
+    if (sfxEnemyShoot_) playSFX(sfxEnemyShoot_, config_.sfxVolume * 2 / 5);
 
     // Host broadcasts bullet spawn to clients
     auto& net = NetworkManager::instance();
@@ -1454,7 +1473,7 @@ void Game::spawnBulletExplosion(Vec2 pos, int damage, uint8_t ownerId, uint8_t o
         if (Vec2::dist(pos, e.pos) > radius + e.size) continue;
         e.damageFlash = 1.0f;
         e.hp -= splashDamage;
-        if (upgrades_.hasStunRounds) e.stunTimer = std::max(e.stunTimer, 0.4f);
+        if (upgrades_.hasStunRounds) e.stunTimer = std::max(e.stunTimer, 0.4f * (float)upgrades_.hasStunRounds);
         if (e.hp <= 0) {
             uint32_t eIdx = (uint32_t)i;
             bool trackKill = !net.isOnline() || ownerId == net.localPlayerId();
@@ -2134,7 +2153,7 @@ void Game::updateSpawning(float dt) {
         // Spawning enemies within current wave
         waveSpawnTimer_ -= dt;
         if (waveSpawnTimer_ <= 0 && waveEnemiesLeft_ > 0) {
-            waveSpawnTimer_ = WAVE_SPAWN_INTERVAL;
+            waveSpawnTimer_ = (lastBossWaveNum_ >= 0) ? WAVE_SPAWN_INTERVAL * 0.5f : WAVE_SPAWN_INTERVAL;
             Vec2 sp = pickEnemySpawnPos();
             if (!map_.worldCollides(sp.x, sp.y, ENEMY_SIZE * 0.5f)) {
                 spawnEnemy(sp, rollWaveEnemyType());
@@ -2194,6 +2213,12 @@ void Game::updateSpawning(float dt) {
                     return;
                 }
                 bossWaveActive_ = false;  // boss slain — clear flag
+                // If this was the last boss wave, enable endless post-boss scaling
+                {
+                    constexpr int LAST_BOSS_WAVE = BOSS_WAVES[sizeof(BOSS_WAVES)/sizeof(*BOSS_WAVES) - 1];
+                    if (waveNumber_ == LAST_BOSS_WAVE && lastBossWaveNum_ < 0)
+                        lastBossWaveNum_ = waveNumber_;
+                }
             }
 
             // Start new wave
@@ -2205,8 +2230,8 @@ void Game::updateSpawning(float dt) {
             for (int bw : BOSS_WAVES) {
                 if (waveNumber_ == bw) { isBossWave = true; break; }
             }
-            if (waveNumber_ == 50)  bossWaveType = EnemyType::BossSniper;
-            else if (waveNumber_ == 100) bossWaveType = EnemyType::BossGunner;
+            if (waveNumber_ == 35)  bossWaveType = EnemyType::BossSniper;
+            else if (waveNumber_ == 45) bossWaveType = EnemyType::BossGunner;
 
             if (isBossWave) {
                 // Spawn a single boss — no normal enemies this wave
@@ -2227,14 +2252,17 @@ void Game::updateSpawning(float dt) {
 
             int waveSize = WAVE_SIZE_BASE + waveNumber_ * WAVE_SIZE_GROWTH;
             if (waveSize > WAVE_MAX_SIZE) waveSize = WAVE_MAX_SIZE;
+            // Post-last-boss: 1.3x enemies each consecutive wave, uncapped
+            if (lastBossWaveNum_ >= 0) {
+                int n = waveNumber_ - lastBossWaveNum_;
+                waveSize = (int)(waveSize * powf(1.3f, (float)n));
+            }
             waveEnemiesLeft_ = waveSize;
             waveActive_ = true;
             waveSpawnTimer_ = 0;
 
             // ── Milestone: guaranteed first appearance of elite types ──
-            if (waveNumber_ == MILESTONE_BRUTE_WAVE) {
-                spawnEnemy(pickEnemySpawnPos(), EnemyType::Brute);
-            } else if (waveNumber_ == MILESTONE_SNIPER_WAVE) {
+            if (waveNumber_ == MILESTONE_SNIPER_WAVE) {
                 spawnEnemy(pickEnemySpawnPos(), EnemyType::Sniper);
             } else if (waveNumber_ == MILESTONE_GUNNER_WAVE) {
                 spawnEnemy(pickEnemySpawnPos(), EnemyType::Gunner);
@@ -2247,8 +2275,7 @@ void Game::updateSpawning(float dt) {
             }
 
             // ── Visual polish: wave announcement banner ──
-            waveAnnounceTimer_ = (waveNumber_ == MILESTONE_BRUTE_WAVE ||
-                                   waveNumber_ == MILESTONE_SNIPER_WAVE ||
+            waveAnnounceTimer_ = (waveNumber_ == MILESTONE_SNIPER_WAVE ||
                                    waveNumber_ == MILESTONE_GUNNER_WAVE) ? 3.5f : 2.5f;
             waveAnnounceNum_ = waveNumber_;
         }
@@ -2430,7 +2457,7 @@ void Game::resolveCollisions() {
     auto triggerChainLightning = [&](Entity& b, Vec2 pos, int primaryEnemy) {
         if (!b.chainLightning) return;
         int jumps = 0;
-        const int maxJumps = 4;  // Increased from 2 to 4 for better chain effect
+        const int maxJumps = 4 * upgrades_.hasChainLightning;
         const float chainRange = 200.0f;  // Increased from 170 to 200 for better reach
         
         for (int pass = 0; pass < maxJumps; ++pass) {
@@ -2490,10 +2517,7 @@ void Game::resolveCollisions() {
             primaryEnemy = bestIdx;  // Update primary to avoid re-hitting
             jumps++;
         }
-        if (jumps > 0 && sfxParry_) {
-            int ch = Mix_PlayChannel(-1, sfxParry_, 0);
-            if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 3);
-        }
+        if (jumps > 0 && sfxParry_) playSFX(sfxParry_, config_.sfxVolume / 3);
     };
 
     // Player bullets vs enemies — all peers resolve locally for instant feedback;
@@ -2565,6 +2589,7 @@ void Game::resolveCollisions() {
                     bd.scale = 0.5f + (float)(rand() % 50) / 100.0f;
                     bd.type = DecalType::Blood;
                     blood_.push_back(bd);
+                    stampTileBlood(bd.pos, 0.25f * bd.scale);
                     // Extra scattered splat decals
 #ifdef __SWITCH__
                     int numExtra = 1 + rand() % 2;
@@ -2580,6 +2605,7 @@ void Game::resolveCollisions() {
                         extra.scale = 0.25f + (float)(rand() % 40) / 100.0f;
                         extra.type = DecalType::Blood;
                         blood_.push_back(extra);
+                        stampTileBlood(extra.pos, 0.15f * extra.scale);
                     }
                 }
                 if (!b.piercing) {
@@ -2595,7 +2621,7 @@ void Game::resolveCollisions() {
                 if (simAuth) {
                     float dmg = b.damage * (1.0f - e.bulletDamageReduction);
                     e.hp -= dmg;
-                    if (upgrades_.hasStunRounds) e.stunTimer = std::max(e.stunTimer, 0.75f);
+                    if (upgrades_.hasStunRounds) e.stunTimer = std::max(e.stunTimer, 0.75f * (float)upgrades_.hasStunRounds);
                     // Aggro — target the player who shot this bullet
                     e.state = EnemyState::Chase;
                     e.lastSeenTime = gameTime_;
@@ -2621,20 +2647,21 @@ void Game::resolveCollisions() {
                 // Parry reflects — fire back at sniper-bullet speed
                 b.vel = b.vel.normalized() * -(ENEMY_BULLET_SPEED * SNIPER_BULLET_SPEED_MULTI);
                 b.tag = TAG_BULLET;
-                b.damage = PARRY_REFLECT_DAMAGE * (upgrades_.hasParrySurge ? 2 : 1);
+                b.damage = PARRY_REFLECT_DAMAGE * (upgrades_.hasParrySurge ? (1 + upgrades_.hasParrySurge) : 1);
                 bullets_.push_back(b);
                 b.alive = false;
                 camera_.addShake(2.2f);
                 rumble(0.18f, 45, 0.28f, 0.72f);  // Soft parry-reflect tick
-                if (sfxParry_) { int ch = Mix_PlayChannel(-1, sfxParry_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                if (sfxParry_) playSFX(sfxParry_, config_.sfxVolume);
             } else {
                 p.takeDamage(b.damage);
                 b.alive = false;
                 camera_.addShake(1.8f);
                 rumble(0.48f, 150, 1.25f, 0.78f);  // Heavier damage thud
-                if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                if (sfxHurt_)       playSFX(sfxHurt_, config_.sfxVolume / 4);
+                if (sfxPlayerHurt_) playSFX(sfxPlayerHurt_, config_.sfxVolume / 3);
                 if (p.dead) {
-                    if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
+                    if (sfxDeath_) playSFX(sfxDeath_, config_.sfxVolume / 5);
                     camera_.addShake(4.0f);
                     rumble(0.92f, 340, 1.50f, 0.82f);  // Heavy death rumble
                     auto& net = NetworkManager::instance();
@@ -2658,15 +2685,15 @@ void Game::resolveCollisions() {
         if (inArc) {
             if (p.isParrying) {
                 // Parry counter!
-                float surgeMul = upgrades_.hasParrySurge ? 2.0f : 1.0f;
+                float surgeMul = upgrades_.hasParrySurge ? (1.0f + (float)upgrades_.hasParrySurge) : 1.0f;
                 e.hp -= PARRY_DMG * surgeMul;
                 e.stunTimer = 1.0f;
                 e.isDashing = false;
-                e.vel = (e.pos - p.pos).normalized() * (500.0f * (upgrades_.hasParrySurge ? 1.5f : 1.0f));
+                e.vel = (e.pos - p.pos).normalized() * (500.0f * (upgrades_.hasParrySurge ? (1.0f + 0.5f * upgrades_.hasParrySurge) : 1.0f));
                 e.damageFlash = 1.0f;
                 camera_.addShake(2.2f);
                 rumble(0.52f, 84, 0.65f, 1.45f);  // Sharp parry counter rumble
-                if (sfxParry_) { int ch = Mix_PlayChannel(-1, sfxParry_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                if (sfxParry_) playSFX(sfxParry_, config_.sfxVolume);
                 if (e.hp <= 0) {
                     killEnemy(e);
                     // Broadcast parry kill over network so clients see the enemy die
@@ -2682,9 +2709,10 @@ void Game::resolveCollisions() {
                 p.takeDamage(e.contactDamage);
                 rumble(0.54f, 150, 1.30f, 0.72f);  // Heavy contact impact rumble
                 camera_.addShake(1.8f);
-                if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                if (sfxHurt_)       playSFX(sfxHurt_, config_.sfxVolume / 4);
+                if (sfxPlayerHurt_) playSFX(sfxPlayerHurt_, config_.sfxVolume / 3);
                 if (p.dead) {
-                    if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
+                    if (sfxDeath_) playSFX(sfxDeath_, config_.sfxVolume / 5);
                     camera_.addShake(4.0f);
                     rumble(0.92f, 340, 1.50f, 0.82f);  // Heavy death rumble
                     auto& net2 = NetworkManager::instance();
@@ -2710,15 +2738,15 @@ void Game::resolveCollisions() {
                 p.pos += push * (pen * 0.6f);
                 if (p.isParrying) {
                     // Parry counter: damage + stun + strong knockback, no player damage
-                    float surgeMul = upgrades_.hasParrySurge ? 2.0f : 1.0f;
+                    float surgeMul = upgrades_.hasParrySurge ? (1.0f + (float)upgrades_.hasParrySurge) : 1.0f;
                     e.hp        -= PARRY_DMG * surgeMul;
                     e.stunTimer  = 0.6f;
                     e.isDashing  = false;
                     e.damageFlash = 1.0f;
-                    e.vel        = push * (520.0f * (upgrades_.hasParrySurge ? 1.5f : 1.0f));
+                    e.vel        = push * (520.0f * (upgrades_.hasParrySurge ? (1.0f + 0.5f * upgrades_.hasParrySurge) : 1.0f));
                     camera_.addShake(1.8f);
                     rumble(0.52f, 84, 0.65f, 1.45f);
-                    if (sfxParry_) { int ch = Mix_PlayChannel(-1, sfxParry_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                    if (sfxParry_) playSFX(sfxParry_, config_.sfxVolume);
                     if (e.hp <= 0) {
                         killEnemy(e);
                         auto& net2 = NetworkManager::instance();
@@ -2736,12 +2764,13 @@ void Game::resolveCollisions() {
                     if (hurt && !p.dead) {
                         camera_.addShake(1.2f);
                         rumble(0.38f, 100, 1.0f, 0.6f);
-                        if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                        if (sfxHurt_)       playSFX(sfxHurt_, config_.sfxVolume / 4);
+                        if (sfxPlayerHurt_) playSFX(sfxPlayerHurt_, config_.sfxVolume / 3);
                     }
                     if (hurt && p.dead) {
                         camera_.addShake(4.0f);
                         rumble(0.92f, 340, 1.50f, 0.82f);
-                        if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
+                        if (sfxDeath_) playSFX(sfxDeath_, config_.sfxVolume / 5);
                         auto& net2 = NetworkManager::instance();
                         if (!net2.isInGame()) spawnPlayerDeathEffect(p.pos);
                         if (net2.isInGame())  net2.sendPlayerDied(net2.localPlayerId(), 0);
@@ -2774,13 +2803,13 @@ void Game::resolveCollisions() {
                         bullets_.push_back(b); b.alive = false;
                         coopSlots_[ci].camera.addShake(2.2f);
                         rumbleForSlot(ci, 0.18f, 45, 0.28f, 0.72f);  // Soft parry-reflect tick
-                        if (sfxParry_) { int ch = Mix_PlayChannel(-1, sfxParry_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                        if (sfxParry_) playSFX(sfxParry_, config_.sfxVolume);
                     } else {
                         cp.takeDamage(b.damage); b.alive = false;
                         coopSlots_[ci].camera.addShake(1.8f);
                         rumbleForSlot(ci, cp.dead ? 0.92f : 0.48f, cp.dead ? 340 : 150,
                                       cp.dead ? 1.50f : 1.25f, cp.dead ? 0.82f : 0.78f);
-                        if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                        if (sfxHurt_) playSFX(sfxHurt_, config_.sfxVolume / 4);
                     }
                 }
             }
@@ -2798,14 +2827,14 @@ void Game::resolveCollisions() {
                         e.vel = (e.pos - cp.pos).normalized() * 500.0f; e.damageFlash = 1.0f;
                         coopSlots_[ci].camera.addShake(2.2f);
                         rumbleForSlot(ci, 0.52f, 84, 0.65f, 1.45f);
-                        if (sfxParry_) { int ch = Mix_PlayChannel(-1, sfxParry_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                        if (sfxParry_) playSFX(sfxParry_, config_.sfxVolume);
                         if (e.hp <= 0) killEnemy(e);
                     } else {
                         cp.takeDamage(e.contactDamage);
                         coopSlots_[ci].camera.addShake(1.8f);
                         rumbleForSlot(ci, cp.dead ? 0.92f : 0.54f, cp.dead ? 340 : 150,
                                       cp.dead ? 1.50f : 1.30f, cp.dead ? 0.82f : 0.72f);
-                        if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                        if (sfxHurt_) playSFX(sfxHurt_, config_.sfxVolume / 4);
                     }
                 }
             }
@@ -2826,7 +2855,7 @@ void Game::resolveCollisions() {
                     if (hurt) {
                         coopSlots_[ci].camera.addShake(1.2f);
                         rumbleForSlot(ci, 0.38f, 100, 1.0f, 0.6f);
-                        if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                        if (sfxHurt_) playSFX(sfxHurt_, config_.sfxVolume / 4);
                     }
                 }
             }
@@ -2845,7 +2874,7 @@ void Game::resolveCollisions() {
                         coopSlots_[ci].camera.addShake(1.8f);
                         rumbleForSlot(ci, cp.dead ? 0.92f : 0.48f, cp.dead ? 340 : 150,
                                       cp.dead ? 1.50f : 1.25f, cp.dead ? 0.82f : 0.78f);
-                        if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                        if (sfxHurt_) playSFX(sfxHurt_, config_.sfxVolume / 4);
                     }
                 }
             }
@@ -2871,7 +2900,7 @@ void Game::resolveCollisions() {
                     camera_.addShake(player_.dead ? 4.0f : 1.8f);
                     rumbleForSlot(0, player_.dead ? 0.92f : 0.48f, player_.dead ? 340 : 150,
                                   player_.dead ? 1.50f : 1.25f, player_.dead ? 0.82f : 0.78f);
-                    if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                    if (sfxHurt_) playSFX(sfxHurt_, config_.sfxVolume / 4);
                 }
             }
             if (p1WasAlive && player_.dead) coopSlots_[0].deaths++;
@@ -2935,8 +2964,8 @@ void Game::resolveCollisions() {
                         rumbleForSlot(targetSlot, target.hp <= 0 ? 0.92f : 0.48f, target.hp <= 0 ? 340 : 150,
                                       target.hp <= 0 ? 1.50f : 1.25f, target.hp <= 0 ? 0.82f : 0.78f);
                     }
-                    if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
-                    if (target.hp <= 0 && sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
+                    if (sfxHurt_) playSFX(sfxHurt_, config_.sfxVolume / 4);
+                    if (target.hp <= 0 && sfxDeath_) playSFX(sfxDeath_, config_.sfxVolume / 5);
                     break;
                 }
             }
@@ -3018,11 +3047,11 @@ void Game::resolveCollisions() {
                         if (newHp <= 0) {
                             p.die();
                             camera_.addShake(4.0f);
-                            if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
+                            if (sfxDeath_) playSFX(sfxDeath_, config_.sfxVolume / 5);
                             net.sendPlayerDied(net.localPlayerId(), b.ownerId);
                         } else {
                             camera_.addShake(2.0f);
-                            if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                            if (sfxHurt_) playSFX(sfxHurt_, config_.sfxVolume / 4);
                             net.sendPlayerHpSync(net.localPlayerId(), player_.hp, player_.maxHp, b.ownerId);
                         }
                     } else {
@@ -3030,7 +3059,7 @@ void Game::resolveCollisions() {
                         net.sendHitRequest(b.netId, b.damage, b.ownerId);
                         // Optimistic visual feedback only (no HP deducted yet)
                         camera_.addShake(1.5f);
-                        if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                        if (sfxHurt_) playSFX(sfxHurt_, config_.sfxVolume / 4);
                     }
                     break;
                 }
@@ -3070,16 +3099,16 @@ void Game::resolveCollisions() {
                                       cp.hp <= 0 ? 1.50f : 1.25f, cp.hp <= 0 ? 0.82f : 0.78f);
                         if (cp.hp <= 0) {
                             cp.dead = true;
-                            if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
+                            if (sfxDeath_) playSFX(sfxDeath_, config_.sfxVolume / 5);
                             net.sendSubPlayerDied(net.localPlayerId(), (uint8_t)ci, b.ownerId);
                         } else {
-                            if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                            if (sfxHurt_) playSFX(sfxHurt_, config_.sfxVolume / 4);
                             net.sendSubPlayerHpSync(net.localPlayerId(), (uint8_t)ci, cp.hp, cp.maxHp, b.ownerId);
                         }
                     } else {
                         net.sendHitRequest(b.netId, b.damage, b.ownerId, (uint8_t)ci);
                         coopSlots_[ci].camera.addShake(1.5f);
-                        if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                        if (sfxHurt_) playSFX(sfxHurt_, config_.sfxVolume / 4);
                     }
                     break;
                 }
@@ -3130,6 +3159,7 @@ void Game::killEnemy(Enemy& e, bool trackKill) {
     bd.scale = 1.2f + (float)(rand() % 40) / 100.0f;
     bd.type = DecalType::Blood;
     blood_.push_back(bd);
+    stampTileBlood(bd.pos, 0.45f * bd.scale);
 
     // Bloody explosion — big burst of red particles
 #ifdef __SWITCH__
@@ -3169,6 +3199,7 @@ void Game::killEnemy(Enemy& e, bool trackKill) {
         extra.scale = 0.3f + (float)(rand() % 80) / 100.0f;
         extra.type = DecalType::Blood;
         blood_.push_back(extra);
+        stampTileBlood(extra.pos, 0.20f * extra.scale);
     }
     // Cap both pools
 #ifdef __SWITCH__
@@ -3185,10 +3216,7 @@ void Game::killEnemy(Enemy& e, bool trackKill) {
         blood_.erase(blood_.begin(),
                      blood_.begin() + (int)(blood_.size() - KILL_MAX_DECALS));
 
-    if (sfxEnemyExplode_) {
-        int ch = Mix_PlayChannel(-1, sfxEnemyExplode_, 0);
-        if (ch >= 0) Mix_Volume(ch, config_.sfxVolume * 3 / 4);
-    }
+    if (sfxEnemyExplode_) playSFX(sfxEnemyExplode_, config_.sfxVolume * 3 / 4);
 
     // Brief red flash
     screenFlashTimer_ = 0.05f;
@@ -3197,12 +3225,10 @@ void Game::killEnemy(Enemy& e, bool trackKill) {
     // Player kill registration (only for locally-originated kills)
     if (trackKill) {
         player_.killCounter++;
-        if (upgrades_.hasScavenger && player_.ammo < player_.maxAmmo) {
-            player_.ammo = std::min(player_.maxAmmo, player_.ammo + 1);
-        }
-        if (upgrades_.hasVampire) {
-            player_.hp = std::min(player_.maxHp, player_.hp + 1);
-        }
+        if (upgrades_.hasScavenger && player_.ammo < player_.maxAmmo)
+            player_.ammo = std::min(player_.maxAmmo, player_.ammo + upgrades_.hasScavenger);
+        if (upgrades_.hasVampire)
+            player_.hp = std::min(player_.maxHp, player_.hp + upgrades_.hasVampire);
         // Kill shaves 1s off parry cooldown
         if (!player_.canParry)
             player_.parryCdTimer = std::max(0.0f, player_.parryCdTimer - 1.0f);
@@ -3235,7 +3261,7 @@ void Game::playerParry() {
     Player& p = player_;
     p.canParry = false;
     p.isParrying = true;
-    p.parryTimer = PARRY_WINDOW * (upgrades_.hasReactiveParry ? 2.0f : 1.0f);
+    p.parryTimer = PARRY_WINDOW * (upgrades_.hasReactiveParry ? (1.0f + (float)upgrades_.hasReactiveParry) : 1.0f);
     p.parryDashTimer = PARRY_DASH_DURATION;
     p.parryCdTimer = std::max(1.0f, PARRY_COOLDOWN - upgrades_.parryCdReduction);
     rumble(0.16f, 38, 0.32f, 1.20f);  // Softer parry dash startup
@@ -3246,7 +3272,7 @@ void Game::playerParry() {
     else
         p.parryDir = Vec2::fromAngle(p.rotation);
 
-    if (sfxSwoosh_) { int ch = Mix_PlayChannel(-1, sfxSwoosh_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+    if (sfxSwoosh_) playSFX(sfxSwoosh_, config_.sfxVolume);
 }
 
 void Game::destroyBox(int tx, int ty) {
@@ -3289,7 +3315,7 @@ void Game::destroyBox(int tx, int ty) {
     screenFlashTimer_ = 0.08f;
     screenFlashR_ = 220; screenFlashG_ = 170; screenFlashB_ = 60;
     camera_.addShake(2.5f);
-    if (sfxBreak_) { int ch = Mix_PlayChannel(-1, sfxBreak_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+    if (sfxBreak_) playSFX(sfxBreak_, config_.sfxVolume);
 }
 
 void Game::spawnPlayerDeathEffect(Vec2 pos) {
@@ -3372,6 +3398,29 @@ void Game::spawnPlayerDeathEffect(Vec2 pos) {
             blood_.push_back(s);
         }
     }
+}
+
+void Game::stampTileBlood(Vec2 pos, float strength) {
+    int total = map_.width * map_.height;
+    if (total <= 0) return;
+    if ((int)tileBlood_.size() != total)
+        tileBlood_.assign((size_t)total, 0.0f);
+    int tx = TileMap::toTile(pos.x);
+    int ty = TileMap::toTile(pos.y);
+    if (tx >= 0 && tx < map_.width && ty >= 0 && ty < map_.height)
+        tileBlood_[ty * map_.width + tx] = std::min(1.0f, tileBlood_[ty * map_.width + tx] + strength);
+}
+
+void Game::updateBloodDecals(float dt) {
+    for (auto& bd : blood_) {
+        if (bd.type != DecalType::Blood) continue;
+        bd.age += dt;
+        if (bd.age > 12.0f)
+            bd.alpha = std::max(0.0f, bd.alpha - dt / 20.0f);
+    }
+    blood_.erase(std::remove_if(blood_.begin(), blood_.end(), [](const BloodDecal& bd) {
+        return bd.type == DecalType::Blood && bd.alpha <= 0.0f;
+    }), blood_.end());
 }
 
 void Game::updateBoxFragments(float dt) {

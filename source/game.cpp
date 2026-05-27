@@ -1,4 +1,4 @@
-﻿// ─── game.cpp ─── Core: init, main loop, config, assets, rumble ──────────────
+// ─── game.cpp ─── Core: init, main loop, config, assets, rumble ──────────────
 #include "game.h"
 #include "update_checker.h"
 #include "discord_rpc.h"
@@ -29,6 +29,71 @@
 #endif
 
 #include "game_internal.h"
+
+// ── Pitch-varied SFX ─────────────────────────────────────────────────────────
+// SDL_AudioCVT resamples audio as if it were recorded at a different rate,
+// producing a pitch shift. Each pitched copy lives until its channel finishes.
+static Mix_Chunk* s_pitchPool[64] = {};
+
+static void SDLCALL onPitchChannelDone(int ch) {
+    if (ch >= 0 && ch < 64 && s_pitchPool[ch]) {
+        SDL_free(s_pitchPool[ch]->abuf);
+        SDL_free(s_pitchPool[ch]);
+        s_pitchPool[ch] = nullptr;
+    }
+}
+
+void initPitchSFX() {
+    Mix_ChannelFinished(onPitchChannelDone);
+}
+
+void playSFX(Mix_Chunk* chunk, int volume) {
+    if (!chunk) return;
+    static const float kPitches[] = { 0.92f, 0.95f, 0.97f, 1.00f, 1.03f, 1.05f, 1.08f };
+    float pitch = kPitches[rand() % 7];
+
+    int freq; Uint16 fmt; int chans;
+    Mix_QuerySpec(&freq, &fmt, &chans);
+    int srcFreq = (int)((float)freq * pitch);
+
+    Mix_Chunk* toPlay = chunk;
+    if (srcFreq != freq) {
+        SDL_AudioCVT cvt;
+        if (SDL_BuildAudioCVT(&cvt, fmt, (Uint8)chans, srcFreq,
+                                    fmt, (Uint8)chans, freq) > 0) {
+            cvt.len = (int)chunk->alen;
+            Uint8* buf = (Uint8*)SDL_malloc(cvt.len * cvt.len_mult);
+            if (buf) {
+                SDL_memcpy(buf, chunk->abuf, chunk->alen);
+                cvt.buf = buf;
+                if (SDL_ConvertAudio(&cvt) == 0) {
+                    Mix_Chunk* p = (Mix_Chunk*)SDL_malloc(sizeof(Mix_Chunk));
+                    if (p) {
+                        p->allocated = 1;
+                        p->abuf = buf;
+                        p->alen = (Uint32)cvt.len_cvt;
+                        p->volume = chunk->volume;
+                        toPlay = p;
+                    } else { SDL_free(buf); }
+                } else { SDL_free(buf); }
+            }
+        }
+    }
+
+    int ch = Mix_PlayChannel(-1, toPlay, 0);
+    if (ch >= 0) {
+        Mix_Volume(ch, volume);
+        if (toPlay != chunk) {
+            if (ch < 64) {
+                if (s_pitchPool[ch]) { SDL_free(s_pitchPool[ch]->abuf); SDL_free(s_pitchPool[ch]); }
+                s_pitchPool[ch] = toPlay;
+            }
+        }
+    } else if (toPlay != chunk) {
+        SDL_free(toPlay->abuf);
+        SDL_free(toPlay);
+    }
+}
 
 bool Game::rebuildScreenTextures() {
     if (!renderer_) return false;
@@ -143,6 +208,7 @@ bool Game::init() {
         // Non-fatal: continue without audio
     }
     Mix_AllocateChannels(32);
+    initPitchSFX();
 
     loadConfig();
     applyResolutionSettings(false);
@@ -418,10 +484,7 @@ void Game::playExplosionFeedback(Vec2 pos, float maxDistance, float minStrength,
     if (sfxExplosion_) {
         int volume = minVolume + (int)((maxVolume - minVolume) * falloff);
         volume = std::clamp(volume, 0, MIX_MAX_VOLUME);
-        if (volume > 0) {
-            int ch = Mix_PlayChannel(-1, sfxExplosion_, 0);
-            if (ch >= 0) Mix_Volume(ch, volume);
-        }
+        if (volume > 0) playSFX(sfxExplosion_, volume);
     }
 }
 
@@ -541,7 +604,8 @@ void Game::loadAssets() {
     sfxShoot_    = a.sfx("shootfx.wav");
     sfxEnemyShoot_ = a.sfx("laserShoot.wav");
     sfxReload_   = a.sfx("reload.mp3");
-    sfxHurt_     = a.sfx("hurt.mp3");
+    sfxHurt_       = a.sfx("hurt.mp3");
+    sfxPlayerHurt_ = a.sfx("universfield-punch-02-123106.mp3");
     sfxDeath_    = a.sfx("death.mp3");
     sfxExplosion_= a.sfx("explosion.mp3");
     sfxParry_    = a.sfx("parry.mp3");
@@ -587,6 +651,7 @@ void Game::startGame() {
     waveEnemiesLeft_ = 0;
     waveActive_ = false;
     bossWaveActive_ = false;
+    lastBossWaveNum_ = -1;
     wavePauseTimer_ = WAVE_PAUSE_BASE;
     waveSpawnTimer_ = 0;
 
@@ -596,7 +661,7 @@ void Game::startGame() {
     bombs_.clear();
     explosions_.clear();
     debris_.clear();
-    blood_.clear();
+    blood_.clear(); tileBlood_.clear();
     boxFragments_.clear();
     crates_.clear();
     pickups_.clear();
@@ -772,8 +837,8 @@ void Game::run() {
 
                 enemies_.clear(); bullets_.clear(); enemyBullets_.clear();
                 bombs_.clear(); explosions_.clear(); debris_.clear();
-                blood_.clear(); boxFragments_.clear();
-                waveNumber_ = 0; waveEnemiesLeft_ = 0; waveActive_ = false;
+                blood_.clear(); tileBlood_.clear(); boxFragments_.clear();
+                waveNumber_ = 0; waveEnemiesLeft_ = 0; waveActive_ = false; lastBossWaveNum_ = -1;
 
                 player_ = Player{};
                 player_.maxHp = config_.playerMaxHp;
@@ -864,6 +929,7 @@ void Game::update() {
         updateBombs(dt);
         updateExplosions(dt);
         updateBoxFragments(dt);
+        updateBloodDecals(dt);
         updateSpawning(dt);
         updateCrates(dt);
         updatePickups(dt);
@@ -1054,6 +1120,7 @@ void Game::consoleExec(const char* cmd) {
             wavePauseTimer_ = 0;
             waveActive_ = false;
             bossWaveActive_ = false;
+            lastBossWaveNum_ = -1;
             char msg[64]; snprintf(msg, sizeof(msg), "Wave set to %d (starts next)", n);
             consoleOut(msg);
         } else { consoleOut("usage: wave <number>"); }

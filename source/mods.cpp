@@ -50,7 +50,7 @@ void Game::reloadModdedContent() {
         state_ == GameState::HostSetup || state_ == GameState::JoinMenu ||
         state_ == GameState::Lobby || state_ == GameState::ModMenu ||
         state_ == GameState::CharSelect || state_ == GameState::MapSelect ||
-        state_ == GameState::PackSelect || state_ == GameState::MapConfig) {
+        state_ == GameState::PackSelect) {
         playMenuMusic();
     }
 }

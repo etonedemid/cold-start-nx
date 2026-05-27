@@ -1,4 +1,4 @@
-﻿// ─── render.cpp ─── World/UI rendering
+// ─── render.cpp ─── World/UI rendering
 #include "game.h"
 #include "game_internal.h"
 
@@ -79,7 +79,8 @@ void Game::render() {
                     auto& eLegs = !enemyLegSprites_.empty() ? enemyLegSprites_ : legSprites_;
                     if (!eLegs.empty()) {
                         int li = e.legAnimFrame % (int)eLegs.size();
-                        renderSpriteEx(eLegs[li], e.pos, e.legRotation+(float)M_PI/2, e.renderScale * 0.5f, enemyBaseTint(e.type));
+                        float legSc = e.renderScale * (isShooterEnemyType(e.type) ? 0.33f : 0.5f);
+                        renderSpriteEx(eLegs[li], e.pos, e.legRotation+(float)M_PI/2, legSc, enemyBaseTint(e.type));
                     }
                 }
 
@@ -234,9 +235,7 @@ void Game::render() {
         break;
 
     case GameState::MapSelect:
-    case GameState::MapConfig:
         renderMapSelectMenu();
-        if (state_ == GameState::MapConfig) renderMapConfigMenu();
         break;
 
     case GameState::CharSelect:
@@ -676,10 +675,7 @@ void Game::render() {
     if (modSaveDialog_.isOpen())
         renderModSaveDialog();
 
-    if (ui_.buttonFired && sfxClick_) {
-        int ch = Mix_PlayChannel(-1, sfxClick_, 0);
-        if (ch >= 0) Mix_Volume(ch, config_.sfxVolume);
-    }
+    if (ui_.buttonFired && sfxClick_) playSFX(sfxClick_, config_.sfxVolume);
 
     ui_.endFrame();
     if (usePostFX) {
@@ -1242,6 +1238,19 @@ void Game::renderMap() {
                 SDL_SetRenderDrawColor(renderer_, c.r, c.g, c.b, c.a);
                 SDL_RenderFillRectF(renderer_, &dst);
             }
+
+            // Permanent blood tint accumulated from decals
+            if (!tileBlood_.empty()) {
+                int idx = y * map_.width + x;
+                if (idx < (int)tileBlood_.size()) {
+                    float tb = tileBlood_[idx];
+                    if (tb > 0.005f) {
+                        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+                        SDL_SetRenderDrawColor(renderer_, 110, 0, 0, (Uint8)(tb * 60.0f));
+                        SDL_RenderFillRectF(renderer_, &dst);
+                    }
+                }
+            }
         }
     }
 }
@@ -1304,7 +1313,7 @@ void Game::renderDecals() {
             }
         } else {
             SDL_SetTextureColorMod(bloodTex_, 255, 255, 255);
-            SDL_SetTextureAlphaMod(bloodTex_, 180);
+            SDL_SetTextureAlphaMod(bloodTex_, (Uint8)(bd.alpha * 180.0f));
             renderRotatedQuad(renderer_, bloodTex_, sp.x, sp.y, half, half, bd.rotation);
             SDL_SetTextureColorMod(bloodTex_, 255, 255, 255);
             SDL_SetTextureAlphaMod(bloodTex_, 255);
@@ -1781,9 +1790,8 @@ void Game::renderUI() {
         float alpha = annoAlpha(t, waveMaxT);
         int   y     = annoSlideY(t, waveMaxT, 4);
 
-        bool isBoss = (waveAnnounceNum_ == 25 || waveAnnounceNum_ == 50 || waveAnnounceNum_ == 100);
-        bool isMilestone = (waveAnnounceNum_ == MILESTONE_BRUTE_WAVE  ||
-                            waveAnnounceNum_ == MILESTONE_SNIPER_WAVE ||
+        bool isBoss = (waveAnnounceNum_ == 25 || waveAnnounceNum_ == 35 || waveAnnounceNum_ == 45);
+        bool isMilestone = (waveAnnounceNum_ == MILESTONE_SNIPER_WAVE ||
                             waveAnnounceNum_ == MILESTONE_GUNNER_WAVE);
 
         // Win98 window frame with coloured title
@@ -1820,8 +1828,7 @@ void Game::renderUI() {
             int bw = ui_.textWidth(waveTxt, 13);
             ui_.drawText(waveTxt, notifX + (notifW - bw) / 2, bodyY, 13, c);
         } else if (isMilestone) {
-            const char* eliteName = (waveAnnounceNum_ == MILESTONE_BRUTE_WAVE)  ? "BRUTE" :
-                                    (waveAnnounceNum_ == MILESTONE_SNIPER_WAVE) ? "SNIPER" : "GUNNER";
+            const char* eliteName = (waveAnnounceNum_ == MILESTONE_SNIPER_WAVE) ? "SNIPER" : "GUNNER";
             snprintf(waveTxt, sizeof(waveTxt), "Wave %d — ELITE: %s", waveAnnounceNum_, eliteName);
             SDL_Color c = {220, 140, 40, (Uint8)(alpha * 255)};
             int bw = ui_.textWidth(waveTxt, 13);
@@ -2017,7 +2024,7 @@ static constexpr float kBiosAutoT   = 8.50f;  // auto-advance if no key pressed
 void Game::renderBiosIntro() {
     if (!biosBootPlayed_) {
         biosBootPlayed_ = true;
-        if (sfxBoot_) { int ch = Mix_PlayChannel(-1, sfxBoot_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+        if (sfxBoot_) playSFX(sfxBoot_, config_.sfxVolume);
     }
     biosTimer_ += dt_;
 
@@ -3112,15 +3119,15 @@ void Game::startCustomMap(const std::string& path) {
     bombs_.clear();
     explosions_.clear();
     debris_.clear();
-    blood_.clear();
+    blood_.clear(); tileBlood_.clear();
     boxFragments_.clear();
     crates_.clear();
     pickups_.clear();
     upgrades_.reset();
     crateSpawnTimer_ = 0;
 
-    // Apply sandbox mode (no enemies, no crate spawning)
-    sandboxMode_ = (mapConfigMode_ == 1);
+    // Apply sandbox mode from the map's saved game mode
+    sandboxMode_ = (customMap_.gameMode == 1);
 
     // Reset wave state
     waveNumber_ = 0;
@@ -3135,6 +3142,21 @@ void Game::startCustomMap(const std::string& path) {
     player_.hp = config_.playerMaxHp;
     player_.bombCount = 1;
     applyCharacterStatsToPlayer(player_);
+
+    // Apply map player config restrictions
+    if (customMap_.playerConfig.enabled) {
+        const auto& pc = customMap_.playerConfig;
+        if (pc.maxHp > 0) { player_.maxHp = pc.maxHp; player_.hp = pc.maxHp; }
+        player_.bombCount  = pc.startBombs;
+        player_.canShoot   = pc.hasGun;
+        player_.canMelee   = pc.hasMelee;
+        player_.canBomb    = pc.hasBombs;
+        player_.canParry   = pc.hasParry;
+        if (pc.speedPct != 100)
+            upgrades_.speedBonus = (pc.speedPct / 100.0f - 1.0f) * player_.speed;
+        if (pc.damagePct != 100)
+            upgrades_.damageMulti = pc.damagePct / 100.0f;
+    }
 
     // Find start trigger for player spawn
     MapTrigger* startT = customMap_.findStartTrigger();
@@ -3207,7 +3229,7 @@ void Game::startCustomMapMultiplayer(const std::string& path) {
     bombs_.clear();
     explosions_.clear();
     debris_.clear();
-    blood_.clear();
+    blood_.clear(); tileBlood_.clear();
     boxFragments_.clear();
     crates_.clear();
     pickups_.clear();
