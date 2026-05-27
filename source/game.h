@@ -62,8 +62,6 @@ enum class GameState {
     TeamSelect,      // Team selection screen before team game starts
     MultiplayerSpectator, // Player exhausted all lives — free-roam ghost, no respawn
     WinLoss,             // Win/Loss result screen (shown before Scoreboard)
-    // ── Map game mode select (before playing a custom map) ──
-    MapConfig,       // Choose Arena / Sandbox before starting a custom map
     // ── Mod management ──
     ModMenu,         // Enable/disable mods
     // ── Local Co-op (splitscreen, up to 4 players) ──
@@ -102,6 +100,7 @@ struct BloodDecal {
     float rotation;
     float alpha = 1.0f;
     float scale = 1.0f;
+    float age   = 0.0f;
     DecalType type = DecalType::Blood;
 };
 
@@ -294,6 +293,7 @@ private:
     std::vector<Explosion> explosions_;
     std::vector<Entity> debris_;
     std::vector<BloodDecal> blood_;
+    std::vector<float>      tileBlood_;  // per-tile accumulated blood tint [0..1]
     std::vector<BoxFragment> boxFragments_;
     std::vector<PickupCrate> crates_;      // upgrade crates
     std::vector<Pickup>      pickups_;     // floating pickups
@@ -308,6 +308,7 @@ private:
     float wavePauseTimer_ = 0;     // countdown between waves
     bool  waveActive_     = false; // currently spawning a wave
     bool  bossWaveActive_ = false; // boss wave in progress — no new waves until boss dies
+    int   lastBossWaveNum_= -1;    // wave number of last boss when first beaten (-1 = not yet)
     GameConfig config_{};
 
     // ── Map Editor ──
@@ -385,8 +386,6 @@ private:
     std::vector<std::string> mapFiles_;
     int mapSelectIdx_ = 0;
 
-    // ── Map pre-game config (mode selection) ──
-    int  mapConfigMode_  = 0;   // 0=Arena, 1=Sandbox
     bool sandboxMode_    = false; // no enemies/crates when true
 
     // ── Map Pack system ──
@@ -474,7 +473,8 @@ private:
     Mix_Chunk* sfxEnemyShoot_   = nullptr;
     Mix_Chunk* sfxEnemyExplode_ = nullptr;
     Mix_Chunk* sfxReload_   = nullptr;
-    Mix_Chunk* sfxHurt_     = nullptr;
+    Mix_Chunk* sfxHurt_       = nullptr;
+    Mix_Chunk* sfxPlayerHurt_ = nullptr;
     Mix_Chunk* sfxDeath_    = nullptr;
     Mix_Chunk* sfxExplosion_= nullptr;
     Mix_Chunk* sfxParry_    = nullptr;
@@ -548,6 +548,8 @@ private:
     void playerParry();
     void destroyBox(int tx, int ty);
     void updateBoxFragments(float dt);
+    void updateBloodDecals(float dt);
+    void stampTileBlood(Vec2 pos, float strength);
     void playMenuMusic();
     void playActionMusic();
     // Start map-specific music (resolves trackPath relative to folder, falls back to bgMusic_)
@@ -604,7 +606,7 @@ private:
 
     // Additional menu renders
     void renderMapSelectMenu();
-    void renderMapConfigMenu();  // Arena / Sandbox mode select
+    void renderMapConfigMenu();  // stubbed — no longer shown
     void renderCharSelectMenu();
     void renderCustomWinScreen();
     void renderCharCreator();

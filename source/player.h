@@ -27,6 +27,11 @@ struct Player {
     float reloadTimer= 0;
     float fireCooldown= 0;
 
+    // Ability gates (set by map player config)
+    bool  canShoot  = true;
+    bool  canMelee  = true;
+    bool  canBomb   = true;
+
     // Parry
     bool  canParry     = true;
     bool  isParrying   = false;

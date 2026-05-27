@@ -12,7 +12,8 @@ void Game::updateCrates(float dt) {
     auto& net = NetworkManager::instance();
     bool isMultiplayer = net.isOnline();
     bool isSimDelegate = net.isConnectedToDedicated() && net.isLobbyHost(); // lobby-host on dedicated server
-    bool shouldSpawn = !sandboxMode_ && (!isMultiplayer || net.isHost() || isSimDelegate);
+    bool shouldSpawn = !sandboxMode_ && (!isMultiplayer || net.isHost() || isSimDelegate)
+        && !(playingCustomMap_ && customMap_.playerConfig.enabled && !customMap_.playerConfig.hasPickups);
 
     if (shouldSpawn) {
         crateSpawnTimer_ -= dt;
@@ -76,7 +77,7 @@ void Game::updateCrates(float dt) {
                     camera_.addShake(2.5f);
                     screenFlashTimer_ = 0.06f;
                     screenFlashR_ = 255; screenFlashG_ = 200; screenFlashB_ = 50;
-                    if (sfxBreak_) { int ch = Mix_PlayChannel(-1, sfxBreak_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                    if (sfxBreak_) playSFX(sfxBreak_, config_.sfxVolume);
                 }
                 break;
             }

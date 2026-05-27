@@ -1160,6 +1160,9 @@ void MapEditor::render(SDL_Renderer* renderer) {
     if (showUI_)
         renderPropertiesPanel(renderer);
 
+    // ── Map properties floating panel ──
+    renderMapPropsPanel(renderer);
+
     // ── Status bar (bottom-left) ──
     {
         SDL_SetRenderDrawColor(renderer, 12, 14, 24, 200);
@@ -1610,6 +1613,114 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Map Properties Panel (game mode + player config, editable from within editor)
+// ─────────────────────────────────────────────────────────────────────────────
+
+void MapEditor::renderMapPropsPanel(SDL_Renderer* renderer) {
+    if (!showMapProps_ || !ui_) return;
+
+    auto& pc = map_.playerConfig;
+
+    const int panelW  = 230;
+    const int pad     = 8;
+    const int btnSz   = 22;
+    const int rowH    = 30;
+    const int innerW  = panelW - pad * 2;  // 214
+
+    // Row count: gamemode + abilities-label + abilities-buttons + maxhp + startbombs + speed + damage + reset + close = 9
+    const int rows    = 9;
+    const int panelH  = UI::W98::TitleH + pad + rows * rowH + pad;
+    const int panelX  = screenW_ - uiPaletteW() - panelW - 8;
+    const int panelY  = uiToolbarH() + 8;
+
+    ui_->drawWin98Window(panelX, panelY, panelW, panelH, "Map Properties");
+
+    int y    = panelY + UI::W98::TitleH + pad;
+    int lx   = panelX + pad;
+    int arLx = lx + 72;
+    int arRx = arLx + btnSz + 44 + 2;
+    char buf[64];
+
+    // ── Game Mode ──
+    static const char* modeNames[] = { "Arena", "Sandbox" };
+    ui_->drawText("Mode", lx, y + 5, 11, UI::W98::Black);
+    if (ui_->win98Button(500, "<", arLx, y, btnSz, btnSz, false))
+        map_.gameMode = (map_.gameMode + 1) % 2;
+    ui_->drawWin98TextField(arLx + btnSz + 2, y, 44, btnSz,
+        modeNames[map_.gameMode & 1], false);
+    if (ui_->win98Button(501, ">", arRx, y, btnSz, btnSz, false))
+        map_.gameMode = (map_.gameMode + 1) % 2;
+    y += rowH;
+
+    // ── Abilities header ──
+    ui_->drawText("Abilities", lx, y + 5, 11, UI::W98::Black);
+    y += rowH;
+
+    // ── Abilities toggle buttons (5 equal columns across full interior) ──
+    {
+        const char* abNames[]  = { "Gun", "Mlee", "Bomb", "Parry", "Pick" };
+        bool*       abFields[] = { &pc.hasGun, &pc.hasMelee, &pc.hasBombs, &pc.hasParry, &pc.hasPickups };
+        const int abW = innerW / 5;  // 42px each, well within panel
+        for (int i = 0; i < 5; i++) {
+            if (ui_->win98Button(510 + i, abNames[i], lx + i * abW, y, abW - 2, btnSz, *abFields[i]))
+                *abFields[i] = !*abFields[i];
+        }
+    }
+    y += rowH;
+
+    // ── Max HP ──
+    ui_->drawText("Max HP", lx, y + 5, 11, UI::W98::Black);
+    if (ui_->win98Button(520, "<", arLx, y, btnSz, btnSz, false))
+        if (pc.maxHp > 0) pc.maxHp--;
+    snprintf(buf, sizeof(buf), pc.maxHp == 0 ? "Default" : "%d", (int)pc.maxHp);
+    ui_->drawWin98TextField(arLx + btnSz + 2, y, 44, btnSz, buf, false);
+    if (ui_->win98Button(521, ">", arRx, y, btnSz, btnSz, false))
+        if (pc.maxHp < 99) pc.maxHp++;
+    y += rowH;
+
+    // ── Start Bombs ──
+    ui_->drawText("Bombs", lx, y + 5, 11, UI::W98::Black);
+    if (ui_->win98Button(522, "<", arLx, y, btnSz, btnSz, false))
+        if (pc.startBombs > 0) pc.startBombs--;
+    snprintf(buf, sizeof(buf), "%d", (int)pc.startBombs);
+    ui_->drawWin98TextField(arLx + btnSz + 2, y, 44, btnSz, buf, false);
+    if (ui_->win98Button(523, ">", arRx, y, btnSz, btnSz, false))
+        if (pc.startBombs < 9) pc.startBombs++;
+    y += rowH;
+
+    // ── Speed % ──
+    ui_->drawText("Speed%", lx, y + 5, 11, UI::W98::Black);
+    if (ui_->win98Button(524, "<", arLx, y, btnSz, btnSz, false))
+        if (pc.speedPct > 50) pc.speedPct = (uint8_t)(pc.speedPct - 5);
+    snprintf(buf, sizeof(buf), "%d%%", (int)pc.speedPct);
+    ui_->drawWin98TextField(arLx + btnSz + 2, y, 44, btnSz, buf, false);
+    if (ui_->win98Button(525, ">", arRx, y, btnSz, btnSz, false))
+        if (pc.speedPct < 150) pc.speedPct = (uint8_t)(pc.speedPct + 5);
+    y += rowH;
+
+    // ── Damage % ──
+    ui_->drawText("Damage%", lx, y + 5, 11, UI::W98::Black);
+    if (ui_->win98Button(526, "<", arLx, y, btnSz, btnSz, false))
+        if (pc.damagePct > 50) pc.damagePct = (uint8_t)(pc.damagePct - 5);
+    snprintf(buf, sizeof(buf), "%d%%", (int)pc.damagePct);
+    ui_->drawWin98TextField(arLx + btnSz + 2, y, 44, btnSz, buf, false);
+    if (ui_->win98Button(527, ">", arRx, y, btnSz, btnSz, false))
+        if (pc.damagePct < 150) pc.damagePct = (uint8_t)(pc.damagePct + 5);
+    y += rowH;
+
+    // ── Reset to defaults ──
+    if (ui_->win98Button(528, "Reset Defaults", lx, y, panelW - pad * 2, btnSz, false)) {
+        pc = MapPlayerConfig{};
+        map_.gameMode = 0;
+    }
+    y += rowH;
+
+    // ── Close ──
+    if (ui_->win98Button(529, "Close", lx, y, panelW - pad * 2, btnSz, false))
+        showMapProps_ = false;
+}
+
 void MapEditor::renderToolbar(SDL_Renderer* renderer) {
     // Win98 toolbar panel
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
@@ -1663,8 +1774,12 @@ void MapEditor::renderToolbar(SDL_Renderer* renderer) {
     if (ui_->win98Button(114, "Grid", gridX, 4, 48, toolBtnH, showGrid_))
         showGrid_ = !showGrid_;
 
+    // ── Props panel toggle (ID 116) ──
+    if (ui_->win98Button(116, "Props", gridX + 54, 4, 60, toolBtnH, showMapProps_))
+        showMapProps_ = !showMapProps_;
+
     // ── Center: map info ──
-    int centerX = gridX + 54;  // 558
+    int centerX = gridX + 120;  // 624 (past Props button right edge)
     int rightEdge = screenW_ - PALETTE_W - 230;
     if (centerX < rightEdge) {
         char info[128];
@@ -2020,14 +2135,14 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
         switch (e.key.keysym.sym) {
             case SDLK_UP:
                 cfg.field--;
-                // In load mode, skip fields 2/3/4/5 which are for new map only
-                if (cfg.action == EditorConfig::Action::LoadMap && cfg.field > 1 && cfg.field < 6)
+                // In load mode, skip fields 2-10 which are for new map only
+                if (cfg.action == EditorConfig::Action::LoadMap && cfg.field > 1 && cfg.field < 11)
                     cfg.field = 1;
                 break;
             case SDLK_DOWN:
                 cfg.field++;
-                if (cfg.action == EditorConfig::Action::LoadMap && cfg.field > 1 && cfg.field < 6)
-                    cfg.field = 6;
+                if (cfg.action == EditorConfig::Action::LoadMap && cfg.field > 1 && cfg.field < 11)
+                    cfg.field = 11;
                 break;
             case SDLK_LEFT:
                 if (cfg.field == 0) cfg.action = EditorConfig::Action::NewMap;
@@ -2079,13 +2194,12 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
                         }
                     } else {
                         newMap(cfg.mapWidth, cfg.mapHeight);
-                        map_.name = cfg.mapName;
+                        map_.name    = cfg.mapName;
                         map_.creator = cfg.creator;
                         map_.gameMode = (uint8_t)cfg.gameMode;
                         std::string safeName = cfg.mapName;
                         for (char& c : safeName) {
-                            if (c == ' ') c = '_';
-                            if (c == '/' || c == '\\') c = '_';
+                            if (c == ' ' || c == '/' || c == '\\') c = '_';
                         }
                         savePath_ = "maps/" + safeName + ".csm";
                     }
@@ -2163,13 +2277,12 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
                         }
                     } else {
                         newMap(cfg.mapWidth, cfg.mapHeight);
-                        map_.name = cfg.mapName;
+                        map_.name    = cfg.mapName;
                         map_.creator = cfg.creator;
                         map_.gameMode = (uint8_t)cfg.gameMode;
                         std::string safeName = cfg.mapName;
                         for (char& c : safeName) {
-                            if (c == ' ') c = '_';
-                            if (c == '/' || c == '\\') c = '_';
+                            if (c == ' ' || c == '/' || c == '\\') c = '_';
                         }
                         savePath_ = "maps/" + safeName + ".csm";
                     }
@@ -2384,7 +2497,6 @@ void MapEditor::renderConfig(SDL_Renderer* renderer) {
         drawArrowField(2, "Height:", buf);
         drawTextFieldRow(3, "Map Name:");
         drawTextFieldRow(4, "Creator:");
-        drawArrowField(5, "Game Mode:", cfg.gameMode == 0 ? "Arena" : "Sandbox");
     } else {
         // ── Load mode: scrollable map list ───────────────────────────────────
         ui_->drawText("Select Map:", winX + padX, y, 13, UI::W98::Black);
@@ -2434,7 +2546,6 @@ void MapEditor::renderConfig(SDL_Renderer* renderer) {
     int btn2X = winX + winW / 2 + btnGap / 2;
 
     if (ui_->win98Button(400, "OK", btn1X, btnY, btnW, btnH, cfg.field == 6)) {
-        // OK clicked — same logic as before
         if (cfg.action == EditorConfig::Action::LoadMap && !cfg.availableMaps.empty()) {
             int idx = std::max(0, std::min(cfg.loadIdx, (int)cfg.availableMaps.size() - 1));
             loadMap(cfg.availableMaps[idx]);
