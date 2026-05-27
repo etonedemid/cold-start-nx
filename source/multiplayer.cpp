@@ -224,7 +224,6 @@ void Game::renderMultiplayerSplitscreen() {
             };
             const PlayerUpgrades& slotUpg = coopSlots_[i].upgrades;
             if (slotUpg.hasTripleShot) appendPerk("TRI");
-            if (slotUpg.hasPiercing) appendPerk("PIERCE");
             if (slotUpg.hasRicochet) appendPerk("RICO");
             if (slotUpg.hasMagnet) appendPerk("MAG");
             if (slotUpg.hasExplosiveTips) appendPerk("EXP");
@@ -718,7 +717,7 @@ void Game::setupNetworkCallbacks() {
         if (playerId == net.localPlayerId() && !player_.dead) {
             player_.dead = true;
             player_.hp = 0;
-            if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
+            if (sfxDeath_) playSFX(sfxDeath_, config_.sfxVolume / 5);
             camera_.addShake(4.0f);
             // Transition to death / spectator based on lives
             if (currentRules_.lives > 0 && localLives_ > 0) {
@@ -788,7 +787,7 @@ void Game::setupNetworkCallbacks() {
             coopSlots_[slot].deaths++;
             coopSlots_[slot].camera.addShake(4.0f);
             rumbleForSlot(slot, 0.92f, 340, 1.50f, 0.82f);
-            if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
+            if (sfxDeath_) playSFX(sfxDeath_, config_.sfxVolume / 5);
         }
     };
 
@@ -941,12 +940,12 @@ void Game::setupNetworkCallbacks() {
             if (hp <= 0 && !player_.dead) {
                 // Host confirmed we're dead
                 player_.dead = true;
-                if (sfxHurt_)  { int ch = Mix_PlayChannel(-1, sfxHurt_,  0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
-                if (sfxDeath_) { int ch = Mix_PlayChannel(-1, sfxDeath_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 5); }
+                if (sfxHurt_)  playSFX(sfxHurt_, config_.sfxVolume / 4);
+                if (sfxDeath_) playSFX(sfxDeath_, config_.sfxVolume / 5);
                 camera_.addShake(4.0f);
             } else if (hp < player_.maxHp) {
                 camera_.addShake(1.8f);
-                if (sfxHurt_) { int ch = Mix_PlayChannel(-1, sfxHurt_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume / 4); }
+                if (sfxHurt_) playSFX(sfxHurt_, config_.sfxVolume / 4);
             }
         }
         (void)killerId;
@@ -980,10 +979,7 @@ void Game::setupNetworkCallbacks() {
         b.sprite = enemyBulletSprite_;
         b.damage = 1;
         enemyBullets_.push_back(b);
-        if (sfxEnemyShoot_) {
-            int ch = Mix_PlayChannel(-1, sfxEnemyShoot_, 0);
-            if (ch >= 0) Mix_Volume(ch, config_.sfxVolume * 2 / 5);
-        }
+        if (sfxEnemyShoot_) playSFX(sfxEnemyShoot_, config_.sfxVolume * 2 / 5);
     };
 
     net.onEnemyStatesReceived = [this](const void* rawData, int count) {
@@ -1887,7 +1883,7 @@ void Game::updateDiscordPresence() {
     if (state_ == GameState::MainMenu     || state_ == GameState::PlayModeMenu ||
         state_ == GameState::ConfigMenu   || state_ == GameState::CharSelect   ||
         state_ == GameState::CharCreator  || state_ == GameState::MapSelect    ||
-        state_ == GameState::PackSelect   || state_ == GameState::MapConfig) {
+        state_ == GameState::PackSelect) {
         act.details = "Main Menu";
         act.state   = "Browsing menus";
     }

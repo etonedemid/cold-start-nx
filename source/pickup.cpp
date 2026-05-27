@@ -17,7 +17,6 @@ static const UpgradeInfo s_upgradeTable[] = {
     { "Bomb",            "+3 bombs",                             {255, 180, 50,  255}, false,  UpgradeQuality::Common   },  // BombPickup
     { "Magnet",          "Bullets home slightly",                {200, 100, 255, 255}, false,  UpgradeQuality::Rare     },  // Magnet
     { "Ricochet",        "Bullets bounce off walls",             {150, 255, 150, 255}, false,  UpgradeQuality::Rare     },  // Ricochet
-    { "Piercing",        "Bullets pierce, axe sweep widens",     {255, 255, 100, 255}, false,  UpgradeQuality::Rare     },  // Piercing
     { "Triple Shot",     "Fire 3-way spread",                    {255, 150, 200, 255}, false,  UpgradeQuality::Rare     },  // TripleShot
     { "Overclock",       "+20% fire rate, faster axe reset",    {100, 255, 255, 255}, false,  UpgradeQuality::Uncommon },  // Overclock
     { "Heavy Rounds",    "+65% damage, heavier axe hits",        {210, 180, 140, 255}, false,  UpgradeQuality::Rare     },  // HeavyRounds
@@ -67,10 +66,9 @@ void PlayerUpgrades::apply(UpgradeType type) {
     case UpgradeType::ReloadUp:     reloadMulti *= 0.7f; meleeCooldownMulti *= 0.95f; break;
     case UpgradeType::Blindness:    hasBlindness = true; blindnessTimer = 5.0f; break;
     case UpgradeType::BombPickup:   break; // handled in game logic
-    case UpgradeType::Magnet:       hasMagnet = true; break;
-    case UpgradeType::Ricochet:     hasRicochet = true; meleeArcBonus += 0.05f; break;
-    case UpgradeType::Piercing:     hasPiercing = true; meleeArcBonus += 0.10f; meleeRangeBonus += 8.0f; break;
-    case UpgradeType::TripleShot:   hasTripleShot = true; break;
+    case UpgradeType::Magnet:       hasMagnet++; break;
+    case UpgradeType::Ricochet:     hasRicochet++; meleeArcBonus += 0.05f; break;
+    case UpgradeType::TripleShot:   hasTripleShot++; break;
     case UpgradeType::Overclock:    reloadMulti *= 0.8f; meleeCooldownMulti *= 0.88f; break;
     case UpgradeType::HeavyRounds:  damageMulti += 0.65f; meleeDamageBonus += 1; break;
     case UpgradeType::BombCore:
@@ -78,45 +76,23 @@ void PlayerUpgrades::apply(UpgradeType type) {
         bombDashSpeedMulti *= 1.2f;
         break;
     case UpgradeType::Juggernaut:   meleeRangeBonus += 12.0f; meleeArcBonus += 0.12f; break; // other part handled in game logic
-    case UpgradeType::StunRounds:   hasStunRounds = true; break;
-    case UpgradeType::Scavenger:    hasScavenger = true; break;
-    case UpgradeType::ExplosiveTips: hasExplosiveTips = true; break;
-    case UpgradeType::ChainLightning: hasChainLightning = true; break;
+    case UpgradeType::StunRounds:   hasStunRounds++; break;
+    case UpgradeType::Scavenger:    hasScavenger++; break;
+    case UpgradeType::ExplosiveTips: hasExplosiveTips++; break;
+    case UpgradeType::ChainLightning: hasChainLightning++; break;
     case UpgradeType::RailSlugs:    bulletSpeedMulti *= 1.30f; bulletSizeBonus += 2.5f; damageMulti += 0.35f; break;
     case UpgradeType::SharpenedEdge: meleeRangeBonus += 24.0f; meleeArcBonus += 0.16f; meleeDamageBonus += 1; break;
-    case UpgradeType::Bloodlust:    hasBloodlust = true; meleeCooldownMulti *= 0.94f; break;
-    case UpgradeType::ShockEdge:    hasShockEdge = true; break;
+    case UpgradeType::Bloodlust:    hasBloodlust++; meleeCooldownMulti *= 0.94f; break;
+    case UpgradeType::ShockEdge:    hasShockEdge++; break;
     case UpgradeType::SlowDown:     speedBonus -= 78.0f; break;
     case UpgradeType::GlassCannon:  damageMulti += 0.5f; meleeDamageBonus += 1; break;
-    case UpgradeType::AutoReloader: hasAutoReload = true; break;
-    case UpgradeType::Vampire:      hasVampire = true; break;
-    case UpgradeType::LastStand:    hasLastStand = true; break;
+    case UpgradeType::AutoReloader: hasAutoReload++; break;
+    case UpgradeType::Vampire:      hasVampire++; break;
+    case UpgradeType::LastStand:    hasLastStand++; break;
     case UpgradeType::QuickParry:   parryCdReduction = std::min(parryCdReduction + 1.0f, 4.0f); break; // cap at 4s (1s min CD)
-    case UpgradeType::ParrySurge:   hasParrySurge = true; break;
-    case UpgradeType::ReactiveParry: hasReactiveParry = true; break;
+    case UpgradeType::ParrySurge:   hasParrySurge++; break;
+    case UpgradeType::ReactiveParry: hasReactiveParry++; break;
     default: break;
-    }
-}
-
-// Returns true when a boolean upgrade is already fully applied so a duplicate is a no-op
-static bool isBoolUpgradeOwned(UpgradeType t, const PlayerUpgrades& upg) {
-    switch (t) {
-    case UpgradeType::Magnet:        return upg.hasMagnet;
-    case UpgradeType::Ricochet:      return upg.hasRicochet;
-    case UpgradeType::Piercing:      return upg.hasPiercing;
-    case UpgradeType::TripleShot:    return upg.hasTripleShot;
-    case UpgradeType::StunRounds:    return upg.hasStunRounds;
-    case UpgradeType::Scavenger:     return upg.hasScavenger;
-    case UpgradeType::ExplosiveTips: return upg.hasExplosiveTips;
-    case UpgradeType::ChainLightning:return upg.hasChainLightning;
-    case UpgradeType::Bloodlust:     return upg.hasBloodlust;
-    case UpgradeType::ShockEdge:     return upg.hasShockEdge;
-    case UpgradeType::AutoReloader:  return upg.hasAutoReload;
-    case UpgradeType::Vampire:       return upg.hasVampire;
-    case UpgradeType::LastStand:     return upg.hasLastStand;
-    case UpgradeType::ParrySurge:    return upg.hasParrySurge;
-    case UpgradeType::ReactiveParry: return upg.hasReactiveParry;
-    default: return false;
     }
 }
 
@@ -148,16 +124,7 @@ UpgradeType rollRandomUpgrade() {
 }
 
 UpgradeType rollRandomUpgrade(const PlayerUpgrades& upg, int wave) {
-    // After wave 25: allow all duplicates — no filtering
-    if (wave > 25) return rollRandomUpgrade();
-
-    // Early game (≤ wave 25): exclude boolean upgrades that are already owned
-    // so every early drop feels unique and impactful.
-    for (int attempt = 0; attempt < 20; attempt++) {
-        UpgradeType t = rollRandomUpgrade();
-        if (!isBoolUpgradeOwned(t, upg)) return t;
-    }
-    // Fallback: return anything (stat upgrades always stack)
+    (void)upg; (void)wave;
     return rollRandomUpgrade();
 }
 

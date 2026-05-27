@@ -17,6 +17,19 @@ bool CustomMap::saveToFile(const std::string& path) const {
     strncpy(hdr.name, name.c_str(), sizeof(hdr.name) - 1);
     strncpy(hdr.creator, creator.c_str(), sizeof(hdr.creator) - 1);
     hdr.reserved[0] = gameMode;  // store game mode in first reserved byte
+    // Pack playerConfig into reserved[1..5]
+    uint8_t pcFlags = 0;
+    if (playerConfig.enabled)    pcFlags |= 0x80;
+    if (playerConfig.hasGun)     pcFlags |= 0x01;
+    if (playerConfig.hasMelee)   pcFlags |= 0x02;
+    if (playerConfig.hasBombs)   pcFlags |= 0x04;
+    if (playerConfig.hasParry)   pcFlags |= 0x08;
+    if (playerConfig.hasPickups) pcFlags |= 0x10;
+    hdr.reserved[1] = pcFlags;
+    hdr.reserved[2] = playerConfig.maxHp;
+    hdr.reserved[3] = playerConfig.startBombs;
+    hdr.reserved[4] = playerConfig.speedPct;
+    hdr.reserved[5] = playerConfig.damagePct;
     // thumbnail is set externally before saving
     memcpy(hdr.thumbnail, header.thumbnail, sizeof(hdr.thumbnail));
 
@@ -72,6 +85,21 @@ bool CustomMap::loadFromFile(const std::string& path) {
     name    = std::string(hdr.name);
     creator = std::string(hdr.creator);
     gameMode = hdr.reserved[0];  // 0=Arena, 1=Sandbox
+    // Unpack playerConfig from reserved[1..5]
+    {
+        uint8_t pcFlags = hdr.reserved[1];
+        playerConfig.enabled    = (pcFlags & 0x80) != 0;
+        playerConfig.hasGun     = (pcFlags & 0x01) != 0;
+        playerConfig.hasMelee   = (pcFlags & 0x02) != 0;
+        playerConfig.hasBombs   = (pcFlags & 0x04) != 0;
+        playerConfig.hasParry   = (pcFlags & 0x08) != 0;
+        playerConfig.hasPickups = (pcFlags & 0x10) != 0;
+        playerConfig.maxHp      = hdr.reserved[2];
+        playerConfig.startBombs = hdr.reserved[3];
+        playerConfig.speedPct   = hdr.reserved[4] > 0 ? hdr.reserved[4] : 100;
+        playerConfig.damagePct  = hdr.reserved[5] > 0 ? hdr.reserved[5] : 100;
+        if (!playerConfig.enabled) playerConfig = MapPlayerConfig{};
+    }
 
     // Validate dimensions to prevent excessive allocation from crafted files
     if (width == 0 || height == 0 || width > 4096 || height > 4096) {

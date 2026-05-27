@@ -308,32 +308,7 @@ void Game::renderMapSelectMenu() {
 }
 
 void Game::renderMapConfigMenu() {
-    ui_.drawDesktop();
-
-    const int padX = 14;
-    const int btnH = 26;
-    const int btnGap = 6;
-    const int winW = 360;
-    const int winH = UI::W98::TitleH + 14 + 3 * (btnH + btnGap) + 10;
-    const int winX = (SCREEN_W - winW) / 2;
-    const int winY = (SCREEN_H - winH) / 2;
-    ui_.drawWin98Window(winX, winY, winW, winH, "Select Mode");
-
-    struct ModeItem { const char* label; };
-    ModeItem items[] = { {"Arena"}, {"Sandbox"}, {"Back"} };
-
-    int bx = winX + padX;
-    int by = winY + UI::W98::TitleH + 14;
-    for (int i = 0; i < 3; i++) {
-        if (ui_.win98Button(i, items[i].label, bx, by, winW - padX * 2, btnH, menuSelection_ == i)) {
-            menuSelection_ = i;
-            confirmInput_ = true;
-        }
-        if (ui_.hoveredItem == i && !usingGamepad_) menuSelection_ = i;
-        by += btnH + btnGap;
-    }
-
-    ui_.drawWin98StatusBar(SCREEN_H - 26, "Choose a game mode");
+    // No longer shown — game mode is defined in the editor and applied automatically.
 }
 
 void Game::renderCharSelectMenu() {
@@ -1144,7 +1119,6 @@ void Game::testCharacter() {
 
     // Start sandbox game for testing
     sandboxMode_ = true;
-    mapConfigMode_ = 1;
     state_ = GameState::Playing;
     testPlayFromEditor_ = true;  // return to creator when done
     gameTime_ = 0;
@@ -1156,7 +1130,7 @@ void Game::testCharacter() {
     waveSpawnTimer_ = 0;
     enemies_.clear(); bullets_.clear(); enemyBullets_.clear();
     bombs_.clear(); explosions_.clear(); debris_.clear();
-    blood_.clear(); boxFragments_.clear();
+    blood_.clear(); tileBlood_.clear(); boxFragments_.clear();
     crates_.clear(); pickups_.clear();
     upgrades_.reset();
     crateSpawnTimer_ = 0;

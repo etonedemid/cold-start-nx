@@ -3,7 +3,7 @@
 #include "vec2.h"
 
 // ── Version ──
-constexpr const char* GAME_VERSION = "1.7.0";
+constexpr const char* GAME_VERSION = "1.8.0";
 
 // Screen (window resolution - runtime configurable)
 inline int SCREEN_W = 1280;
@@ -102,8 +102,8 @@ constexpr float GUNNER_SHOOT_CD     = 1.25f;
 constexpr float GUNNER_BURST_GAP    = 0.11f;
 constexpr float GUNNER_RENDER_SCALE = 4.6f;
 
-// Boss enemies — spawned at waves 25, 50, 100
-constexpr int   BOSS_WAVES[]         = {25, 50, 100};
+// Boss enemies — spawned at waves 25, 35, 45
+constexpr int   BOSS_WAVES[]         = {25, 35, 45};
 constexpr float BOSS_BRUTE_HP        = 750.0f;
 constexpr float BOSS_BRUTE_SPEED     = 420.0f;
 constexpr float BOSS_BRUTE_SIZE      = 80.0f;
@@ -146,7 +146,6 @@ constexpr float BOSS_BRUTE_CHARGE_DUR   = 0.45f;  // seconds the charge lasts
 constexpr float BOSS_BRUTE_CHARGE_CD    = 5.5f;   // base cooldown (halved on enrage)
 
 // Milestone waves — guaranteed first appearance of each elite type
-constexpr int MILESTONE_BRUTE_WAVE  = 40;
 constexpr int MILESTONE_SNIPER_WAVE = 60;
 constexpr int MILESTONE_GUNNER_WAVE = 80;
 

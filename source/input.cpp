@@ -1,4 +1,4 @@
-﻿// ─── input.cpp ─── Input handling and unified onscreen keyboard
+// ─── input.cpp ─── Input handling and unified onscreen keyboard
 #include "game.h"
 #include "game_internal.h"
 #include <ctime>
@@ -591,7 +591,7 @@ void Game::handleInput() {
                                         NetworkManager::instance().setLocalSubPlayers((uint8_t)localSubPlayers);
                                         lobbySubPlayersSent_ = localSubPlayers;
                                     }
-                                    if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                                    if (sfxPress_) playSFX(sfxPress_, config_.sfxVolume);
                                     break;
                                 }
                             }
@@ -655,7 +655,7 @@ void Game::handleInput() {
                     if (existingSlot >= 0 || coopSlots_[0].joined) {
 #endif
                         confirmInput_ = true;
-                        if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                        if (sfxPress_) playSFX(sfxPress_, config_.sfxVolume);
                     }
                     continue; // consumed by lobby
                 }
@@ -664,7 +664,7 @@ void Game::handleInput() {
             usingGamepad_ = true;
             switch (btn) {
                 case SDL_CONTROLLER_BUTTON_START:    pauseInput_ = true; break;
-                case SDL_CONTROLLER_BUTTON_A:        confirmInput_ = true; if (sfxPress_) { int ch = Mix_PlayChannel(-1, sfxPress_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); } break;
+                case SDL_CONTROLLER_BUTTON_A:        confirmInput_ = true; if (sfxPress_) playSFX(sfxPress_, config_.sfxVolume); break;
                 case SDL_CONTROLLER_BUTTON_B:        backInput_ = true; break;
                 case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: parryInput_ = true; break;
                 case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: weaponSwitchDelta_ += 1; break;
@@ -674,13 +674,13 @@ void Game::handleInput() {
                     menuNavHeldBtn_ = SDL_CONTROLLER_BUTTON_DPAD_UP;
                     menuNavRepeatAt_ = SDL_GetTicks() + 320;
                     menuSelection_--;
-                    if (sfxBeep_) { int ch = Mix_PlayChannel(-1, sfxBeep_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                    if (sfxBeep_) playSFX(sfxBeep_, config_.sfxVolume);
                     break;
                 case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
                     menuNavHeldBtn_ = SDL_CONTROLLER_BUTTON_DPAD_DOWN;
                     menuNavRepeatAt_ = SDL_GetTicks() + 320;
                     menuSelection_++;
-                    if (sfxBeep_) { int ch = Mix_PlayChannel(-1, sfxBeep_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                    if (sfxBeep_) playSFX(sfxBeep_, config_.sfxVolume);
                     break;
                 case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
                     menuNavHeldBtn_ = SDL_CONTROLLER_BUTTON_DPAD_LEFT;
@@ -776,11 +776,11 @@ void Game::handleInput() {
             switch (menuNavHeldBtn_) {
             case SDL_CONTROLLER_BUTTON_DPAD_UP:
                 menuSelection_--;
-                if (sfxBeep_) { int ch = Mix_PlayChannel(-1, sfxBeep_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                if (sfxBeep_) playSFX(sfxBeep_, config_.sfxVolume);
                 break;
             case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
                 menuSelection_++;
-                if (sfxBeep_) { int ch = Mix_PlayChannel(-1, sfxBeep_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                if (sfxBeep_) playSFX(sfxBeep_, config_.sfxVolume);
                 break;
             case SDL_CONTROLLER_BUTTON_DPAD_LEFT:  leftInput_  = true; break;
             case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: rightInput_ = true; break;
@@ -886,7 +886,7 @@ void Game::handleInput() {
                     menuNavRepeatAt_ = now + (isNew ? 300U : 110U);
                     if (snY != 0) {
                         menuSelection_ += snY;
-                        if (sfxBeep_) { int ch = Mix_PlayChannel(-1, sfxBeep_, 0); if (ch >= 0) Mix_Volume(ch, config_.sfxVolume); }
+                        if (sfxBeep_) playSFX(sfxBeep_, config_.sfxVolume);
                     } else {
                         leftInput_  = snX < 0;
                         rightInput_ = snX > 0;
@@ -1326,26 +1326,6 @@ void Game::handleInput() {
     else if (state_ == GameState::EditorConfig) {
         // Config screen handles its own input; transitions checked in run loop
     }
-    else if (state_ == GameState::MapConfig) {
-        if (menuSelection_ < 0) menuSelection_ = 0;
-        if (menuSelection_ > 2) menuSelection_ = 2;  // 0=Arena 1=Sandbox 2=BACK
-        if (leftInput_ || rightInput_) {
-            // Toggle mode with left/right too
-            if (menuSelection_ < 2) mapConfigMode_ = 1 - mapConfigMode_;
-        }
-        if (confirmInput_) {
-            if (menuSelection_ == 0) {
-                mapConfigMode_ = 0; // Arena
-                startCustomMap(mapFiles_[mapSelectIdx_]);
-            } else if (menuSelection_ == 1) {
-                mapConfigMode_ = 1; // Sandbox
-                startCustomMap(mapFiles_[mapSelectIdx_]);
-            } else {
-                state_ = GameState::MapSelect; menuSelection_ = mapSelectIdx_;
-            }
-        }
-        if (backInput_) { state_ = GameState::MapSelect; menuSelection_ = mapSelectIdx_; }
-    }
     else if (state_ == GameState::Editor) {
         // Editor handles its own input via SDL events above
         if (pauseInput_ || backInput_) {
@@ -1368,19 +1348,7 @@ void Game::handleInput() {
         }
         if (confirmInput_) {
             if (mapSelectIdx_ <= maxIdx && !mapFiles_.empty()) {
-                // Peek at the map header to pre-select its saved game mode
-                mapConfigMode_ = 0;
-                {
-                    FILE* fh = fopen(mapFiles_[mapSelectIdx_].c_str(), "rb");
-                    if (fh) {
-                        CSM_Header hdr;
-                        if (fread(&hdr, sizeof(CSM_Header), 1, fh) == 1 && hdr.magic == CSM_MAGIC)
-                            mapConfigMode_ = hdr.reserved[0];
-                        fclose(fh);
-                    }
-                }
-                state_ = GameState::MapConfig;
-                menuSelection_ = 0;
+                startCustomMap(mapFiles_[mapSelectIdx_]);
             } else {
                 if (prevMenuState_ == GameState::PlayModeMenu) {
                     state_ = GameState::PlayModeMenu; playModeSelection_ = 1; menuSelection_ = 1;

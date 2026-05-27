@@ -82,7 +82,7 @@ struct EditorConfig {
     bool   textEditing = false;
     std::string textBuf;
     int    gpCharIdx = 0;        // gamepad char palette index
-    int    maxField  = 7;        // 0=action, 1=width, 2=height, 3=name, 4=creator, 5=gamemode, 6=OK, 7=Cancel
+    int    maxField  = 7;        // 0=action..5=gamemode, 6=OK, 7=Cancel
 };
 
 class MapEditor {
@@ -195,6 +195,11 @@ private:
     // Test play
     bool wantsTestPlay_ = false;
 
+    // Map Properties panel (player config, game mode — editable from within the editor)
+    bool showMapProps_      = false;
+    int  mapPropsField_     = 0;   // 0..8: gamemode, abilities×5, maxhp, startbombs, speed, damage
+    int  mapPropsAbilSlot_  = 0;   // which ability sub-button is selected (0-4)
+
     // Undo / Redo
     static constexpr int UNDO_MAX = 64;
     std::deque<UndoState> undoStack_;
@@ -279,6 +284,9 @@ private:
     void updateConfigGamepad(float dt);
     void renderConfig(SDL_Renderer* renderer);
     void scanAvailableMaps();
+
+    // Map properties panel (player config inside editor)
+    void renderMapPropsPanel(SDL_Renderer* renderer);
 
     // Gamepad / touch helpers
     void handleGamepadInput(SDL_Event& e);
