@@ -11,10 +11,14 @@ void Game::render() {
         state_ == GameState::MultiplayerGame || state_ == GameState::MultiplayerPaused || state_ == GameState::MultiplayerDead || state_ == GameState::MultiplayerSpectator ||
         state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused || state_ == GameState::LocalCoopDead;
 
+#ifdef __ANDROID__
+    bool usePostFX = false;  // PostFX sceneTarget_ compositing breaks rendering on Android
+#else
     bool usePostFX = sceneTarget_ && !isSplitscreenActive();
+#endif
 
     if (usePostFX) SDL_SetRenderTarget(renderer_, sceneTarget_);
-    SDL_SetRenderDrawColor(renderer_, 20, 20, 25, 255);
+    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
     SDL_RenderClear(renderer_);
 
 #ifndef __SWITCH__
@@ -199,6 +203,7 @@ void Game::render() {
         }
 
         // Box fragment particles
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
         for (auto& f : boxFragments_) {
             if (!f.alive) continue;
             Vec2 sp = camera_.worldToScreen(f.pos);
@@ -210,6 +215,7 @@ void Game::render() {
             SDL_Rect r = {(int)(sp.x - sz/2), (int)(sp.y - sz/2), sz, sz};
             SDL_RenderFillRect(renderer_, &r);
         }
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
 
         // Crates & Pickups
         renderCrates();
@@ -351,6 +357,7 @@ void Game::render() {
                 SDL_SetTextureColorMod(b.sprite, 255, 255, 255);
             }
         }
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
         for (auto& f : boxFragments_) {
             if (!f.alive) continue;
             Vec2 sp = camera_.worldToScreen(f.pos);
@@ -361,6 +368,7 @@ void Game::render() {
             SDL_Rect rr = {(int)(sp.x - sz/2), (int)(sp.y - sz/2), sz, sz};
             SDL_RenderFillRect(renderer_, &rr);
         }
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
         renderCrates();
         renderPickups();
         renderRemotePlayers();
@@ -726,6 +734,10 @@ void Game::render() {
         ui_.drawText(inputLine, padX, conH - lineH - 2, 11, {255, 255, 255, 255});
     }
 
+#ifdef __ANDROID__
+    touchControls_.render(renderer_, config_.uiScale);
+#endif
+
     SDL_RenderPresent(renderer_);
 }
 
@@ -740,7 +752,7 @@ bool Game::isSplitscreenActive() const {
 }
 
 void Game::renderPostFXComposite(bool gameplayView) {
-    SDL_SetRenderDrawColor(renderer_, 8, 8, 12, 255);
+    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
     SDL_RenderClear(renderer_);
 
     if (!sceneTarget_) return;
@@ -1284,6 +1296,9 @@ void Game::renderWallOverlay() {
                            TILE_SIZE, TILE_SIZE};
 
             if (tex) {
+                SDL_SetTextureColorMod(tex, 255, 255, 255);
+                SDL_SetTextureAlphaMod(tex, 255);
+                SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_NONE);
                 SDL_RenderCopy(renderer_, tex, nullptr, &dst);
             } else {
                 SDL_SetRenderDrawColor(renderer_, 100, 90, 80, 255);
@@ -1358,6 +1373,7 @@ void Game::renderRoofOverlay() {
 }
 
 void Game::renderShadingPass() {
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
     // ── Wall shadow / ambient occlusion pass ──
     // For each visible tile adjacent to a wall, darken it slightly
     int startX = (int)(camera_.pos.x / TILE_SIZE) - 1;
@@ -1989,6 +2005,7 @@ void Game::renderUI() {
         for (auto& r : arms) SDL_RenderFillRect(renderer_, &r);
     }
 #endif
+
 }
 
 // ─── BIOS Intro ─────────────────────────────────────────────────────────────
@@ -2679,7 +2696,7 @@ void Game::renderConfigMenu() {
     const int numSliders = 5;
 #endif
     const int numToggles = 7;
-    const int numRows = numSliders + 1 + numToggles + 1 + 1 + 1; // +sep+user+back
+    const int numRows = numSliders + 1 + numToggles + 1 + 1 + 1 + 1; // +sep+user+uiscale+back
     const int winH = padTY + numRows * (rowH + rowGap) + 16;
     const int winX = (SCREEN_W - winW) / 2;
     const int winY = std::max(4, (SCREEN_H - winH) / 2);
@@ -2793,6 +2810,38 @@ void Game::renderConfigMenu() {
             confirmInput_=true;
         }
         if (ui_.hoveredItem==row.idx && !usingGamepad_) { configSelection_=row.idx; menuSelection_=row.idx; }
+        y += rowH + rowGap;
+    }
+
+    // ── Screen Shake slider ───────────────────────────────────────────────────
+    {
+        bool sel = (configSelection_ == CONFIG_SHAKE_INDEX);
+        ui_.drawText("Screen Shake:", lx, y+(rowH-12)/2, 12, UI::W98::Black);
+        if (ui_.win98Button(CONFIG_SHAKE_INDEX*10+100, "<", fx, y, arrowW, rowH, false))
+            config_.shakeScale = std::max(0.0f, config_.shakeScale - 0.1f);
+        char shakeBuf[16]; snprintf(shakeBuf, sizeof(shakeBuf), "%.0f%%", config_.shakeScale * 100.f);
+        ui_.drawWin98TextField(fx + arrowW + 2, y, fwA, rowH, shakeBuf, sel);
+        if (ui_.win98Button(CONFIG_SHAKE_INDEX*10+101, ">", fx + arrowW + 2 + fwA + 2, y, arrowW, rowH, false))
+            config_.shakeScale = std::min(1.0f, config_.shakeScale + 0.1f);
+        if (ui_.hoveredItem == CONFIG_SHAKE_INDEX*10+100 || ui_.hoveredItem == CONFIG_SHAKE_INDEX*10+101)
+            { configSelection_=CONFIG_SHAKE_INDEX; menuSelection_=CONFIG_SHAKE_INDEX; }
+        y += rowH + rowGap;
+    }
+
+    // ── UI Scale slider ───────────────────────────────────────────────────────
+    {
+        bool sel = (configSelection_ == CONFIG_UI_SCALE_INDEX);
+        ui_.drawText("UI Scale:", lx, y+(rowH-12)/2, 12, UI::W98::Black);
+        if (ui_.win98Button(CONFIG_UI_SCALE_INDEX*10+100, "<", fx, y, arrowW, rowH, false)) {
+            config_.uiScale = std::max(0.5f, config_.uiScale - 0.05f);
+        }
+        char scaleBuf[16]; snprintf(scaleBuf, sizeof(scaleBuf), "%.0f%%", config_.uiScale * 100.f);
+        ui_.drawWin98TextField(fx + arrowW + 2, y, fwA, rowH, scaleBuf, sel);
+        if (ui_.win98Button(CONFIG_UI_SCALE_INDEX*10+101, ">", fx + arrowW + 2 + fwA + 2, y, arrowW, rowH, false)) {
+            config_.uiScale = std::min(2.0f, config_.uiScale + 0.05f);
+        }
+        if (ui_.hoveredItem == CONFIG_UI_SCALE_INDEX*10+100 || ui_.hoveredItem == CONFIG_UI_SCALE_INDEX*10+101)
+            { configSelection_=CONFIG_UI_SCALE_INDEX; menuSelection_=CONFIG_UI_SCALE_INDEX; }
         y += rowH + rowGap;
     }
 

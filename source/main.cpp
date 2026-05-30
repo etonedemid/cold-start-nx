@@ -65,8 +65,8 @@ int main(int argc, char* argv[]) {
     freopen("NUL", "r", stdin);
     setvbuf(stdout, nullptr, _IONBF, 0);
 #endif
-#if !defined(__SWITCH__) && !defined(_WIN32)
-    // Prefer Wayland over X11 when running in a Wayland session.
+#if !defined(__SWITCH__) && !defined(_WIN32) && !defined(__ANDROID__)
+    // Prefer Wayland over X11 when running in a Wayland session (Linux only).
     // setenv with overwrite=0 so a user-set SDL_VIDEODRIVER is still respected.
     setenv("SDL_VIDEODRIVER", "wayland,x11", 0);
 #endif
@@ -86,6 +86,12 @@ int main(int argc, char* argv[]) {
     }
 
     SDL_SetHint(SDL_HINT_RENDER_BATCHING, "0");
+#ifdef __ANDROID__
+    // Prevent SDL from synthesising mouse events from touch — without this,
+    // every finger-down also fires SDL_MOUSEBUTTONDOWN which triggers shooting
+    // and every finger-move fires SDL_MOUSEMOTION which moves the aim cursor.
+    SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+#endif
 #ifdef __SWITCH__
     socketInitializeDefault();
     nxlinkStdio();

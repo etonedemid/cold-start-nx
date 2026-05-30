@@ -7,13 +7,14 @@ plugins {
 android {
     namespace = "com.coldstart.game"
     compileSdk = 34
+    ndkVersion = "26.3.11579264"
 
     defaultConfig {
         applicationId = "com.coldstart.game"
         minSdk = 21
         targetSdk = 34
-        versionCode = 12
-        versionName = "1.6.0"
+        versionCode = 19
+        versionName = "1.9.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
@@ -22,6 +23,7 @@ android {
         externalNativeBuild {
             cmake {
                 arguments += listOf(
+                    "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
                     "-DANDROID_STL=c++_shared",
                     "-DSDL2IMAGE_VENDORED=ON",
                     "-DSDL2TTF_VENDORED=ON",
@@ -34,7 +36,10 @@ android {
                     "-DSDL2MIXER_OPUS=OFF",
                     "-DSDL2MIXER_MP3_MPG123=OFF",
                     // minimp3 is header-only and bundled inside SDL2_mixer source
-                    "-DSDL2MIXER_MP3_MINIMP3=ON"
+                    "-DSDL2MIXER_MP3_MINIMP3=ON",
+                    "-DSDL2MIXER_MOD=OFF",
+                    "-DSDL2MIXER_WAVPACK=OFF",
+                    "-DSDL2MIXER_MIDI=OFF"
                 )
             }
         }
@@ -43,7 +48,6 @@ android {
     externalNativeBuild {
         cmake {
             path = file("jni/CMakeLists.txt")
-            version = "3.22.1"
         }
     }
 
