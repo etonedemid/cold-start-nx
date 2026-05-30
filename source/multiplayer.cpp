@@ -10,7 +10,9 @@
 #include <switch.h>
 #include <arpa/inet.h>
 #else
+#ifndef __ANDROID__
 #include <ifaddrs.h>
+#endif
 #include <arpa/inet.h>
 #endif
 
@@ -1632,6 +1634,9 @@ std::string Game::getLocalIP() {
     freeaddrinfo(res);
     return result;
 #else
+#ifdef __ANDROID__
+    return "N/A";
+#else
     struct ifaddrs* addrs = nullptr;
     if (getifaddrs(&addrs) != 0) return "N/A";
     std::string result = "N/A";
@@ -1639,13 +1644,13 @@ std::string Game::getLocalIP() {
         if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET) continue;
         auto* sa = (struct sockaddr_in*)ifa->ifa_addr;
         char* ip = inet_ntoa(sa->sin_addr);
-        // Skip loopback
         if (strcmp(ip, "127.0.0.1") == 0) continue;
         result = ip;
         break;
     }
     freeifaddrs(addrs);
     return result;
+#endif
 #endif
 }
 

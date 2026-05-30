@@ -8,6 +8,7 @@ struct Camera {
     Vec2  vel = {0, 0};
     float shake      = 0;
     float shakeDecay = 5.5f;
+    float shakeScale = 1.0f;   // 0 = off, 1 = full; set from config_.shakeScale
     Vec2  shakeOffset= {0, 0};
     float worldW     = WORLD_W;
     float worldH     = WORLD_H;

@@ -414,6 +414,7 @@ void Game::updateLocalCoopPlayers(float dt) {
             aimDir = coopSlots_[i].aimInput.normalized();
         else if (coopSlots_[i].player.moving && coopSlots_[i].player.vel.lengthSq() > 1.f)
             aimDir = coopSlots_[i].player.vel.normalized();
+        coopSlots_[i].camera.shakeScale = config_.shakeScale;
         coopSlots_[i].camera.update(coopSlots_[i].player.pos, aimDir, dt);
 
         player_    = savedPlayer;  upgrades_  = savedUpg;
