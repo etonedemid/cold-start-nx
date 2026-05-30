@@ -20,7 +20,7 @@ ROMFS		:=	romfs
 
 APP_TITLE	:=	COLD START
 APP_AUTHOR	:=	etonedemid
-APP_VERSION	:=	1.8.0
+APP_VERSION	:=	1.9.0
 
 #---------------------------------------------------------------------------------
 # Compiler flags
@@ -42,7 +42,8 @@ ASFLAGS	:=	-g $(ARCH)
 LDFLAGS	=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) \
 			-Wl,-Map,$(notdir $*.map)
 
-LIBS	:=	`$(PREFIX)pkg-config --libs SDL2_image SDL2_ttf SDL2_mixer sdl2` -lnx
+SWITCH_PKG_CONFIG_PATH	:=	$(DEVKITPRO)/portlibs/switch/lib/pkgconfig:$(DEVKITPRO)/libnx/lib/pkgconfig
+LIBS	:=	$(shell PKG_CONFIG_PATH=$(SWITCH_PKG_CONFIG_PATH) pkg-config --static --libs SDL2_image SDL2_ttf SDL2_mixer sdl2)
 
 #---------------------------------------------------------------------------------
 # Library search paths

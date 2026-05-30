@@ -745,7 +745,26 @@ void Game::handleInput() {
             if (ui_.clickCooldownFrames == 0) ui_.mouseClicked = true;
         }
 
-        // Touch events — convert to mouse-like behaviour for menu navigation
+        // Touch events — during gameplay route to virtual controls; otherwise drive UI mouse
+        {
+#ifdef __ANDROID__
+            if (e.type == SDL_FINGERDOWN || e.type == SDL_FINGERMOTION || e.type == SDL_FINGERUP) {
+                bool consumed = touchControls_.handleEvent(e, config_.uiScale);
+                // Consume unconditionally in gameplay (when overlay is visible) so
+                // stick drags never accidentally fire UI buttons.
+                bool inGameplay = (state_ == GameState::Playing         || state_ == GameState::Paused        ||
+                                   state_ == GameState::Dead             || state_ == GameState::LocalCoopGame ||
+                                   state_ == GameState::LocalCoopPaused  || state_ == GameState::LocalCoopDead ||
+                                   state_ == GameState::MultiplayerGame  || state_ == GameState::MultiplayerPaused ||
+                                   state_ == GameState::MultiplayerDead  || state_ == GameState::MultiplayerSpectator ||
+                                   state_ == GameState::PlayingPack      || state_ == GameState::PackPaused ||
+                                   state_ == GameState::PackDead         || state_ == GameState::PackLevelWin ||
+                                   state_ == GameState::PlayingCustom    || state_ == GameState::CustomPaused ||
+                                   state_ == GameState::CustomDead       || state_ == GameState::CustomWin);
+                if ((inGameplay && touchControls_.visible_) || consumed) continue;
+            }
+#endif
+        }
         if (e.type == SDL_FINGERDOWN) {
             usingGamepad_ = false;
             ui_.touchActive = true;
@@ -787,6 +806,31 @@ void Game::handleInput() {
             }
         }
     }
+
+#ifdef __ANDROID__
+    // Compute touch control outputs from current finger state
+    touchControls_.compute();
+    // Handle toggle button tap
+    if (touchControls_.togglePressed) {
+        touchControls_.visible_ = !touchControls_.visible_;
+        touchControls_.togglePressed = false;
+    }
+    // Auto-show overlay when gameplay begins
+    {
+        bool isGameplay = (state_ == GameState::Playing         || state_ == GameState::Paused        ||
+                           state_ == GameState::Dead             || state_ == GameState::LocalCoopGame ||
+                           state_ == GameState::LocalCoopPaused  || state_ == GameState::LocalCoopDead ||
+                           state_ == GameState::MultiplayerGame  || state_ == GameState::MultiplayerPaused ||
+                           state_ == GameState::MultiplayerDead  || state_ == GameState::MultiplayerSpectator ||
+                           state_ == GameState::PlayingPack      || state_ == GameState::PackPaused ||
+                           state_ == GameState::PackDead         || state_ == GameState::PackLevelWin ||
+                           state_ == GameState::PlayingCustom    || state_ == GameState::CustomPaused ||
+                           state_ == GameState::CustomDead       || state_ == GameState::CustomWin);
+        static bool prevFrameGameplay = false;
+        if (isGameplay && !prevFrameGameplay) touchControls_.visible_ = true;
+        prevFrameGameplay = isGameplay;
+    }
+#endif
 
     // Movement: left stick or WASD
     moveInput_ = {0, 0};
@@ -870,10 +914,17 @@ void Game::handleInput() {
             state_ == GameState::PlayingPack      || state_ == GameState::PackPaused ||
             state_ == GameState::PackDead         || state_ == GameState::PackLevelWin ||
             state_ == GameState::Editor           || state_ == GameState::EditorConfig);
-        if (!inGameplay && gc) {
+        if (!inGameplay) {
             Uint32 now = SDL_GetTicks();
-            float lx = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0f;
-            float ly = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTY) / 32767.0f;
+            float lx = gc ? SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0f : 0.f;
+            float ly = gc ? SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTY) / 32767.0f : 0.f;
+#ifdef __ANDROID__
+            // Merge touch stick into menu navigation
+            if (touchControls_.visible_) {
+                if (fabsf(touchControls_.moveStick.x) > fabsf(lx)) lx = touchControls_.moveStick.x;
+                if (fabsf(touchControls_.moveStick.y) > fabsf(ly)) ly = touchControls_.moveStick.y;
+            }
+#endif
             const float THRESH = 0.35f;
             int snY = (ly < -THRESH) ? -1 : (ly > THRESH) ? 1 : 0;
             int snX = (lx < -THRESH) ? -1 : (lx > THRESH) ? 1 : 0;
@@ -921,6 +972,65 @@ void Game::handleInput() {
         if (rmbDown && !bombLaunchHeld_) bombLaunchInput_ = true;
         if (!gc) bombLaunchHeld_ = rmbDown;  // only track RMB hold when no gamepad (ZL tracks its own)
     }
+
+    // ── Touch (virtual gamepad) — full emulation across all states ──────────
+#ifdef __ANDROID__
+    if (touchControls_.anyActive) {
+        usingGamepad_ = true;
+
+        // Determine whether we are in an active gameplay state
+        bool tcInGameplay = (state_ == GameState::Playing         || state_ == GameState::Paused        ||
+                             state_ == GameState::Dead             || state_ == GameState::LocalCoopGame ||
+                             state_ == GameState::LocalCoopPaused  || state_ == GameState::LocalCoopDead ||
+                             state_ == GameState::MultiplayerGame  || state_ == GameState::MultiplayerPaused ||
+                             state_ == GameState::MultiplayerDead  || state_ == GameState::MultiplayerSpectator ||
+                             state_ == GameState::PlayingPack      || state_ == GameState::PackPaused ||
+                             state_ == GameState::PackDead         || state_ == GameState::PackLevelWin ||
+                             state_ == GameState::PlayingCustom    || state_ == GameState::CustomPaused ||
+                             state_ == GameState::CustomDead       || state_ == GameState::CustomWin);
+
+        // Sticks always drive movement / aim
+        if (touchControls_.moveStick.length() > 0.15f)
+            moveInput_ = touchControls_.moveStick;
+        if (touchControls_.aimStick.length() > 0.2f) {
+            aimInput_   = touchControls_.aimStick;
+            fireInput_  = true;   // auto-fire while aiming
+        }
+
+        // Buttons act as gameplay actions in gameplay, or as face buttons in menus
+        if (touchControls_.fire) {
+            fireInput_ = true;
+            if (!tcInGameplay) { confirmInput_ = true; if (sfxPress_) playSFX(sfxPress_, config_.sfxVolume); }
+        }
+        if (touchControls_.melee) {
+            if (!tcInGameplay) {
+                tabInput_ = true;
+            } else if (player_.activeWeapon == 1) {
+                // Axe equipped: tap MELEE to toggle back to gun.
+                // (FIRE button still swings axe when axe is equipped.)
+                weaponSwitchDelta_ += 1;
+            } else {
+                meleeInput_ = true;  // gun equipped: switch to axe
+            }
+        }
+        {
+            // One-shot bomb launch on rising edge (mirrors ZL trigger logic)
+            static bool touchBombHeld = false;
+            if (touchControls_.bomb) {
+                if (!tcInGameplay) {
+                    backInput_ = true;
+                } else if (!touchBombHeld) {
+                    bombLaunchInput_ = true;
+                }
+                touchBombHeld = true;
+            } else {
+                touchBombHeld = false;
+            }
+        }
+        if (touchControls_.parry)    parryInput_ = true;
+        if (touchControls_.pauseBtn) pauseInput_ = true;
+    }
+#endif
 
     // Normalize move
     if (moveInput_.length() > 1.0f) moveInput_ = moveInput_.normalized();
@@ -1224,6 +1334,8 @@ void Game::handleInput() {
             else if (configSelection_ == CONFIG_SHADER_GLITCH_INDEX) toggleBool(config_.shaderGlitch);
             else if (configSelection_ == CONFIG_SHADER_NEON_INDEX) toggleBool(config_.shaderNeonEdge);
             else if (configSelection_ == CONFIG_SAVE_INCOMING_MODS_INDEX) toggleBool(config_.saveIncomingModsPermanently);
+            else if (configSelection_ == CONFIG_UI_SCALE_INDEX)  adjustFloat(config_.uiScale,   0.5f, 2.0f, 0.05f);
+            else if (configSelection_ == CONFIG_SHAKE_INDEX)     adjustFloat(config_.shakeScale, 0.0f, 1.0f, 0.1f);
             else if (configSelection_ == CONFIG_USERNAME_INDEX && confirmInput_) {
                 // Edit username
                 usernameTyping_ = true;
