@@ -219,7 +219,9 @@ bool Game::init() {
     window_ = SDL_CreateWindow(windowTitle,
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         SCREEN_W, SCREEN_H,
-#ifdef __SWITCH__
+#if defined(__ANDROID__)
+        SDL_WINDOW_FULLSCREEN_DESKTOP
+#elif defined(__SWITCH__)
         0
 #else
         0
@@ -948,6 +950,7 @@ void Game::update() {
             Vec2 aimDir = {0,0};
             if (aimInput_.lengthSq() > 0.04f) aimDir = aimInput_.normalized();
             else if (player_.moving && player_.vel.lengthSq() > 1.0f) aimDir = player_.vel.normalized();
+            camera_.shakeScale = config_.shakeScale;
             camera_.update(player_.pos, aimDir, dt);
         }
 
@@ -1059,6 +1062,8 @@ void Game::saveConfig() {
     fprintf(f, "shaderGlitch=%d\n", config_.shaderGlitch ? 1 : 0);
     fprintf(f, "shaderNeonEdge=%d\n", config_.shaderNeonEdge ? 1 : 0);
     fprintf(f, "saveIncomingModsPermanently=%d\n", config_.saveIncomingModsPermanently ? 1 : 0);
+    fprintf(f, "uiScale=%.2f\n", config_.uiScale);
+    fprintf(f, "shakeScale=%.2f\n", config_.shakeScale);
     fclose(f);
     printf("Config saved to config.txt\n");
 }
@@ -1092,6 +1097,8 @@ void Game::loadConfig() {
         else if (sscanf(line, "shaderGlitch=%d", &ival) == 1) config_.shaderGlitch = (ival != 0);
         else if (sscanf(line, "shaderNeonEdge=%d", &ival) == 1) config_.shaderNeonEdge = (ival != 0);
         else if (sscanf(line, "saveIncomingModsPermanently=%d", &ival) == 1) config_.saveIncomingModsPermanently = (ival != 0);
+        else if (sscanf(line, "uiScale=%f",   &fval) == 1) config_.uiScale   = std::clamp(fval, 0.5f, 2.0f);
+        else if (sscanf(line, "shakeScale=%f", &fval) == 1) config_.shakeScale = std::clamp(fval, 0.0f, 1.0f);
     }
     clampResolutionConfig(config_);
     fclose(f);

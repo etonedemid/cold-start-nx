@@ -249,8 +249,13 @@ void Game::updatePlayer(float dt) {
     const float meleeCooldownTime = getMeleeCooldownTime(upgrades_);
     if (p.meleeCooldown > 0) p.meleeCooldown -= dt;
     if (!spectatorMode_) {
-        // Trigger: dedicated E key OR fire trigger when axe is equipped
-        bool doMelee = p.canMelee && (meleeInput_ || (p.activeWeapon == 1 && fireInput_));
+        // E key while gun is equipped → quick-switch to axe
+        if (meleeInput_ && p.activeWeapon == 0) {
+            p.activeWeapon = 1;
+            p.hadMeleeSwing = false;
+        }
+        // Trigger: axe must be equipped; E key or fire button both swing
+        bool doMelee = p.canMelee && p.activeWeapon == 1 && (meleeInput_ || fireInput_);
         if (doMelee && !p.isMeleeSwinging && p.meleeCooldown <= 0) {
             p.isMeleeSwinging = true;
             p.meleeTimer      = 0.0f;

@@ -15,6 +15,9 @@
 #include "mappack.h"
 #include "pickup.h"
 #include "gamemode.h"
+#ifdef __ANDROID__
+#include "touchcontrols.h"
+#endif
 #include "mod.h"
 #include "network.h"
 #include "ui.h"
@@ -90,7 +93,9 @@ struct GameConfig {
     bool shaderGlow = true;
     bool shaderGlitch = true;
     bool shaderNeonEdge = true;
-    bool saveIncomingModsPermanently = false;
+    bool  saveIncomingModsPermanently = false;
+    float uiScale   = 1.0f;   // HUD + touch controls scale multiplier
+    float shakeScale = 1.0f;  // screen shake intensity  0=off  1=full
 };
 
 enum class DecalType : uint8_t { Blood, Scorch };
@@ -313,6 +318,11 @@ private:
 
     // ── Map Editor ──
     MapEditor editor_;
+
+    // ── Touch / on-screen controls (Android only) ──
+#ifdef __ANDROID__
+    TouchControls touchControls_;
+#endif
 
     // ── Custom map play ──
     CustomMap customMap_;

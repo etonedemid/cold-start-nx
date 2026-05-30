@@ -42,6 +42,7 @@ android/app/jni/SDL2_image/
 android/app/jni/SDL2_ttf/
 android/app/jni/SDL2_mixer/
 android/.gradle/
+android/app/.cxx/
 android/app/build/
 android/build/
 android/local.properties
@@ -53,3 +54,6 @@ android/local.properties
 Thumbs.db
 *.swp
 *~
+
+# ─── Claude Code ─────────────────────────────────────────────────────────────
+.claude/

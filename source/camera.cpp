@@ -27,7 +27,8 @@ void Camera::update(Vec2 target, Vec2 aimDir, float dt) {
 
     // Shake
     if (shake > 0.01f) {
-        shakeOffset = {randf() * shake, randf() * shake};
+        float s = shake * shakeScale;
+        shakeOffset = {randf() * s, randf() * s};
         shake -= shake * shakeDecay * dt;
     } else {
         shake = 0;
