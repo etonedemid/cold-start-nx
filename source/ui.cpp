@@ -492,10 +492,18 @@ bool Context::pointInRect(int px, int py, int rx, int ry, int rw, int rh) const 
 void Context::drawDesktop() {
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
     if (desktopBg) {
+        SDL_SetTextureBlendMode(desktopBg, SDL_BLENDMODE_NONE);
+        SDL_SetTextureColorMod(desktopBg, 255, 255, 255);
+        SDL_SetTextureAlphaMod(desktopBg, 255);
         SDL_Rect dst = {0, 0, SCREEN_W, SCREEN_H};
         SDL_RenderCopy(renderer, desktopBg, nullptr, &dst);
     } else {
+#ifdef __ANDROID__
+        // On Android show a dark background instead of the Win98 teal
+        SDL_SetRenderDrawColor(renderer, 18, 20, 30, 255);
+#else
         SDL_SetRenderDrawColor(renderer, W98::Desktop.r, W98::Desktop.g, W98::Desktop.b, 255);
+#endif
         SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
         SDL_RenderFillRect(renderer, &full);
     }
