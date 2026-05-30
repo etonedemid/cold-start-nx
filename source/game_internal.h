@@ -160,7 +160,9 @@ constexpr int CONFIG_SHADER_GLITCH_INDEX     = 11;
 constexpr int CONFIG_SHADER_NEON_INDEX       = 12;
 constexpr int CONFIG_SAVE_INCOMING_MODS_INDEX = 13;
 constexpr int CONFIG_USERNAME_INDEX          = 14;
-constexpr int CONFIG_BACK_INDEX              = 15;
+constexpr int CONFIG_UI_SCALE_INDEX          = 15;
+constexpr int CONFIG_SHAKE_INDEX             = 17;
+constexpr int CONFIG_BACK_INDEX              = 16;
 
 inline EnemyType enemyTypeFromSpawnId(uint8_t type) {
     switch (type) {

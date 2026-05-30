@@ -23,7 +23,9 @@
             android:exported="true"
             android:screenOrientation="sensorLandscape"
             android:hardwareAccelerated="true"
-            android:launchMode="singleInstance">
+            android:launchMode="singleInstance"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+            android:immersive="true">
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
