@@ -67,7 +67,7 @@ static void upnpMapPort(uint16_t port) {
 #endif
     freeUPNPDevlist(devlist);
     // r==1: valid connected IGD
-    // r==2: IGD found but reports not connected — many routers still accept mappings
+    // r==2: IGD found but reports not connected - many routers still accept mappings
     // r==3: multiple IGDs found, first is used
     // r==0: no IGD at all
     if (r == 0) {
@@ -75,7 +75,7 @@ static void upnpMapPort(uint16_t port) {
         return;
     }
     if (r == 2) {
-        printf("UPnP: IGD found but reports not connected — attempting mapping anyway\n");
+        printf("UPnP: IGD found but reports not connected - attempting mapping anyway\n");
     }
     int res = UPNP_AddPortMapping(
         tmpUrls.controlURL, tmpData.first.servicetype,
@@ -298,7 +298,7 @@ void NetworkManager::update(float dt) {
     // Interpolate remote players
     for (auto& p : players_) {
         if (p.id != localId_) {
-            // Remote player — interpolate (applies on both host and clients)
+            // Remote player - interpolate (applies on both host and clients)
             p.interpT += dt * 24.0f; // smooth over ~42ms
             if (p.interpT > 1.0f) p.interpT = 1.0f;
             p.pos = Vec2::lerp(p.prevPos, p.targetPos, p.interpT);
@@ -477,7 +477,7 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             const char* buf = (const char*)payload;
             uint8_t peerId = (uint8_t)(uintptr_t)from->data;
 
-            // Version check — reject if mismatched
+            // Version check - reject if mismatched
             // Guard against unterminated payload: ensure null within bounds
             const char* payloadEnd = buf + payloadLen;
             const char* verEnd = (const char*)memchr(buf, '\0', payloadLen);
@@ -510,7 +510,7 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
                 else       pw = std::string(pwStart, payloadEnd);
             }
 
-            // Password check — reject if wrong
+            // Password check - reject if wrong
             if (!hostPassword_.empty() && pw != hostPassword_) {
                 printf("Network: Player %d rejected (wrong password)\n", peerId);
                 enet_peer_disconnect(from, 0);
@@ -540,7 +540,7 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
     }
 
     case NetPacketType::Disconnect: {
-        // Client is leaving cleanly — process immediately rather than waiting
+        // Client is leaving cleanly - process immediately rather than waiting
         // for ENet keepalive timeout. Only the host (dedicated server) handles this.
         if (!isHost_) break;
         uint8_t peerId = (uint8_t)(uintptr_t)from->data;
@@ -1033,7 +1033,7 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
 
     // ── PvP host-authoritative damage ──
     case NetPacketType::HitRequest: {
-        // payload: bulletNetId(4) + damage(1) + ownerId(1) + targetSlot(1) — sent by a client to host
+        // payload: bulletNetId(4) + damage(1) + ownerId(1) + targetSlot(1) - sent by a client to host
         if (isHost_ && payloadLen >= 7) {
             uint32_t bulletNetId;
             memcpy(&bulletNetId, payload, 4);
@@ -1056,7 +1056,7 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
     }
 
     case NetPacketType::MeleeHitRequest: {
-        // payload: targetId(1) + damage(1) + targetSlot(1) — sent by a client to host
+        // payload: targetId(1) + damage(1) + targetSlot(1) - sent by a client to host
         if (isHost_ && payloadLen >= 3) {
             uint8_t targetId = payload[0];
             int damage = std::max(1, (int)(uint8_t)payload[1]);
@@ -2074,7 +2074,7 @@ void NetworkManager::sendEnemyKilled(uint32_t enemyIdx, uint8_t killerId) {
 
 void NetworkManager::sendHitRequest(uint32_t bulletNetId, int damage, uint8_t ownerId, uint8_t targetSlot) {
 #if HAS_ENET
-    // Send to host only — reliable because it's a game event
+    // Send to host only - reliable because it's a game event
     uint8_t payload[7];
     memcpy(payload, &bulletNetId, 4);
     payload[4] = (uint8_t)(int8_t)std::min(damage, 127);

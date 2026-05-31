@@ -86,8 +86,14 @@ int main(int argc, char* argv[]) {
     }
 
     SDL_SetHint(SDL_HINT_RENDER_BATCHING, "0");
+#ifdef _WIN32
+    // Prevent Windows IME initialisation from freezing the game on first text input.
+    // SDL internally calls ImmAssociateContext which blocks until the IME is ready;
+    // suppressing the IME UI makes that call return immediately.
+    SDL_SetHint(SDL_HINT_IME_SHOW_UI, "0");
+#endif
 #ifdef __ANDROID__
-    // Prevent SDL from synthesising mouse events from touch — without this,
+    // Prevent SDL from synthesising mouse events from touch - without this,
     // every finger-down also fires SDL_MOUSEBUTTONDOWN which triggers shooting
     // and every finger-move fires SDL_MOUSEMOTION which moves the aim cursor.
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");

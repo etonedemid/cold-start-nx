@@ -308,7 +308,7 @@ void Game::renderMapSelectMenu() {
 }
 
 void Game::renderMapConfigMenu() {
-    // No longer shown — game mode is defined in the editor and applied automatically.
+    // No longer shown - game mode is defined in the editor and applied automatically.
 }
 
 void Game::renderCharSelectMenu() {
@@ -322,7 +322,7 @@ void Game::renderCharSelectMenu() {
     SDL_Rect detailPanel = {560, 60, SCREEN_W - 580, SCREEN_H - 120};
     ui_.drawWin98Window(detailPanel.x, detailPanel.y, detailPanel.w, detailPanel.h, "Preview");
 
-    // (color aliases removed — lambda now uses UI::W98 constants)
+    // (color aliases removed - lambda now uses UI::W98 constants)
 
     auto drawWalkPreview = [&](const CharacterDef* cd, bool useDefault) {
         const std::vector<SDL_Texture*>* bodyFrames = nullptr;
@@ -485,10 +485,10 @@ void Game::renderCharCreator() {
     ui_.drawDesktop();
 
     // ── Layout constants ──────────────────────────────────────────────────────
-    // Left window: "Character Creator" — stats, buttons
+    // Left window: "Character Creator" - stats, buttons
     const int leftWinX = 20,  leftWinY = 20;
     const int leftWinW = 440, leftWinH = 660;
-    // Right window: "Preview" — tabs, canvas, frame controls, info
+    // Right window: "Preview" - tabs, canvas, frame controls, info
     const int rightWinX = 472, rightWinY = 20;
     const int rightWinW = 788, rightWinH = 660;
 
@@ -517,7 +517,7 @@ void Game::renderCharCreator() {
         contentY += 16;
     };
 
-    // Helper: compact stat row — label (80px) | sunken value (50px) | < > (22px each)
+    // Helper: compact stat row - label (80px) | sunken value (50px) | < > (22px each)
     auto drawStatRow = [&](int idx, const char* label, const char* value, bool adjustable) {
         bool selected = (cc.field == idx);
         bool hovered  = ui_.pointInRect(ui_.mouseX, ui_.mouseY, lCX, contentY, lRW, rowH);
@@ -976,7 +976,7 @@ void Game::renderCharCreator() {
     // Write mod.cfg only if it doesn't exist yet
     std::string cfgPath = base + "/mod.cfg";
     FILE* f = fopen(cfgPath.c_str(), "r");
-    if (f) { fclose(f); return base; }  // already exists — don't overwrite
+    if (f) { fclose(f); return base; }  // already exists - don't overwrite
     f = fopen(cfgPath.c_str(), "w");
     if (f) {
         fprintf(f, "[mod]\n");
@@ -1010,7 +1010,7 @@ void Game::saveCharacterToFolder(const std::string& folderPath) {
     std::string cfgPath = folderPath + "/character.cfg";
     FILE* f = fopen(cfgPath.c_str(), "w");
     if (!f) { printf("Failed to save: %s\n", cfgPath.c_str()); return; }
-    fprintf(f, "# Character config — sprites are auto-detected from PNGs\n");
+    fprintf(f, "# Character config - sprites are auto-detected from PNGs\n");
     fprintf(f, "name=%s\n\n", cc.name.c_str());
     fprintf(f, "speed=%.0f\n",       cc.speed);
     fprintf(f, "hp=%d\n",            cc.hp);

@@ -103,7 +103,7 @@ int main(int argc, char* argv[]) {
 
     net.onLobbyStartRequested = [&net, &serverSettings]() {
         uint32_t seed = (uint32_t)time(nullptr);
-        printf("[start] Lobby host requested game start — seed=%u  map=%dx%d\n",
+        printf("[start] Lobby host requested game start - seed=%u  map=%dx%d\n",
                seed, serverSettings.mapWidth, serverSettings.mapHeight);
         net.startGame(seed, serverSettings.mapWidth, serverSettings.mapHeight, {});
     };

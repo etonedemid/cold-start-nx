@@ -1,4 +1,4 @@
-// ─── render.cpp ─── World/UI rendering
+﻿// ─── render.cpp ─── World/UI rendering
 #include "game.h"
 #include "game_internal.h"
 
@@ -78,7 +78,7 @@ void Game::render() {
                 bool showDash   = e.isDashing    || e.netIsDashing;
                 bool showCharge = e.dashCharging || e.netDashCharging;
 
-                // Legs under body — all enemy types
+                // Legs under body - all enemy types
                 {
                     auto& eLegs = !enemyLegSprites_.empty() ? enemyLegSprites_ : legSprites_;
                     if (!eLegs.empty()) {
@@ -376,7 +376,7 @@ void Game::render() {
         renderRoofOverlay();
         renderShadingPass();
 
-        // Goal indicator — drawn before UI so HUD sits on top
+        // Goal indicator - drawn before UI so HUD sits on top
         if (playingCustomMap_ && customGoalOpen_) {
             MapTrigger* goal = customMap_.findEndTrigger();
             if (goal) {
@@ -485,7 +485,7 @@ void Game::render() {
         renderRoofOverlay();
         renderShadingPass();
 
-        // Goal indicator — drawn before UI so HUD sits on top
+        // Goal indicator - drawn before UI so HUD sits on top
         if (customGoalOpen_) {
             MapTrigger* goal = customMap_.findEndTrigger();
             if (goal) {
@@ -646,7 +646,7 @@ void Game::render() {
             SDL_RenderFillRect(renderer_, &full2);
             // Banner
             SDL_Color bannerCol = {100, 200, 255, 255};
-            drawTextCentered("SPECTATING  —  Press ESC/START to pause", 14, 18, bannerCol);
+            drawTextCentered("SPECTATING  -  Press ESC/START to pause", 14, 18, bannerCol);
         }
         break;
 
@@ -679,7 +679,7 @@ void Game::render() {
         break;
     }
 
-    // Mod-save dialog overlay — rendered on top of everything
+    // Mod-save dialog overlay - rendered on top of everything
     if (modSaveDialog_.isOpen())
         renderModSaveDialog();
 
@@ -691,7 +691,7 @@ void Game::render() {
         renderPostFXComposite(gameplayView);
     }
 
-    // Dev console overlay — Windows CMD style, rendered last so it's always on top
+    // Dev console overlay - Windows CMD style, rendered last so it's always on top
     if (consoleOpen_) {
         const int conH   = 240;
         const int titleH = 20;
@@ -700,7 +700,7 @@ void Game::render() {
 
         SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
 
-        // Title bar — classic Windows CMD navy blue
+        // Title bar - classic Windows CMD navy blue
         SDL_SetRenderDrawColor(renderer_, 0, 0, 128, 255);
         SDL_Rect titleBar = {0, 0, SCREEN_W, titleH};
         SDL_RenderFillRect(renderer_, &titleBar);
@@ -728,7 +728,7 @@ void Game::render() {
             ui_.drawText(consoleLog_[i].c_str(), padX, titleH + 2 + row * lineH, 11, col);
         }
 
-        // Input prompt — CMD style
+        // Input prompt - CMD style
         char inputLine[280];
         snprintf(inputLine, sizeof(inputLine), "C:\\COLDSTART> %s_", consoleBuf_);
         ui_.drawText(inputLine, padX, conH - lineH - 2, 11, {255, 255, 255, 255});
@@ -952,7 +952,7 @@ void Game::renderAimCrosshair(const Camera& camera, const Player& player, Vec2 a
     for (auto& r : arms) SDL_RenderFillRect(renderer_, &r);
 }
 
-// Bypass SDL_RenderCopyExF entirely — compute corners on CPU and submit raw
+// Bypass SDL_RenderCopyExF entirely - compute corners on CPU and submit raw
 // triangles via SDL_RenderGeometry.  The driver's CopyExF codepath is broken
 // on some Linux OpenGL drivers (vertex collapse / UV corruption).
 static void renderRotatedQuad(SDL_Renderer* renderer, SDL_Texture* tex,
@@ -1171,7 +1171,7 @@ void Game::renderMap() {
             unsigned int tileHash = (unsigned int)(x * 73856093u ^ y * 19349663u);
 
             if (tile == TILE_FLOOR) {
-                // Hard floor — render directly with floorTex_, no gravel transitions
+                // Hard floor - render directly with floorTex_, no gravel transitions
                 tex = floorTex_;
                 // Slight rotation variety for less uniformity
                 if (tileHash & 0x1) tileFlip = SDL_FLIP_HORIZONTAL;
@@ -1192,7 +1192,7 @@ void Game::renderMap() {
             } else if (tile >= TILE_CUSTOM_0 && tile <= TILE_CUSTOM_7) {
                 tex = customTileTextures_[tile - TILE_CUSTOM_0];
             } else {
-                // Grass — use gravel transition sprites
+                // Grass - use gravel transition sprites
                 bool R = isGrv(x+1, y);
                 bool L = isGrv(x-1, y);
                 bool U = isGrv(x, y-1);
@@ -1598,8 +1598,8 @@ void Game::renderMinimap() {
     }
 
     // Remote player blips
-    // • Teammate  — team-colored, normal size (5×5)
-    // • Enemy player — bright red/team-color, larger (7×7) + white outline
+    // • Teammate  - team-colored, normal size (5×5)
+    // • Enemy player - bright red/team-color, larger (7×7) + white outline
     {
         auto& net = NetworkManager::instance();
         if (net.isOnline()) {
@@ -1608,7 +1608,7 @@ void Game::renderMinimap() {
                 if (rp.id == localId) continue;
                 if (!rp.alive) continue;
 
-                bool isEnemy = (localTeam_ < 0)              // FFA — all others are enemies
+                bool isEnemy = (localTeam_ < 0)              // FFA - all others are enemies
                                || (rp.team < 0)              // they have no team
                                || (rp.team != localTeam_);   // different team
 
@@ -1625,7 +1625,7 @@ void Game::renderMinimap() {
                     SDL_Rect outline = {bx - 4, by - 4, 9, 9};
                     SDL_RenderDrawRect(renderer_, &outline);
                 } else {
-                    // Teammate — small blip in their team color
+                    // Teammate - small blip in their team color
                     drawBlip(rp.pos.x, rp.pos.y, 2, blipColor(rp.team));
                 }
             }
@@ -1720,7 +1720,7 @@ void Game::renderUI() {
         }
     }
 
-    // ── Win98 GAME panel (top-right) — timer + FPS ────────────────────────────
+    // ── Win98 GAME panel (top-right) - timer + FPS ────────────────────────────
     {
         const int panW = 180, panH = 90;
         const int panX = SCREEN_W - panW - 8, panY = 8;
@@ -1773,7 +1773,7 @@ void Game::renderUI() {
         SDL_RenderFillRect(renderer_, &fd);
     }
 
-    // ── System announcements — Win98-style bars sliding in from top ───────────
+    // ── System announcements - Win98-style bars sliding in from top ───────────
     // Helper: compute slide+fade alpha for a timer in [0, maxT]
     // Slides in over 0.25s, holds, slides out over 0.25s.
     auto annoAlpha = [](float t, float maxT) -> float {
@@ -1839,13 +1839,13 @@ void Game::renderUI() {
         if (isBoss) {
             const char* bossName = (waveAnnounceNum_ == 25)  ? "BRUTE" :
                                    (waveAnnounceNum_ == 50)  ? "SNIPER PRIME" : "CHAINGUNNER";
-            snprintf(waveTxt, sizeof(waveTxt), "Wave %d — BOSS: %s", waveAnnounceNum_, bossName);
+            snprintf(waveTxt, sizeof(waveTxt), "Wave %d - BOSS: %s", waveAnnounceNum_, bossName);
             SDL_Color c = {220, 60, 60, (Uint8)(alpha * 255)};
             int bw = ui_.textWidth(waveTxt, 13);
             ui_.drawText(waveTxt, notifX + (notifW - bw) / 2, bodyY, 13, c);
         } else if (isMilestone) {
             const char* eliteName = (waveAnnounceNum_ == MILESTONE_SNIPER_WAVE) ? "SNIPER" : "GUNNER";
-            snprintf(waveTxt, sizeof(waveTxt), "Wave %d — ELITE: %s", waveAnnounceNum_, eliteName);
+            snprintf(waveTxt, sizeof(waveTxt), "Wave %d - ELITE: %s", waveAnnounceNum_, eliteName);
             SDL_Color c = {220, 140, 40, (Uint8)(alpha * 255)};
             int bw = ui_.textWidth(waveTxt, 13);
             ui_.drawText(waveTxt, notifX + (notifW - bw) / 2, bodyY, 13, c);
@@ -1857,7 +1857,7 @@ void Game::renderUI() {
         }
     }
 
-    // Pickup popup — slot 1
+    // Pickup popup - slot 1
     if (pickupPopupTimer_ > 0) {
         float t     = pickupPopupTimer_;
         float alpha = annoAlpha(t, otherMaxT);
@@ -1919,7 +1919,7 @@ void Game::renderUI() {
         ui_.drawText(bodyTxt, notifX + (notifW - bw) / 2, bodyY, 11, bodyCol);
     }
 
-    // ── Boss HP bar — Win98-style panel at bottom-center ─────────────────────
+    // ── Boss HP bar - Win98-style panel at bottom-center ─────────────────────
     if (bossWaveActive_) {
         const Enemy* boss = nullptr;
         for (auto& be : enemies_) {
@@ -2118,7 +2118,7 @@ void Game::renderLoginScreen() {
     ui_.drawText("Hint: trololo", contentX, cy, 11, UI::W98::Shadow);
     cy += 28;
 
-    // Username row — clicking field switches focus
+    // Username row - clicking field switches focus
     ui_.drawText("User name:", contentX, cy + (fieldH - 14) / 2, 13, UI::W98::Black);
     if (ui_.mouseClicked && ui_.pointInRect(ui_.mouseX, ui_.mouseY, contentX + labelW, cy, fieldW, fieldH))
         { loginField_ = 0; loginBlinkT_ = 0; ui_.mouseClicked = false; }
@@ -2127,7 +2127,7 @@ void Game::renderLoginScreen() {
                            loginUsername_.c_str(), unFocused, false, loginBlinkT_);
     cy += rowGap;
 
-    // Password row — clicking field switches focus
+    // Password row - clicking field switches focus
     ui_.drawText("Password:", contentX, cy + (fieldH - 14) / 2, 13, UI::W98::Black);
     if (ui_.mouseClicked && ui_.pointInRect(ui_.mouseX, ui_.mouseY, contentX + labelW, cy, fieldW, fieldH))
         { loginField_ = 1; loginBlinkT_ = 0; ui_.mouseClicked = false; }
@@ -2178,6 +2178,41 @@ void Game::renderMainMenu() {
     // Win98 desktop background
     ui_.drawDesktop();
 
+    // ── AVA Explorer desktop icon (drawn on desktop, under all windows) ───────
+    {
+        SDL_Texture* bic = Assets::instance().loadRelTex("sprites/ui/browser_icon.png");
+        const int icSz = 32, icX = 18, icY = 18;
+        const char* icLabel = "AVA Explorer";
+        if (bic) {
+            SDL_Rect dst = {icX, icY, icSz, icSz};
+            SDL_RenderCopy(renderer_, bic, nullptr, &dst);
+        } else {
+            SDL_SetRenderDrawColor(renderer_, 0, 80, 180, 255);
+            SDL_Rect fb = {icX, icY, icSz, icSz}; SDL_RenderFillRect(renderer_, &fb);
+        }
+        int lw = ui_.textWidth(icLabel, 10);
+        int labelX = std::max(2, icX + icSz/2 - lw/2);
+        ui_.drawText(icLabel, labelX + 1, icY + icSz + 3 + 1, 10, {0,0,0,200});
+        ui_.drawText(icLabel, labelX,     icY + icSz + 3,     10, {255,255,255,255});
+
+        bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, icX - 4, icY - 4, icSz + 8, icSz + 20);
+        if (hovered && ui_.mouseClicked) {
+            uint32_t now = SDL_GetTicks();
+            if (now - browserIconClickT_ < 500) {
+                browserOpen_ = true;
+                if (!browserInit_) {
+                    browserInit_ = true;
+                    browserWinX_ = (SCREEN_W - 720) / 2;
+                    browserWinY_ = (SCREEN_H - 480) / 2 - 20;
+                    browserPage_ = 0;
+                    browserHist_[0] = 0; browserHistLen_ = 1; browserHistPos_ = 0;
+                }
+            }
+            browserIconClickT_ = now;
+            ui_.mouseClicked = false;
+        }
+    }
+
     // Build item list
     struct Item { const char* label; bool enabled; };
 #ifdef __SWITCH__
@@ -2191,9 +2226,10 @@ void Game::renderMainMenu() {
         {"Character Editor"}, // 6
         {"Mods"},             // 7
         {"Config"},           // 8
-        {"Log Off"},          // 9
+        {"Credits"},          // 9
+        {"Log Off"},          // 10
     };
-    constexpr int count = 10;
+    constexpr int count = 11;
 #else
     Item items[] = {
         {"Play"},             // 0
@@ -2206,9 +2242,10 @@ void Game::renderMainMenu() {
         {"Mods"},             // 7
         {"Config"},           // 8
         {updateAvailable_ ? "Update (available!)" : "Update", true}, // 9
-        {"Log Off"},          // 10
+        {"Credits"},          // 10
+        {"Log Off"},          // 11
     };
-    constexpr int count = 11;
+    constexpr int count = 12;
 #endif
 
     // Window sizing: fit all buttons
@@ -2228,6 +2265,17 @@ void Game::renderMainMenu() {
     int winY = (SCREEN_H - totalH) / 2;
     ui_.drawWin98Window(winX, winY, totalW, totalH, "COLD START");
 
+    // Suppress clicks on menu buttons when a floating window sits over them.
+    // Save and restore so the floating windows (drawn later) can still use the click.
+    bool savedClick = ui_.mouseClicked;
+    {
+        const int mpW = 268, mpH = 148;
+        if (ui_.pointInRect(ui_.mouseX, ui_.mouseY, musicWinX_, musicWinY_, mpW, mpH) ||
+            (browserOpen_  && ui_.pointInRect(ui_.mouseX, ui_.mouseY, browserWinX_,  browserWinY_,  720, 560)) ||
+            (creditsOpen_  && ui_.pointInRect(ui_.mouseX, ui_.mouseY, creditsWinX_,  creditsWinY_,  420, 380)))
+            ui_.mouseClicked = false;
+    }
+
     // Buttons
     int bx = winX + padX;
     int by = winY + padTop;
@@ -2240,6 +2288,8 @@ void Game::renderMainMenu() {
         if (ui_.hoveredItem == i && !usingGamepad_) menuSelection_ = i;
         by += btnH + btnGap;
     }
+
+    ui_.mouseClicked = savedClick; // restore for floating windows drawn below
 
     // Right info panel
     int ipX = winX + padX + btnW + padX;
@@ -2447,7 +2497,7 @@ void Game::renderMainMenu() {
     snprintf(statusBuf, sizeof(statusBuf), "AVAOS v1.6");
     ui_.drawWin98StatusBar(SCREEN_H - 26, statusBuf);
 
-    // Discord button — bottom-right of status bar (Win98-style button with icon)
+    // Discord button - bottom-right of status bar (Win98-style button with icon)
 #ifndef __SWITCH__
     {
         const int btnH  = 22;
@@ -2530,6 +2580,532 @@ void Game::renderMainMenu() {
         config_.musicVolume = std::min(128, config_.musicVolume + 8);
         Mix_VolumeMusic(config_.musicVolume);
         saveConfig();
+    }
+
+    // ── AVA Explorer window ───────────────────────────────────────────────────
+    if (browserOpen_) {
+        const int BW = 720, BH = 560;
+        const int TOOLBAR_H = 28;
+        const int ADDR_H    = 24;
+        const int STATUS_H  = 20;
+        const int CONTENT_H = BH - UI::W98::TitleH - TOOLBAR_H - ADDR_H - STATUS_H;
+
+        browserWinX_ = std::max(0, std::min(SCREEN_W - BW, browserWinX_));
+        browserWinY_ = std::max(0, std::min(SCREEN_H - BH, browserWinY_));
+
+        // drag
+        bool oTit = ui_.pointInRect(ui_.mouseX, ui_.mouseY,
+                        browserWinX_, browserWinY_, BW - 22, UI::W98::TitleH);
+        if (oTit && ui_.mouseClicked) {
+            browserDragging_ = true;
+            browserDragOX_ = ui_.mouseX - browserWinX_;
+            browserDragOY_ = ui_.mouseY - browserWinY_;
+            ui_.mouseClicked = false;
+        }
+        if (!ui_.mouseDown) browserDragging_ = false;
+        if (browserDragging_) {
+            browserWinX_ = std::max(0, std::min(SCREEN_W - BW, ui_.mouseX - browserDragOX_));
+            browserWinY_ = std::max(0, std::min(SCREEN_H - BH, ui_.mouseY - browserDragOY_));
+        }
+
+        // page metadata
+        struct PageMeta { const char* url; const char* title; };
+        static const PageMeta kPages[] = {
+            { "start.ava",           "AVA Home - Welcome Portal"        },
+            { "news.ava",            "AVA NetNews - Today's Feed"        },
+            { "corp.ava:online",     "AVA Corporation - Official"        },
+            { "search.ava",          "SearchNet - The AVA Search Engine" },
+            { "sector7.dark:relay4", "// SIGNAL RECOVERED //"            },
+            { "proj.bliss:GOV",      "Project BLISS - City Administration" },
+        };
+        int pg = std::max(0, std::min(5, browserPage_));
+
+        // close button check (before drawing so we can bail)
+        const int cbSz = UI::W98::TitleH - 4;
+        if (ui_.mouseClicked && ui_.pointInRect(ui_.mouseX, ui_.mouseY,
+                browserWinX_ + BW - 3 - cbSz, browserWinY_ + 2, cbSz, cbSz)) {
+            browserOpen_ = false;
+            ui_.mouseClicked = false;
+        }
+
+        if (browserOpen_) {
+            char winTitle[80];
+            snprintf(winTitle, sizeof(winTitle), "AVA Explorer - %s", kPages[pg].title);
+            ui_.drawWin98Window(browserWinX_, browserWinY_, BW, BH, winTitle);
+
+            int cx = browserWinX_;
+            int cy = browserWinY_ + UI::W98::TitleH;
+
+            // ── Toolbar ──────────────────────────────────────────────────────
+            SDL_SetRenderDrawColor(renderer_, 212, 208, 200, 255);
+            SDL_Rect tbBg = {cx, cy, BW, TOOLBAR_H};
+            SDL_RenderFillRect(renderer_, &tbBg);
+
+            int tx = cx + 4;
+            bool canBack = browserHistPos_ > 0;
+            bool canFwd  = browserHistPos_ < browserHistLen_ - 1;
+
+            // Back
+            if (ui_.win98Button(500, "<", tx, cy + 4, 26, 20, false) && canBack) {
+                browserHistPos_--;
+                browserPage_ = browserHist_[browserHistPos_];
+                browserScrollY_ = 0;
+            }
+            tx += 28;
+            // Forward
+            if (ui_.win98Button(501, ">", tx, cy + 4, 26, 20, false) && canFwd) {
+                browserHistPos_++;
+                browserPage_ = browserHist_[browserHistPos_];
+                browserScrollY_ = 0;
+            }
+            tx += 32;
+
+            // Home
+            if (ui_.win98Button(502, "Home", tx, cy + 4, 60, 20, false)) {
+                browserPage_ = 0; browserScrollY_ = 0;
+                if (browserHistPos_ < 31) {
+                    browserHistPos_++; browserHistLen_ = browserHistPos_ + 1;
+                    browserHist_[browserHistPos_] = 0;
+                }
+            }
+            tx += 62;
+
+            // separator
+            SDL_SetRenderDrawColor(renderer_, 128, 128, 128, 255);
+            SDL_RenderDrawLine(renderer_, cx + tx - cx, cy + 4, cx + tx - cx, cy + TOOLBAR_H - 4);
+            tx += 8;
+
+            // address bar
+            int addrX = tx, addrW = BW - (tx - cx) - 50;
+            ui_.drawWin98Bevel(cx + addrX - cx, cy + 4, addrW, 20, false);
+            SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 255);
+            SDL_Rect addrBg = {cx + addrX - cx + 2, cy + 6, addrW - 4, 16};
+            SDL_RenderFillRect(renderer_, &addrBg);
+            // clip + draw URL
+            {
+                SDL_Rect addrClip = {cx + addrX - cx + 2, cy + 4, addrW - 4, 20};
+                SDL_Rect prevClip; SDL_RenderGetClipRect(renderer_, &prevClip);
+                SDL_RenderSetClipRect(renderer_, &addrClip);
+                ui_.drawText(kPages[pg].url, cx + addrX - cx + 5, cy + 8, 11, UI::W98::Black);
+                SDL_RenderSetClipRect(renderer_, prevClip.w > 0 ? &prevClip : nullptr);
+            }
+            tx += addrW + 2;
+            if (ui_.win98Button(503, "Go", cx + tx - cx, cy + 4, 40, 20, false)) { /* no-op */ }
+
+            cy += TOOLBAR_H;
+
+            // ── Content area ─────────────────────────────────────────────────
+            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+            SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 255);
+            SDL_Rect caBg = {cx + 2, cy, BW - 4, CONTENT_H};
+            SDL_RenderFillRect(renderer_, &caBg);
+            ui_.drawWin98Bevel(cx, cy - 1, BW, CONTENT_H + 2, false);
+
+            SDL_Rect contentClip = {cx + 3, cy + 1, BW - 6, CONTENT_H - 2};
+            SDL_Rect prevClip; SDL_RenderGetClipRect(renderer_, &prevClip);
+            SDL_RenderSetClipRect(renderer_, &contentClip);
+
+            // scroll when wheel moves over content area
+            if (ui_.mouseWheelY != 0 &&
+                ui_.pointInRect(ui_.mouseX, ui_.mouseY, cx + 3, cy + 1, BW - 6, CONTENT_H - 2)) {
+                browserScrollY_ -= ui_.mouseWheelY * 24;
+                if (browserScrollY_ < 0) browserScrollY_ = 0;
+            }
+
+            // nav helper - returns true if clicked, navigates to dest
+            auto navTo = [&](int dest) {
+                browserPage_ = dest; browserScrollY_ = 0;
+                browserLoading_ = true; browserLoadTimer_ = 0.55f;
+                if (browserHistPos_ < 31) {
+                    browserHistPos_++; browserHistLen_ = browserHistPos_ + 1;
+                    browserHist_[browserHistPos_] = dest;
+                }
+            };
+            auto linkBtn = [&](int id, const char* label, int x, int y, int w, int dest) {
+                if (ui_.win98Button(id, label, x, y, w, 18, false)) navTo(dest);
+            };
+
+            SDL_Texture* icPage    = Assets::instance().loadRelTex("sprites/ui/browser_page.png");
+            SDL_Texture* icConn    = Assets::instance().loadRelTex("sprites/ui/browser_connect.png");
+            SDL_Texture* icSearch  = Assets::instance().loadRelTex("sprites/ui/browser_search.png");
+            SDL_Texture* icDoc     = Assets::instance().loadRelTex("sprites/ui/browser_doc.png");
+
+            auto drawIcon = [&](SDL_Texture* t, int x, int y, int sz = 16) {
+                if (!t) return;
+                SDL_Rect d = {x, y, sz, sz}; SDL_RenderCopy(renderer_, t, nullptr, &d);
+            };
+
+            // tick loading timer
+            if (browserLoading_) {
+                browserLoadTimer_ -= dt_;
+                if (browserLoadTimer_ <= 0.0f) browserLoading_ = false;
+            }
+
+            int px = cx + 12;
+            int py = cy + 10 - browserScrollY_;
+
+            if (browserLoading_) {
+                int midX = cx + BW / 2, midY = cy + CONTENT_H / 2 - 20;
+                ui_.drawText("Opening page...", midX - 50, midY, 12, UI::W98::Shadow);
+                float prog = 1.0f - (browserLoadTimer_ / 0.55f);
+                int barW = 240, barH = 16;
+                int barX = midX - barW / 2, barY = midY + 22;
+                ui_.drawWin98Bevel(barX - 2, barY - 2, barW + 4, barH + 4, false);
+                SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 255);
+                SDL_Rect barBg = {barX, barY, barW, barH}; SDL_RenderFillRect(renderer_, &barBg);
+                SDL_SetRenderDrawColor(renderer_, 0, 0, 128, 255);
+                int fillW = std::max(0, (int)(barW * prog));
+                SDL_Rect barFg = {barX, barY, fillW, barH}; SDL_RenderFillRect(renderer_, &barFg);
+                int dots = (int)(SDL_GetTicks() / 300) % 4;
+                char dotBuf[8]; snprintf(dotBuf, sizeof(dotBuf), "%.*s", dots, "...");
+                ui_.drawText(dotBuf, midX + 54, midY, 12, UI::W98::Shadow);
+            } else switch (pg) {
+            // ─────────────────────────────────────── PAGE 0: AVA Home ────────
+            case 0: {
+                // banner
+                SDL_SetRenderDrawColor(renderer_, 0, 0, 128, 255);
+                SDL_Rect banner = {cx + 2, cy, BW - 4, 44};
+                SDL_RenderFillRect(renderer_, &banner);
+                ui_.drawText("AVA ONLINE PORTAL", cx + 12, cy + 6, 16, {255, 255, 255, 255});
+                ui_.drawText("Your gateway to the connected world.", cx + 12, cy + 26, 11, {180, 210, 255, 255});
+                py = cy + 56;
+
+                ui_.drawWin98Bevel(cx + 4, py, BW - 8, 2, false); py += 8;
+                ui_.drawText("Quick Access", cx + 12, py, 12, UI::W98::Navy); py += 18;
+
+                drawIcon(icPage, cx + 14, py + 1); ui_.drawText("AVA NetNews", cx + 34, py + 2, 11, {0, 0, 200, 255});
+                if (ui_.mouseClicked && ui_.pointInRect(ui_.mouseX, ui_.mouseY, cx + 14, py, 200, 16)) { navTo(1); ui_.mouseClicked=false; }
+                py += 20;
+                drawIcon(icConn, cx + 14, py + 1); ui_.drawText("AVA Corporation", cx + 34, py + 2, 11, {0, 0, 200, 255});
+                if (ui_.mouseClicked && ui_.pointInRect(ui_.mouseX, ui_.mouseY, cx + 14, py, 200, 16)) { navTo(2); ui_.mouseClicked=false; }
+                py += 20;
+                drawIcon(icSearch, cx + 14, py + 1); ui_.drawText("SearchNet", cx + 34, py + 2, 11, {0, 0, 200, 255});
+                if (ui_.mouseClicked && ui_.pointInRect(ui_.mouseX, ui_.mouseY, cx + 14, py, 200, 16)) { navTo(3); ui_.mouseClicked=false; }
+                py += 20;
+                drawIcon(icDoc, cx + 14, py + 1); ui_.drawText("sector7.dark:relay4", cx + 34, py + 2, 11, {80, 0, 0, 255});
+                if (ui_.mouseClicked && ui_.pointInRect(ui_.mouseX, ui_.mouseY, cx + 14, py, 240, 16)) { navTo(4); ui_.mouseClicked=false; }
+                py += 20;
+                drawIcon(icConn, cx + 14, py + 1); ui_.drawText("proj.bliss:GOV", cx + 34, py + 2, 11, {0, 0, 200, 255});
+                if (ui_.mouseClicked && ui_.pointInRect(ui_.mouseX, ui_.mouseY, cx + 14, py, 240, 16)) { navTo(5); ui_.mouseClicked=false; }
+                py += 28;
+
+                ui_.drawWin98Bevel(cx + 4, py, BW - 8, 2, false); py += 8;
+                ui_.drawText("AVA Network Status", cx + 12, py, 12, UI::W98::Navy); py += 16;
+                static const char* kStatus[] = {
+                    "Sector 1-6: ONLINE", "Sector 7: DISRUPTED", "Sector 8-12: ONLINE",
+                    "Backbone fiber: 100%", "Public relay uptime: 99.1%"
+                };
+                for (auto& s : kStatus) {
+                    SDL_Color sc = (std::string(s).find("DISRUPTED") != std::string::npos)
+                        ? SDL_Color{180,0,0,255} : SDL_Color{0,120,0,255};
+                    ui_.drawText(s, cx + 12, py, 11, sc);
+                    py += 14;
+                }
+                break;
+            }
+            // ─────────────────────────────────────── PAGE 1: NetNews ─────────
+            case 1: {
+                SDL_SetRenderDrawColor(renderer_, 0, 0, 128, 255);
+                SDL_Rect banner = {cx + 2, cy, BW - 4, 36};
+                SDL_RenderFillRect(renderer_, &banner);
+                ui_.drawText("AVA NETNEWS", cx + 12, cy + 4, 16, {255,255,255,255});
+                ui_.drawText("Trusted. Verified. Delivered.", cx + 12, cy + 22, 10, {180,210,255,255});
+                py = cy + 48;
+
+                struct Headline { const char* cat; const char* head; const char* body; bool alert; };
+                static const Headline kNews[] = {
+                    {"TECHNOLOGY", "PROJECT LONGHORN: NEW AVA OS CONFIRMED",
+                     "AVA Corp. announces a next-generation operating system kernel targeting hydraulics and bio-link support. Expected rollout: Q3.", false},
+                    {"INFRASTRUCTURE", "SECTOR 7 RELAY STATION REMAINS OFFLINE",
+                     "Engineers report ongoing interference. Traffic is being rerouted through Sector 6-B. Citizens should expect 12% latency increase.", false},
+                    {"HEALTH", "OCULAR LINK UPDATE 2.4 NOW AVAILABLE",
+                     "Department of Health clears the latest optic firmware for all registered citizens. Visit your nearest clinic.", false},
+                    {"ALERT", "UNREGISTERED UNIT DETECTED IN ZONE 9",
+                     "Authorities have issued a level-2 advisory. All citizens are advised to avoid the lower industrial district until further notice.", true},
+                    {"CULTURE", "FOTOSHOPPE CO. RELEASES NEW AMBIENT COMPILATION",
+                     "The popular music label drops 'Home Screen (Extended)', available on AVA Music.", false},
+                };
+                for (int ni = 0; ni < 5; ni++) {
+                    SDL_Color catC = kNews[ni].alert ? SDL_Color{200,0,0,255} : UI::W98::Navy;
+                    ui_.drawText(kNews[ni].cat, cx + 12, py, 9, catC); py += 12;
+                    ui_.drawText(kNews[ni].head, cx + 12, py, 12, UI::W98::Black); py += 14;
+                    int bh = ui_.drawTextWrapped(kNews[ni].body, cx + 12, py, 10, BW - 30, UI::W98::Shadow);
+                    py += bh + 12;
+                    SDL_SetRenderDrawColor(renderer_, 200, 200, 200, 255);
+                    SDL_RenderDrawLine(renderer_, cx + 8, py, cx + BW - 12, py);
+                    py += 8;
+                }
+                break;
+            }
+            // ─────────────────────────────────────── PAGE 2: AVA Corp ────────
+            case 2: {
+                SDL_SetRenderDrawColor(renderer_, 20, 20, 60, 255);
+                SDL_Rect banner = {cx + 2, cy, BW - 4, 52};
+                SDL_RenderFillRect(renderer_, &banner);
+                ui_.drawText("AVA CORPORATION", cx + 12, cy + 6, 18, {200, 220, 255, 255});
+                ui_.drawText("Building Tomorrow's World - Today.", cx + 12, cy + 30, 11, {140, 160, 220, 255});
+                ui_.drawText("corp.ava:online | Est. 1987 | Citizens served: 2.1B", cx + 12, cy + 42, 9, {100,120,180,255});
+                py = cy + 64;
+
+                ui_.drawText("OUR DIVISIONS", cx + 12, py, 13, UI::W98::Navy); py += 18;
+
+                struct Div { const char* name; const char* desc; };
+                static const Div kDivs[] = {
+                    {"AVA OS", "The operating system powering 94% of the world's public infrastructure."},
+                    {"AVA Med", "Bio-link and neural interface healthcare solutions for every citizen."},
+                    {"AVA Net", "Global backbone fiber and relay network management."},
+                    {"AVA Sec", "Autonomous security and civil enforcement framework licensing."},
+                    {"AVA Agri", "Automated agricultural synthesis and caloric supply chain."},
+                };
+                for (auto& d : kDivs) {
+                    drawIcon(icConn, cx + 12, py + 1);
+                    ui_.drawText(d.name, cx + 32, py + 1, 12, UI::W98::Black); py += 14;
+                    int bh = ui_.drawTextWrapped(d.desc, cx + 32, py, 10, BW - 50, UI::W98::Shadow);
+                    py += bh + 10;
+                }
+
+                py += 4;
+                ui_.drawWin98Bevel(cx + 4, py, BW - 8, 2, false); py += 8;
+                ui_.drawText("AVA Corp. All rights reserved. Citizens are reminded that use of non-AVA networking tools",
+                    cx + 12, py, 9, UI::W98::Shadow); py += 12;
+                ui_.drawText("may violate Compliance Order 77-B. Report violations to Sector Authority.",
+                    cx + 12, py, 9, UI::W98::Shadow);
+                break;
+            }
+            // ─────────────────────────────────────── PAGE 3: SearchNet ───────
+            case 3: {
+                py = cy + 30;
+                // Logo
+                ui_.drawText("Search", cx + BW/2 - 80, py, 24, UI::W98::Navy);
+                ui_.drawText("Net", cx + BW/2 + 10, py, 24, {180, 0, 0, 255}); py += 34;
+                ui_.drawText("The AVA Search Engine", cx + BW/2 - 70, py, 10, UI::W98::Shadow); py += 24;
+
+                // search box (decorative)
+                ui_.drawWin98Bevel(cx + BW/2 - 200, py, 340, 24, false);
+                SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 255);
+                SDL_Rect sb = {cx + BW/2 - 198, py + 2, 336, 20}; SDL_RenderFillRect(renderer_, &sb);
+                ui_.drawText("_", cx + BW/2 - 194, py + 5, 11, UI::W98::Shadow);
+                py += 32;
+                ui_.win98Button(510, "Search", cx + BW/2 - 36, py, 72, 22, false);
+                ui_.win98Button(511, "Feeling Lucky", cx + BW/2 + 44, py, 100, 22, false);
+                py += 40;
+
+                ui_.drawWin98Bevel(cx + 4, py, BW - 8, 2, false); py += 10;
+                ui_.drawText("RECENT SEARCHES", cx + 12, py, 10, UI::W98::Shadow); py += 14;
+                static const char* kSearches[] = {
+                    "avacorp sector 7 incident", "\"PROJECT LONGHORN\" leak",
+                    "zone 9 what happened", "relay4 signal source",
+                    "how to remove neural link", "underground net access"
+                };
+                for (auto& s : kSearches) {
+                    drawIcon(icSearch, cx + 12, py);
+                    ui_.drawText(s, cx + 32, py + 1, 11, {0,0,180,255});
+                    py += 16;
+                }
+                break;
+            }
+            // ─────────────────────────────────────── PAGE 4: Underground ─────
+            case 4: {
+                int glitch = (int)(sinf(SDL_GetTicks() * 0.031f) * 3);
+                SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
+                SDL_Rect bg4 = {cx + 2, cy, BW - 4, CONTENT_H}; SDL_RenderFillRect(renderer_, &bg4);
+
+                static const char* kLines[] = {
+                    "UNSECURE CONNECTION",
+                    "",
+                    "if you are reading this, your terminal is made by AVA Corp. and running AVA OS.",
+                    "don't use your real name. don't use AVA-linked hardware.",
+                    "",
+                    "INCIDENT LOG - ZONE 9 - [CLASSIFIED]",
+                    "  unit count:      1",
+                    "  casualty fig.:   0",
+                    "  authorization:   forgotten war hardware, trivial bypass",
+                    "  status:          locked by operator N1",
+                    "",
+                    "If possible, avoid killing civilians, we don't need serious attention",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "this relay will be taken down, good luck, N1.",
+                    "",
+                    "EOF",
+                };
+                py = cy + 12;
+                for (int li = 0; li < 19; li++) {
+                    SDL_Color lc = (li == 0) ? SDL_Color{0,255,100,255}
+                                 : (kLines[li][0] == ' ') ? SDL_Color{160,160,160,255}
+                                 : SDL_Color{0,220,80,255};
+                    if (li == 0 || li == 5 || li == 13)
+                        lc = {0, 255, 100, 255};
+                    int jx = (li % 3 == 0) ? glitch : 0;
+                    ui_.drawText(kLines[li], cx + 14 + jx, py, 11, lc);
+                    py += 15;
+                }
+                break;
+            }
+            // ─────────────────────────────────────── PAGE 5: proj.bliss ──────
+            case 5: {
+                // header bar - calm government green
+                SDL_SetRenderDrawColor(renderer_, 30, 100, 50, 255);
+                SDL_Rect hdr5 = {cx + 2, cy, BW - 4, 32};
+                SDL_RenderFillRect(renderer_, &hdr5);
+                ui_.drawText("CITY ADMINISTRATION PORTAL", cx + 12, cy + 8, 14, {255, 255, 255, 255});
+                py = cy + 44;
+
+                // image - capped at 220px tall, aspect-ratio preserved
+                SDL_Texture* blissTex = Assets::instance().loadRelTex("sprites/projbliss.png");
+                if (blissTex) {
+                    int tw = 0, th = 0;
+                    SDL_QueryTexture(blissTex, nullptr, nullptr, &tw, &th);
+                    int dw = BW - 24;
+                    int dh = (th > 0) ? dw * th / tw : dw;
+                    if (dh > 220) { dh = 220; dw = (tw > 0) ? dh * tw / th : 220; }
+                    SDL_Rect dst = {cx + (BW - dw) / 2, py, dw, dh};
+                    SDL_RenderCopy(renderer_, blissTex, nullptr, &dst);
+                    py += dh + 10;
+                } else {
+                    // fallback placeholder
+                    SDL_SetRenderDrawColor(renderer_, 160, 200, 160, 255);
+                    SDL_Rect ph = {cx + 12, py, BW - 30, 80};
+                    SDL_RenderFillRect(renderer_, &ph);
+                    ui_.drawText("[image: projbliss.png]", cx + 20, py + 30, 11, UI::W98::Shadow);
+                    py += 90;
+                }
+
+                // announcement text
+                ui_.drawText("New zone is soon to be opened!", cx + 12, py, 13, {30, 100, 50, 255});
+                py += 18;
+                ui_.drawWin98Bevel(cx + 4, py, BW - 8, 2, false); py += 8;
+
+                static const char* kBlissText[] = {
+                    "Hello, fellow citizens! The city and AVA Corp are happy to announce",
+                    "that subzone 12F - BLISS - is about to be opened for public use",
+                    "and housing!",
+                    "",
+                    "The new beautiful park and expanded housing space will allow more",
+                    "people to enjoy our city. Opening day is speculated to be set as",
+                    "the date of the AVA Longhorn release, which will be announced",
+                    "tomorrow.",
+                    "",
+                    "Thank you for reading this.",
+                    "- City Administration",
+                };
+                for (auto& line : kBlissText) {
+                    if (line[0] == '\0') { py += 6; continue; }
+                    SDL_Color lc = (line[0] == '\xe2' || std::string(line).find("City Administration") != std::string::npos)
+                        ? UI::W98::Shadow : UI::W98::Black;
+                    ui_.drawText(line, cx + 12, py, 11, lc);
+                    py += 14;
+                }
+                break;
+            }
+            }
+
+            SDL_RenderSetClipRect(renderer_, prevClip.w > 0 ? &prevClip : nullptr);
+
+            // ── Status bar ───────────────────────────────────────────────────
+            int sbY = browserWinY_ + BH - STATUS_H;
+            SDL_SetRenderDrawColor(renderer_, 212, 208, 200, 255);
+            SDL_Rect sbBg = {cx + 2, sbY, BW - 4, STATUS_H};
+            SDL_RenderFillRect(renderer_, &sbBg);
+            ui_.drawWin98Bevel(cx + 2, sbY, BW - 4, STATUS_H, true);
+            char statusLine[80];
+            snprintf(statusLine, sizeof(statusLine), "Done    %s", kPages[pg].url);
+            ui_.drawText(statusLine, cx + 6, sbY + 4, 10, UI::W98::Black);
+        }
+    }
+
+    // ── Credits window ────────────────────────────────────────────────────────
+    if (creditsOpen_) {
+        const int CW = 420, CH = 380;
+        if (!creditsInit_) {
+            creditsInit_ = true;
+            creditsWinX_ = (SCREEN_W - CW) / 2;
+            creditsWinY_ = (SCREEN_H - CH) / 2;
+        }
+        creditsWinX_ = std::max(0, std::min(SCREEN_W - CW, creditsWinX_));
+        creditsWinY_ = std::max(0, std::min(SCREEN_H - CH, creditsWinY_));
+
+        bool oTit = ui_.pointInRect(ui_.mouseX, ui_.mouseY,
+                        creditsWinX_, creditsWinY_, CW - 22, UI::W98::TitleH);
+        if (oTit && ui_.mouseClicked) {
+            creditsDragging_ = true;
+            creditsDragOX_ = ui_.mouseX - creditsWinX_;
+            creditsDragOY_ = ui_.mouseY - creditsWinY_;
+            ui_.mouseClicked = false;
+        }
+        if (!ui_.mouseDown) creditsDragging_ = false;
+        if (creditsDragging_) {
+            creditsWinX_ = std::max(0, std::min(SCREEN_W - CW, ui_.mouseX - creditsDragOX_));
+            creditsWinY_ = std::max(0, std::min(SCREEN_H - CH, ui_.mouseY - creditsDragOY_));
+        }
+
+        // close button
+        const int cbSz = UI::W98::TitleH - 4;
+        if (ui_.mouseClicked && ui_.pointInRect(ui_.mouseX, ui_.mouseY,
+                creditsWinX_ + CW - 3 - cbSz, creditsWinY_ + 2, cbSz, cbSz)) {
+            creditsOpen_ = false;
+            ui_.mouseClicked = false;
+        }
+
+        if (creditsOpen_) {
+            ui_.drawWin98Window(creditsWinX_, creditsWinY_, CW, CH, "Credits");
+            int cx = creditsWinX_ + 10;
+            int cy = creditsWinY_ + UI::W98::TitleH + 10;
+
+
+            struct Section { const char* title; const char* entries[6]; int n; };
+            static const Section kSections[] = {
+                { "DEVELOPMENT", {
+                    "etonedemid",
+                    nullptr, nullptr, nullptr, nullptr, nullptr
+                }, 1 },
+                { "MUSIC", {
+                    "FOTOSHOPPE CO.",
+                    "kyledeadman", nullptr, nullptr, nullptr, nullptr
+                }, 2 },
+                { "TECHNOLOGY", {
+                    "SDL2 - libsdl.org",
+                    "SDL2_image, SDL2_ttf, SDL2_mixer",
+                    "ENet - sauerbraten.org/enet",
+                    nullptr, nullptr, nullptr
+                }, 3 },
+                { "SPECIAL THANKS", {
+                    "win98icons.alexmeub.com",
+                    "pixabay.com",
+                    "deav",
+                    nullptr, nullptr, nullptr
+                }, 3 },
+                { "Misc", {
+                    "",
+                    "",
+                    nullptr, nullptr, nullptr, nullptr
+                }, 2 },
+            };
+
+            for (auto& sec : kSections) {
+                // section header
+                SDL_SetRenderDrawColor(renderer_, 200, 200, 200, 255);
+                SDL_RenderDrawLine(renderer_, cx, cy + 7, creditsWinX_ + CW - 10, cy + 7);
+                ui_.drawText(sec.title, cx, cy, 10, UI::W98::Shadow);
+                cy += 13;
+                for (int e = 0; e < sec.n; e++) {
+                    if (!sec.entries[e]) break;
+                    ui_.drawText(sec.entries[e], cx + 8, cy, 11, UI::W98::Black);
+                    cy += 14;
+                }
+                cy += 4;
+            }
+
+            // bottom close button
+            const int btnW2 = 80, btnH2 = 22;
+            int bbX = creditsWinX_ + (CW - btnW2) / 2;
+            int bbY = creditsWinY_ + CH - btnH2 - 8;
+            if (ui_.win98Button(600, "Close", bbX, bbY, btnW2, btnH2, false))
+                creditsOpen_ = false;
+        }
     }
 
     // ── Log-off confirmation dialog (modal overlay) ──────────────────────────

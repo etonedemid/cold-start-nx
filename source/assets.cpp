@@ -42,6 +42,16 @@ bool Assets::init(SDL_Renderer* renderer) {
     return true;
 }
 
+std::string Assets::prefix() { return assetPrefix(); }
+
+SDL_Texture* Assets::loadRelTex(const std::string& relPath) {
+    auto it = textures_.find(relPath);
+    if (it != textures_.end()) return it->second;
+    SDL_Texture* t = loadTex(assetPrefix() + relPath);
+    if (t) textures_[relPath] = t;
+    return t;
+}
+
 void Assets::shutdown() {
     for (auto& [k,v] : textures_) SDL_DestroyTexture(v);
     for (auto& [k,v] : chunks_)   Mix_FreeChunk(v);

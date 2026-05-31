@@ -118,7 +118,7 @@ struct Mod {
     bool loadFromFolder(const std::string& path);
 };
 
-// ── Mod Manager — scans, loads, manages all mods ──
+// ── Mod Manager - scans, loads, manages all mods ──
 class ModManager {
 public:
     static ModManager& instance();
