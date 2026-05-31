@@ -73,7 +73,7 @@ void Game::renderMultiplayerSplitscreen() {
             }
         }
 
-        // Box fragments — fade out and shrink as they age
+        // Box fragments - fade out and shrink as they age
         for (auto& f : boxFragments_) {
             if (!f.alive) continue;
             float frac = f.age / f.lifetime;
@@ -96,7 +96,7 @@ void Game::renderMultiplayerSplitscreen() {
                 int idx = cp.legAnimFrame % (int)legSprites_.size();
                 renderSprite(legSprites_[idx], cp.pos, cp.legRotation + (float)M_PI/2, 1.5f);
             }
-            // Body — tint by slot color; flash white when invulnerable, blue when parrying
+            // Body - tint by slot color; flash white when invulnerable, blue when parrying
             if (!playerSprites_.empty()) {
                 int idx = cp.animFrame % (int)playerSprites_.size();
                 Vec2 bodyPos = cp.pos + Vec2::fromAngle(cp.rotation) * 6.f;
@@ -244,7 +244,7 @@ void Game::renderMultiplayerSplitscreen() {
                 SDL_Rect full = {0, 0, vp.w, vp.h};
                 SDL_RenderFillRect(renderer_, &full);
             }
-            // Screen flash (pickups, explosions, etc.) — renderUI() isn't called in coop so draw it here
+            // Screen flash (pickups, explosions, etc.) - renderUI() isn't called in coop so draw it here
             if (screenFlashTimer_ > 0) {
                 float a = std::min(0.35f, (screenFlashTimer_ / 0.12f) * 0.35f);
                 SDL_SetRenderDrawColor(renderer_, (Uint8)screenFlashR_, (Uint8)screenFlashG_,
@@ -514,7 +514,7 @@ void Game::setupNetworkCallbacks() {
         }
     };
 
-    // Enemy killed notification from host — kill locally on clients (with effects)
+    // Enemy killed notification from host - kill locally on clients (with effects)
     net.onEnemyKilled = [this](uint32_t enemyIdx, uint8_t killerId) {
         // Credit the bomb counter if WE made this kill; otherwise just sync the death
         if (enemyIdx < enemies_.size() && enemies_[enemyIdx].alive) {
@@ -539,7 +539,7 @@ void Game::setupNetworkCallbacks() {
         currentRules_.friendlyFire = settings.friendlyFire;
         currentRules_.upgradesShared = settings.upgradesShared;
         currentRules_.teamCount = settings.teamCount;
-        printf("Game: Config sync received — isPvp=%d pvp=%d ff=%d shared=%d teams=%d\n",
+        printf("Game: Config sync received - isPvp=%d pvp=%d ff=%d shared=%d teams=%d\n",
                (int)settings.isPvp, (int)settings.pvpEnabled, (int)settings.friendlyFire,
                (int)settings.upgradesShared, settings.teamCount);
     };
@@ -608,7 +608,7 @@ void Game::setupNetworkCallbacks() {
                 return;
             }
         }
-        // No orbiting bomb found — create a launched one (fallback)
+        // No orbiting bomb found - create a launched one (fallback)
         Bomb bomb;
         bomb.ownerId = playerId;
         bomb.ownerSubSlot = playerSlot;
@@ -845,7 +845,7 @@ void Game::setupNetworkCallbacks() {
                 break;
             }
         }
-        // Allow even if bullet wasn't found locally — network ordering may differ
+        // Allow even if bullet wasn't found locally - network ordering may differ
         if (targetSlot == 0) {
             NetPlayer* victim = net.findPlayer(senderPlayerId);
             if (!victim || !victim->alive) return false;
@@ -933,7 +933,7 @@ void Game::setupNetworkCallbacks() {
         }
     };
 
-    // Receive authoritative HP from host — update local player if it's ours
+    // Receive authoritative HP from host - update local player if it's ours
     net.onPlayerHpSync = [this](uint8_t playerId, int hp, int maxHp, uint8_t killerId) {
         auto& net = NetworkManager::instance();
         if (playerId == net.localPlayerId()) {
@@ -968,7 +968,7 @@ void Game::setupNetworkCallbacks() {
     };
 
     net.onEnemyBulletSpawned = [this](Vec2 pos, Vec2 vel) {
-        // Clients only — spawn the bullet locally for visuals and local collision
+        // Clients only - spawn the bullet locally for visuals and local collision
         auto& net2 = NetworkManager::instance();
         if (net2.isHost()) return;
         Entity b;
@@ -1088,7 +1088,7 @@ void Game::setupNetworkCallbacks() {
             config_.mapHeight = mapH;
 
             if (!customMapData.empty()) {
-                // Custom map was sent — write temp file and load it
+                // Custom map was sent - write temp file and load it
                 std::string tmpPath = "maps/_mp_recv.csm";
                 mkdir("maps", 0755);
                 FILE* f = fopen(tmpPath.c_str(), "wb");
@@ -1270,7 +1270,7 @@ void Game::setupNetworkCallbacks() {
     };
 
     net.onModSyncReceived = [this](const std::vector<uint8_t>& modData) {
-        // Client received mod data from host — install and apply
+        // Client received mod data from host - install and apply
         printf("Game: Received mod sync from host, installing...\n");
         auto& mm = ModManager::instance();
         mm.deserializeAndInstallMods(modData, config_.saveIncomingModsPermanently);
@@ -1282,7 +1282,7 @@ void Game::setupNetworkCallbacks() {
     net.onAdminKicked = [this](uint8_t targetId) {
         auto& net2 = NetworkManager::instance();
         if (targetId == net2.localPlayerId()) {
-            // We were kicked — return to main menu
+            // We were kicked - return to main menu
             net2.disconnect();
             playMenuMusic();
             state_         = GameState::MainMenu;
@@ -1347,7 +1347,7 @@ void Game::updateMultiplayer(float dt) {
     auto& net = NetworkManager::instance();
     if (!net.isOnline()) {
         clearSyncedCharacters();
-        // Connection lost — return to main menu
+        // Connection lost - return to main menu
         if (state_ == GameState::MultiplayerGame ||
             state_ == GameState::MultiplayerPaused ||
             state_ == GameState::MultiplayerDead ||
@@ -1362,13 +1362,13 @@ void Game::updateMultiplayer(float dt) {
 
     syncLocalCharacterSelection();
 
-    // NOTE: net.update(dt) is already called in run() every frame — do NOT call again here
+    // NOTE: net.update(dt) is already called in run() every frame - do NOT call again here
 
     // Send local player state at fixed rate
     if (net.isInGame()) {
         netStateSendTimer_ -= dt;
         if (netStateSendTimer_ <= 0) {
-            netStateSendTimer_ = 1.0f / 20.0f; // 20 Hz — interpolation handles smooth display
+            netStateSendTimer_ = 1.0f / 20.0f; // 20 Hz - interpolation handles smooth display
 
             NetPlayer state;
             state.id = net.localPlayerId();
@@ -1805,7 +1805,7 @@ void Game::startMultiplayerGame() {
     uint32_t mapSeed = (uint32_t)time(nullptr) ^ (uint32_t)rand();
     mapSrand(mapSeed);
 
-    // Start the game — use generated map
+    // Start the game - use generated map
     {
         bool savedIsPvp = lobbySettings_.isPvp; // startGame() resets this to false
         startGame();
@@ -1830,7 +1830,7 @@ void Game::startMultiplayerGame() {
             for (int i = 0; i < 4; i++) {
                 if (!coopSlots_[i].joined) continue;
                 if (si == 0) {
-                    // Slot 0 = primary player — already initialised by startGame()
+                    // Slot 0 = primary player - already initialised by startGame()
                     coopSlots_[i].player   = player_;
                     coopSlots_[i].upgrades = upgrades_;
                 } else {

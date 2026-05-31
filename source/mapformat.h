@@ -8,7 +8,7 @@
 //   Trigger array (count * MapTrigger)
 //   Enemy spawn count (uint16_t)
 //   Enemy spawn array (count * EnemySpawn)
-//   Custom tile paths (null-separated strings) — for editor tile references
+//   Custom tile paths (null-separated strings) - for editor tile references
 // ─────────────────────────────────────────────────────────────────────────────
 #include "vec2.h"
 #include <cstdint>
@@ -24,7 +24,7 @@ enum class TriggerType : uint8_t {
     LevelEnd         = 1, // goal (configurable unlock condition)
     Crate            = 2, // breakable crate with optional loot
     Effect           = 3, // visual/audio effect zone
-    // Team spawn points (PvP / team modes — team index 0–3)
+    // Team spawn points (PvP / team modes - team index 0–3)
     TeamSpawnRed     = 10, // team 0 spawn
     TeamSpawnBlue    = 11, // team 1 spawn
     TeamSpawnGreen   = 12, // team 2 spawn

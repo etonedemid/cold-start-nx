@@ -1,4 +1,4 @@
-// ─── COLD START — Android App Module ────────────────────────────────────────
+// ─── COLD START - Android App Module ────────────────────────────────────────
 
 plugins {
     id("com.android.application")
@@ -13,8 +13,8 @@ android {
         applicationId = "com.coldstart.game"
         minSdk = 21
         targetSdk = 34
-        versionCode = 19
-        versionName = "1.9.0"
+        versionCode = 20
+        versionName = "2.0.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")

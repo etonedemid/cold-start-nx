@@ -32,7 +32,7 @@ void TouchControls::compute() {
     aimStick  = {0, 0};
     fire = melee = bomb = parry = pauseBtn = false;
     anyActive = false;
-    // togglePressed is NOT cleared here — caller clears it after reading
+    // togglePressed is NOT cleared here - caller clears it after reading
 
     const float us     = lastScale_;
     const float stickR = 75.f * us;
@@ -120,13 +120,13 @@ bool TouchControls::handleEvent(const SDL_Event& e, float uiScale) {
         if (!visible_) return false;
 
         int slot = allocSlot(e.tfinger.fingerId, lx, ly);
-        if (slot < 0) return true;  // no free slot — consume to avoid ghost inputs
+        if (slot < 0) return true;  // no free slot - consume to avoid ghost inputs
 
         Zone z = hitZone(lx, ly, us);
         fingers_[slot].zone = z;
 
         if (z == ZONE_NONE) {
-            // Not in any control zone — release slot and let the UI handle it
+            // Not in any control zone - release slot and let the UI handle it
             fingers_[slot].active = false;
             return false;
         }

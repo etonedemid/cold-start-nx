@@ -371,7 +371,7 @@ void Game::playActionMusic() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  SoftKeyboard — centralized on-screen keyboard for all text input
+//  SoftKeyboard - centralized on-screen keyboard for all text input
 // ═════════════════════════════════════════════════════════════════════════════
 void Game::shutdown() {
     shutdownMultiplayer();
@@ -379,7 +379,7 @@ void Game::shutdown() {
     for (auto& cd : availableChars_) cd.unload();
     clearSyncedCharacters();
     ui_.shutdown();
-    // Halt music BEFORE Assets::shutdown() frees the Mix_Music* pointers —
+    // Halt music BEFORE Assets::shutdown() frees the Mix_Music* pointers -
     // SDL_mixer reads freed memory if a track is still playing when freed.
     Mix_HaltMusic();
     if (customMapMusic_) { Mix_FreeMusic(customMapMusic_); customMapMusic_ = nullptr; }
@@ -447,7 +447,7 @@ void Game::rumbleForSlot(int slot, float strength, int durationMs, float lowBand
     if (!targetController) targetController = activeController_;
 
 #ifdef __SWITCH__
-    // Always use native HID vibration on Switch — SDL_GameControllerRumble is
+    // Always use native HID vibration on Switch - SDL_GameControllerRumble is
     // unreliable for Joy-Cons through the devkitpro SDL2 port.
     {
         HidVibrationValue value = makeSwitchVibrationValue(strength, lowBandScale, highBandScale);
@@ -945,7 +945,7 @@ void Game::update() {
             if (coopSlot0Alive && player_.dead) coopSlots_[0].deaths++;
         }
 
-        // Camera — co-op/splitscreen cameras are updated inside updateLocalCoopPlayers
+        // Camera - co-op/splitscreen cameras are updated inside updateLocalCoopPlayers
         if (!isCoopState && !isMPSplitscreen) {
             Vec2 aimDir = {0,0};
             if (aimInput_.lengthSq() > 0.04f) aimDir = aimInput_.normalized();
@@ -1159,7 +1159,7 @@ void Game::consoleExec(const char* cmd) {
         else if (strcmp(typeName, "boss_brute") == 0) etype = EnemyType::BossBrute;
         else if (strcmp(typeName, "boss_sniper")== 0) etype = EnemyType::BossSniper;
         else if (strcmp(typeName, "boss_gunner")== 0) etype = EnemyType::BossGunner;
-        else { consoleOut("unknown type — melee/shooter/brute/scout/sniper/gunner/boss_brute/boss_sniper/boss_gunner"); known = false; }
+        else { consoleOut("unknown type - melee/shooter/brute/scout/sniper/gunner/boss_brute/boss_sniper/boss_gunner"); known = false; }
         if (known) {
             count = std::max(1, std::min(count, 20));
             for (int i = 0; i < count; i++) spawnEnemy(pickEnemySpawnPos(), etype);
