@@ -236,7 +236,7 @@ void MapEditor::scanTileFolder(const std::string& folder, const std::string& cat
 
     // Skip transition sprites and internal rendering assets
     auto shouldSkip = [](const std::string& s) -> bool {
-        // gravel-grass transition variants — not user-placeable tiles
+        // gravel-grass transition variants - not user-placeable tiles
         if (s.size() >= 12 && s.substr(0, 12) == "gravel-grass") return true;
         return false;
     };
@@ -292,7 +292,7 @@ void MapEditor::scanTileFolder(const std::string& folder, const std::string& cat
             }
             et.tileType = (customSlot >= 0) ? (uint8_t)(TILE_CUSTOM_0 + customSlot) : defaultType;
         } else {
-            // Truly unknown file — assign custom slot
+            // Truly unknown file - assign custom slot
             int customSlot = -1;
             for (int cs = 0; cs < 8; cs++) {
                 bool used = false;
@@ -966,10 +966,10 @@ void MapEditor::paintTile(int tx, int ty) {
         auto& pt = palette_[selectedPalette_];
         int idx = ty * map_.width + tx;
         if (pt.category == "ceiling") {
-            // Ceiling tiles go into the ceiling layer — leave the floor tile unchanged
+            // Ceiling tiles go into the ceiling layer - leave the floor tile unchanged
             map_.ceiling[idx] = CEIL_GLASS;
         } else {
-            // Floor / walls / props go into the tiles layer — leave ceiling layer unchanged
+            // Floor / walls / props go into the tiles layer - leave ceiling layer unchanged
             map_.tiles[idx] = pt.tileType;
         }
     }
@@ -1332,7 +1332,7 @@ void MapEditor::renderEntitySpawns(SDL_Renderer* renderer) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  Move Handles — grab ball for selected object
+//  Move Handles - grab ball for selected object
 // ═════════════════════════════════════════════════════════════════════════════
 
 void MapEditor::renderMoveHandles(SDL_Renderer* renderer) {
@@ -2371,7 +2371,7 @@ void MapEditor::renderConfig(SDL_Renderer* renderer) {
         // Label on the left
         ui_->drawText(label, rx + 8, y + 6, 14, sel ? UI::W98::Navy : UI::W98::Black);
 
-        // Sunken value box in the middle — editable for numeric fields 1/2
+        // Sunken value box in the middle - editable for numeric fields 1/2
         bool numEditing = cfg.textEditing && cfg.field == idx && (idx == 1 || idx == 2);
         float blinkT = numEditing ? (float)fmod(SDL_GetTicks() * 0.001, 1.0) : 0.0f;
         const char* displayVal = numEditing ? cfg.textBuf.c_str() : value;

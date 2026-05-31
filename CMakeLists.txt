@@ -1,4 +1,4 @@
-# ─── COLD START — Cross-platform CMake Build ────────────────────────────────
+# ─── COLD START - Cross-platform CMake Build ────────────────────────────────
 #
 # Targets:
 #   Linux:   cmake -B build-pc && cmake --build build-pc -j$(nproc)
@@ -25,7 +25,7 @@ option(SERVER_ONLY "Build headless dedicated server without SDL (Linux only)" OF
 # ── Source files ─────────────────────────────────────────────────────────────
 
 if(SERVER_ONLY)
-    # Headless dedicated server — only the networking + minimal game logic
+    # Headless dedicated server - only the networking + minimal game logic
     set(SOURCES
         source/server_main.cpp
         source/network.cpp
@@ -57,7 +57,7 @@ if(WIN32)
     find_package(SDL2_mixer CONFIG REQUIRED)
 
     if(MINGW)
-        # Static linking — produces a single portable .exe
+        # Static linking - produces a single portable .exe
         if(CMAKE_CROSSCOMPILING AND EXISTS /usr/x86_64-w64-mingw32/static/lib)
             target_link_directories(cold_start BEFORE PRIVATE
                 /usr/x86_64-w64-mingw32/static/lib)
@@ -69,12 +69,37 @@ if(WIN32)
             SDL2_ttf::SDL2_ttf-static
             SDL2_mixer::SDL2_mixer-static)
 
-        target_link_options(cold_start PRIVATE
-            -static-libgcc -static-libstdc++
-            -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive,-Bdynamic
-            -mwindows)
+        # libwinpthread.a ships a version.o with its own VERSIONINFO resource.
+        # --whole-archive forces it in and clashes with the one in app.rc.
+        # Strip the .rsrc section from a local copy and link that instead.
+        find_program(OBJCOPY_EXE NAMES objcopy x86_64-w64-mingw32-objcopy)
+        if(OBJCOPY_EXE)
+            execute_process(
+                COMMAND ${CMAKE_C_COMPILER} --print-file-name=libwinpthread.a
+                OUTPUT_VARIABLE WINPTHREAD_LIB OUTPUT_STRIP_TRAILING_WHITESPACE)
+            set(WINPTHREAD_STRIPPED "${CMAKE_BINARY_DIR}/libwinpthread_nores.a")
+            find_program(AR_EXE NAMES ar x86_64-w64-mingw32-ar llvm-ar)
+            add_custom_command(
+                OUTPUT  "${WINPTHREAD_STRIPPED}"
+                COMMAND ${CMAKE_COMMAND} -E copy "${WINPTHREAD_LIB}" "${WINPTHREAD_STRIPPED}"
+                COMMAND "${AR_EXE}" d "${WINPTHREAD_STRIPPED}" version.o
+                DEPENDS "${WINPTHREAD_LIB}"
+                COMMENT "Removing version.o from libwinpthread.a to avoid VERSIONINFO clash"
+            )
+            add_custom_target(winpthread_nores DEPENDS "${WINPTHREAD_STRIPPED}")
+            add_dependencies(cold_start winpthread_nores)
+            target_link_options(cold_start PRIVATE
+                -static-libgcc -static-libstdc++
+                -Wl,-Bstatic,--whole-archive "${WINPTHREAD_STRIPPED}" -Wl,--no-whole-archive,-Bdynamic
+                -mwindows)
+        else()
+            target_link_options(cold_start PRIVATE
+                -static-libgcc -static-libstdc++
+                -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive,-Bdynamic
+                -mwindows)
+        endif()
     else()
-        # MSVC / vcpkg — dynamic linking
+        # MSVC / vcpkg - dynamic linking
         target_link_libraries(cold_start PRIVATE
             SDL2::SDL2main SDL2::SDL2
             SDL2_image::SDL2_image
@@ -119,7 +144,7 @@ else()
             ${SDL2_TTF_LIBRARIES} ${SDL2_MIXER_LIBRARIES})
     else()
         target_compile_definitions(cold_start PRIVATE DEDICATED_SERVER=1)
-        message(STATUS "SERVER_ONLY build — SDL omitted")
+        message(STATUS "SERVER_ONLY build - SDL omitted")
     endif()
 
     # ENet: try system package, fall back to bundled sources
@@ -137,17 +162,17 @@ else()
     endif()
     target_compile_definitions(cold_start PRIVATE HAS_ENET=1)
 
-    # miniupnpc (optional — UPnP port forwarding for hosting, not needed server-side)
+    # miniupnpc (optional - UPnP port forwarding for hosting, not needed server-side)
     if(NOT SERVER_ONLY)
         pkg_check_modules(MINIUPNPC miniupnpc)
         if(MINIUPNPC_FOUND)
             target_include_directories(cold_start PRIVATE ${MINIUPNPC_INCLUDE_DIRS})
             target_link_libraries(cold_start ${MINIUPNPC_LIBRARIES})
             target_compile_definitions(cold_start PRIVATE HAS_UPNP=1)
-            message(STATUS "miniupnpc: found — UPnP enabled")
+            message(STATUS "miniupnpc: found - UPnP enabled")
         else()
             target_compile_definitions(cold_start PRIVATE HAS_UPNP=0)
-            message(STATUS "miniupnpc: not found — UPnP disabled")
+            message(STATUS "miniupnpc: not found - UPnP disabled")
         endif()
     else()
         target_compile_definitions(cold_start PRIVATE HAS_UPNP=0)

@@ -1,6 +1,6 @@
 // ─── discord_rpc.cpp ── Minimal Discord Rich Presence via IPC ────────────────
 // Connects to the Discord desktop client's local IPC socket/pipe and sends
-// SET_ACTIVITY commands.  No external dependency — pure Win32 / POSIX sockets.
+// SET_ACTIVITY commands.  No external dependency - pure Win32 / POSIX sockets.
 // Stubs out to no-ops on non-PC platforms (Switch, Android, server).
 #include "discord_rpc.h"
 
@@ -185,7 +185,7 @@ void DiscordRPC::pumpRead() {
     if (pipe_ == (void*)(intptr_t)-1) return;
     DWORD avail = 0;
     if (!PeekNamedPipe((HANDLE)pipe_, nullptr, 0, nullptr, &avail, nullptr)) {
-        // Pipe broken — mark disconnected
+        // Pipe broken - mark disconnected
         CloseHandle((HANDLE)pipe_);
         pipe_ = (void*)(intptr_t)-1;
         connected_ = shook_ = false;
@@ -201,7 +201,7 @@ void DiscordRPC::pumpRead() {
     ssize_t n;
     while ((n = ::recv(fd_, tmp, sizeof(tmp), 0)) > 0) {}
     if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
-        // Peer closed or real error — reconnect next tick
+        // Peer closed or real error - reconnect next tick
         ::close(fd_);
         fd_ = -1;
         connected_ = shook_ = false;
@@ -242,7 +242,7 @@ void DiscordRPC::flushPending() {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 void DiscordRPC::init() {
-    // Lazy — first tick handles connection
+    // Lazy - first tick handles connection
     retryTimer_ = 1.0f; // small grace period at startup
 }
 

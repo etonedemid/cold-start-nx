@@ -71,12 +71,12 @@ struct Enemy {
     float shootSpread       = 0.0f;
     float renderScale       = 3.0f;
 
-    // Leg animation (melee enemies only — reuses player leg sprites as placeholder)
+    // Leg animation (melee enemies only - reuses player leg sprites as placeholder)
     float legAnimTimer = 0;
     int   legAnimFrame = 0;
     float legRotation  = 0;
 
-    // Per-enemy randomized orbit offset — prevents enemies piling up at the same radius
+    // Per-enemy randomized orbit offset - prevents enemies piling up at the same radius
     float strafeOrbitOffset = 0.0f;  // set at spawn, range ±80 px
 
     // Damage resistance

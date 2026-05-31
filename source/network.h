@@ -313,7 +313,7 @@ public:
     void sendAdminRespawn(uint8_t targetId);  // host only
     void sendAdminTeamMove(uint8_t targetId, int8_t newTeam); // host only
     void sendLivesUpdate(uint8_t playerId, int lives); // host only
-    void sendGameEnd(uint8_t reason = 0);  // host only — ends game; reason: 0=HostEnded,1=WavesCleared,2=TeamWiped,3=LastAlive,4=TimeUp
+    void sendGameEnd(uint8_t reason = 0);  // host only - ends game; reason: 0=HostEnded,1=WavesCleared,2=TeamWiped,3=LastAlive,4=TimeUp
     void sendLocalCharacterSync(const std::string& characterName, bool isDefault, const std::vector<uint8_t>& data);
     void sendCharacterSyncForPlayer(uint8_t ownerId, const std::string& characterName,
                                     bool isDefault, const std::vector<uint8_t>& data,

@@ -1,4 +1,4 @@
-# ─── COLD START — Android Native Build ───────────────────────────────────────
+# ─── COLD START - Android Native Build ───────────────────────────────────────
 
 cmake_minimum_required(VERSION 3.14)
 project(cold_start_android LANGUAGES C CXX)

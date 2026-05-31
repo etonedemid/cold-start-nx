@@ -105,13 +105,14 @@ struct Context {
     SDL_Texture*  desktopBg = nullptr; // optional background image for drawDesktop()
     TextCache     textCache;
 
-    // Mouse / touch state — updated each frame from SDL events
+    // Mouse / touch state - updated each frame from SDL events
     int  mouseX  = 0;
     int  mouseY  = 0;
     bool mouseClicked  = false;  // true the frame button was pressed
     bool mouseReleased = false;  // true the frame button was released
     bool mouseDown     = false;  // held
     bool touchActive   = false;  // a finger is touching
+    int  mouseWheelY   = 0;      // scroll ticks this frame (positive = up)
 
     // Last input device
     bool usingGamepad = false;
@@ -186,7 +187,7 @@ struct Context {
     // Teal desktop fill
     void drawDesktop();
 
-    // 3D bevel border — raised=true for buttons, false for sunken panels/fields
+    // 3D bevel border - raised=true for buttons, false for sunken panels/fields
     void drawWin98Bevel(int x, int y, int w, int h, bool raised);
 
     // Full window chrome: silver bg + bevel + navy title bar + close button

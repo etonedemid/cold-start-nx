@@ -50,7 +50,7 @@ enum class UpgradeType : uint8_t {
     QuickParry,     // -1s parry cooldown (stackable)
     ParrySurge,     // parry deals 2x damage, stronger knockback
     ReactiveParry,  // parry window is 2x wider
-    // Negative (cursed) — rare
+    // Negative (cursed) - rare
     SlowDown,       // -movement speed
     GlassCannon,    // +damage but -HP
     COUNT
@@ -134,7 +134,7 @@ struct PlayerUpgrades {
 
 // ── Crate sprite drawing (procedural pixel art) ──
 // These draw crate/pickup sprites directly via SDL primitives
-// so no external PNG is needed — but mods can override with textures.
+// so no external PNG is needed - but mods can override with textures.
 void drawCratePixelArt(SDL_Renderer* r, int cx, int cy, int size, float bob, bool glow);
 void drawPickupPixelArt(SDL_Renderer* r, int cx, int cy, int size, UpgradeType type, float bob, float flash);
 

@@ -327,7 +327,7 @@ bool Mod::loadFromFolder(const std::string& path) {
         }
     }
 
-    printf("Mod loaded: %s (%s) by %s — chars:%zu maps:%zu packs:%zu items:%zu gamemodes:%zu\n",
+    printf("Mod loaded: %s (%s) by %s - chars:%zu maps:%zu packs:%zu items:%zu gamemodes:%zu\n",
         name.c_str(), id.c_str(), author.c_str(),
         characterPaths.size(), mapPaths.size(), packPaths.size(),
         items.size(), gamemodes.size());
@@ -649,7 +649,7 @@ std::vector<uint8_t> ModManager::serializeEnabledMods() const {
                 memcpy(result.data() + pos + 2 + pathLen + 4, f.data.data(), dataLen);
         }
 
-        printf("ModSync: serialized mod '%s' — %u files\n", m.id.c_str(), numFiles);
+        printf("ModSync: serialized mod '%s' - %u files\n", m.id.c_str(), numFiles);
         numMods++;
     }
 

@@ -176,6 +176,7 @@ void Context::beginFrame(float frameDt, bool gamepad) {
     dt = frameDt;
     usingGamepad = gamepad;
     buttonFired = false;
+    mouseWheelY = 0;
     textCache.beginFrame();
 
     // Save previous frame hover for click-through in handleInput

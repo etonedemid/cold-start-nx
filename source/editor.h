@@ -101,7 +101,7 @@ public:
     bool isActive() const { return active_; }
     void setActive(bool v) { active_ = v; }
 
-    // Test play — set by editor, checked by Game
+    // Test play - set by editor, checked by Game
     bool wantsTestPlay() const { return wantsTestPlay_; }
     void clearTestPlay() { wantsTestPlay_ = false; }
     CustomMap& getMap() { return map_; }
@@ -195,7 +195,7 @@ private:
     // Test play
     bool wantsTestPlay_ = false;
 
-    // Map Properties panel (player config, game mode — editable from within the editor)
+    // Map Properties panel (player config, game mode - editable from within the editor)
     bool showMapProps_      = false;
     int  mapPropsField_     = 0;   // 0..8: gamemode, abilities×5, maxhp, startbombs, speed, damage
     int  mapPropsAbilSlot_  = 0;   // which ability sub-button is selected (0-4)

@@ -59,7 +59,7 @@ static int autoDetectLegFrames(const std::string& folder) {
 }
 
 static int autoDetectDeathFrames(const std::string& folder) {
-    // Death frames can be death-1.png or death-0001.png — try both
+    // Death frames can be death-1.png or death-0001.png - try both
     int count = CharacterDef::countFiles(folder, "death-%d.png");
     if (count == 0)
         count = CharacterDef::countFiles(folder, "death-%04d.png");
@@ -122,7 +122,7 @@ bool CharacterDef::loadSprites(SDL_Renderer* renderer) {
         }
     }
 
-    // Load death sprites — try death-1.png first, fall back to death-0001.png
+    // Load death sprites - try death-1.png first, fall back to death-0001.png
     deathSprites.clear();
     bool useZeroPadDeath = !fileExists(folder + "death-1.png") && fileExists(folder + "death-0001.png");
     for (int i = 1; i <= deathFrames; i++) {
@@ -354,9 +354,9 @@ bool createCharacterTemplate(const std::string& baseDir, const std::string& char
         FILE* f = fopen(cfgPath.c_str(), "w");
         if (!f) return false;
         fprintf(f, "# Character config for %s\n", charName.c_str());
-        fprintf(f, "# Just edit the values below — sprites are auto-detected from PNGs!\n\n");
+        fprintf(f, "# Just edit the values below - sprites are auto-detected from PNGs!\n\n");
         fprintf(f, "name=%s\n\n", charName.c_str());
-        fprintf(f, "# Stats (all optional — defaults shown)\n");
+        fprintf(f, "# Stats (all optional - defaults shown)\n");
         fprintf(f, "speed=520\n");
         fprintf(f, "hp=10\n");
         fprintf(f, "ammo=10\n");

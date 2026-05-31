@@ -101,7 +101,7 @@ void TileMap::generate(int mapWidth, int mapHeight) {
         // Room interior: keep existing ground tiles (grass/gravel), just add glass ceiling
         for (int ry = r.y; ry < r.y + r.h; ry++) {
             for (int rx = r.x; rx < r.x + r.w; rx++) {
-                // Don't overwrite the ground tile — room floor = same as map
+                // Don't overwrite the ground tile - room floor = same as map
                 ceiling[ry * width + rx] = CEIL_GLASS;
             }
         }
@@ -396,7 +396,7 @@ bool TileMap::isSpawnSafe(int tx, int ty) const {
 
 void TileMap::findSpawnPoints() {
     spawnPoints.clear();
-    // Edges (inside walls) as spawn points — verify tile + neighbors are clear
+    // Edges (inside walls) as spawn points - verify tile + neighbors are clear
     for (int x = 2; x < width - 2; x += 3) {
         if (isSpawnSafe(x, 2))          spawnPoints.push_back({toWorld(x), toWorld(2)});
         if (isSpawnSafe(x, height - 3)) spawnPoints.push_back({toWorld(x), toWorld(height - 3)});
