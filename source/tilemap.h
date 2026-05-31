@@ -33,7 +33,7 @@ enum TileType : uint8_t {
     TILE_GLASS,     // solid, breakable
     TILE_DESK,      // solid
     TILE_BOX,       // solid, breakable by bullets
-    // Custom non-solid tiles — texture path stored per-map in CSM
+    // Custom non-solid tiles - texture path stored per-map in CSM
     TILE_CUSTOM_0 = 16,
     TILE_CUSTOM_1 = 17,
     TILE_CUSTOM_2 = 18,
@@ -45,7 +45,7 @@ enum TileType : uint8_t {
     TILE_COUNT
 };
 
-// Ceiling overlay layer — separate from ground tiles
+// Ceiling overlay layer - separate from ground tiles
 enum CeilType : uint8_t {
     CEIL_NONE = 0,
     CEIL_GLASS,   // transparent glass roof

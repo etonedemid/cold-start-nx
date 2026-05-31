@@ -63,7 +63,7 @@ enum class GameState {
     MultiplayerDead, // Waiting to respawn
     Scoreboard,      // Match results / scoreboard
     TeamSelect,      // Team selection screen before team game starts
-    MultiplayerSpectator, // Player exhausted all lives — free-roam ghost, no respawn
+    MultiplayerSpectator, // Player exhausted all lives - free-roam ghost, no respawn
     WinLoss,             // Win/Loss result screen (shown before Scoreboard)
     // ── Mod management ──
     ModMenu,         // Enable/disable mods
@@ -232,6 +232,33 @@ private:
 
     // ── Log-off confirmation ──
     bool  logOffConfirm_     = false;
+
+    // ── Credits window ───────────────────────────────────────────────────────
+    bool creditsOpen_      = false;
+    int  creditsWinX_      = 0;
+    int  creditsWinY_      = 0;
+    bool creditsInit_      = false;
+    bool creditsDragging_  = false;
+    int  creditsDragOX_    = 0;
+    int  creditsDragOY_    = 0;
+
+    // ── AVA Explorer (fake browser) ──────────────────────────────────────────
+    bool     browserOpen_      = false;
+    bool     browserInit_      = false;
+    bool     browserLoading_   = false;
+    float    browserLoadTimer_ = 0.0f;
+    int      browserWinX_      = 80;
+    int      browserWinY_      = 40;
+    bool     browserDragging_  = false;
+    int      browserDragOX_    = 0;
+    int      browserDragOY_    = 0;
+    int      browserPage_      = 0;   // current page index (0–4)
+    int      browserScrollY_   = 0;
+    // navigation history (simple back/forward stack)
+    int      browserHist_[32]  = {};
+    int      browserHistLen_   = 0;
+    int      browserHistPos_   = -1;
+    uint32_t browserIconClickT_ = 0;  // last desktop-icon click ms (for double-click)
     // ── Chat window (lobby) ──
     int  chatWinX_         = 860;
     int  chatWinY_         = 460;
@@ -273,7 +300,10 @@ private:
     bool backInput_ = false;
     bool leftInput_ = false;
     bool rightInput_ = false;
-    bool tabInput_   = false;  // Y button / Tab — kick-mode toggle in lobby
+    // One-shot render-click left/right: set by render buttons, consumed once by handleInput
+    bool renderLeft_  = false;
+    bool renderRight_ = false;
+    bool tabInput_   = false;  // Y button / Tab - kick-mode toggle in lobby
     int  menuSelection_ = 0;
     int  configSelection_ = 0;
     int  lobbyKickCursor_ = -1;  // -1 = not in player-kick mode; >=0 = player index
@@ -312,7 +342,7 @@ private:
     float waveSpawnTimer_ = 0;     // delay between individual spawns in a wave
     float wavePauseTimer_ = 0;     // countdown between waves
     bool  waveActive_     = false; // currently spawning a wave
-    bool  bossWaveActive_ = false; // boss wave in progress — no new waves until boss dies
+    bool  bossWaveActive_ = false; // boss wave in progress - no new waves until boss dies
     int   lastBossWaveNum_= -1;    // wave number of last boss when first beaten (-1 = not yet)
     GameConfig config_{};
 
@@ -504,7 +534,7 @@ private:
     bool actionMusicActive_    = false;
     bool musicLoopCurrent_     = false;
 
-    // Music player window (pause menu — separate from main-menu musicWin*)
+    // Music player window (pause menu - separate from main-menu musicWin*)
     int  pauseMusicWinX_          = 20;
     int  pauseMusicWinY_          = -1;   // -1 = uninitialised, set on first draw
     bool pauseMusicWinDragging_   = false;
@@ -616,7 +646,7 @@ private:
 
     // Additional menu renders
     void renderMapSelectMenu();
-    void renderMapConfigMenu();  // stubbed — no longer shown
+    void renderMapConfigMenu();  // stubbed - no longer shown
     void renderCharSelectMenu();
     void renderCustomWinScreen();
     void renderCharCreator();

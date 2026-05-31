@@ -8,7 +8,7 @@
 
 void Game::updateCrates(float dt) {
     // Auto-spawn crates on a timer (every ~20-30 seconds)
-    // In multiplayer, only the host spawns crates — clients receive them via network
+    // In multiplayer, only the host spawns crates - clients receive them via network
     auto& net = NetworkManager::instance();
     bool isMultiplayer = net.isOnline();
     bool isSimDelegate = net.isConnectedToDedicated() && net.isLobbyHost(); // lobby-host on dedicated server
@@ -52,7 +52,7 @@ void Game::updateCrates(float dt) {
                 c.takeDamage(b.damage);
                 b.alive = false;
                 if (!c.alive) {
-                    // Crate destroyed — spawn pickup
+                    // Crate destroyed - spawn pickup
                     Pickup p;
                     p.pos = c.pos;
                     p.type = c.contents;
@@ -102,7 +102,7 @@ void Game::updatePickups(float dt) {
             continue;
         }
 
-        // Player collection — walk over it (spectators can't collect)
+        // Player collection - walk over it (spectators can't collect)
         float collectRadius = 28.0f;
         if (state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) {
             // Co-op: any alive player can collect

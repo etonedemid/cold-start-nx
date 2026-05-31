@@ -3,7 +3,7 @@
 #include "vec2.h"
 
 // ── Version ──
-constexpr const char* GAME_VERSION = "1.9.0";
+constexpr const char* GAME_VERSION = "2.0.0";
 
 // Screen (window resolution - runtime configurable)
 inline int SCREEN_W = 1280;
@@ -102,7 +102,7 @@ constexpr float GUNNER_SHOOT_CD     = 1.25f;
 constexpr float GUNNER_BURST_GAP    = 0.11f;
 constexpr float GUNNER_RENDER_SCALE = 4.6f;
 
-// Boss enemies — spawned at waves 25, 35, 45
+// Boss enemies - spawned at waves 25, 35, 45
 constexpr int   BOSS_WAVES[]         = {25, 35, 45};
 constexpr float BOSS_BRUTE_HP        = 750.0f;
 constexpr float BOSS_BRUTE_SPEED     = 420.0f;
@@ -130,22 +130,22 @@ constexpr int   BOSS_GUNNER_BURST    = 8;
 constexpr float BOSS_GUNNER_BURST_GAP= 0.07f;
 constexpr float BOSS_GUNNER_SCALE    = 6.8f;
 
-// Sniper normal — panic sprint range (shared with boss sniper)
+// Sniper normal - panic sprint range (shared with boss sniper)
 constexpr float SNIPER_PANIC_RANGE   = 180.0f;  // sprint away if player closer than this
 
-// Stun: bosses shrug it off — max duration regardless of upgrade source
+// Stun: bosses shrug it off - max duration regardless of upgrade source
 constexpr float BOSS_MAX_STUN        = 0.20f;
 
-// Brute — bullet damage reduction (tank archetype, force melee engagement)
+// Brute - bullet damage reduction (tank archetype, force melee engagement)
 constexpr float BRUTE_BULLET_REDUCTION = 0.50f;   // bullets deal 50% damage
 
-// Boss Brute — long-range charge (available always; enrage halves the cooldown)
+// Boss Brute - long-range charge (available always; enrage halves the cooldown)
 constexpr float BOSS_BRUTE_CHARGE_RANGE = 680.0f; // charge triggers up to this distance
 constexpr float BOSS_BRUTE_CHARGE_SPEED = 1150.0f; // charge velocity
 constexpr float BOSS_BRUTE_CHARGE_DUR   = 0.45f;  // seconds the charge lasts
 constexpr float BOSS_BRUTE_CHARGE_CD    = 5.5f;   // base cooldown (halved on enrage)
 
-// Milestone waves — guaranteed first appearance of each elite type
+// Milestone waves - guaranteed first appearance of each elite type
 constexpr int MILESTONE_SNIPER_WAVE = 60;
 constexpr int MILESTONE_GUNNER_WAVE = 80;
 
@@ -176,7 +176,7 @@ constexpr int   MELEE_PLAYER_DAMAGE = 3;      // damage to players (PvP / co-op)
 constexpr int   MELEE_ANIM_FIRST    = 3;      // first body frame (sprite 0004)
 constexpr int   MELEE_ANIM_LAST     = 9;      // last  body frame (sprite 0010)
 
-// Spawning — wave system
+// Spawning - wave system
 constexpr float WAVE_PAUSE_BASE     = 10.0f; // pause between waves (scales down over time)
 constexpr int   WAVE_SIZE_BASE      = 2;     // enemies per wave at start
 constexpr int   WAVE_SIZE_GROWTH    = 1;     // extra enemies per wave number

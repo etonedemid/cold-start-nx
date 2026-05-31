@@ -69,7 +69,7 @@ void TextureEditor::showConfig() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  Default palette — 32 curated colors
+//  Default palette - 32 curated colors
 // ═════════════════════════════════════════════════════════════════════════════
 
 void TextureEditor::initDefaultPalette() {
@@ -312,7 +312,7 @@ int TextureEditor::paletteGridY() const {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  Color picker — HSV conversion
+//  Color picker - HSV conversion
 // ═════════════════════════════════════════════════════════════════════════════
 
 TexelColor TextureEditor::hsvToRgb(float h, float s, float v, uint8_t a) {
@@ -647,7 +647,7 @@ void TextureEditor::handleConfigInput(const SDL_Event& e) {
             }
         }
         if (btn == SDL_CONTROLLER_BUTTON_A) {
-            // Confirm — same as Enter
+            // Confirm - same as Enter
             SDL_Event fake; fake.type = SDL_KEYDOWN;
             fake.key.keysym.sym = SDLK_RETURN;
             handleConfigInput(fake);
@@ -749,7 +749,7 @@ void TextureEditor::handleEditingInput(const SDL_Event& e) {
                 rgbToHsv(currentColor_, hue_, sat_, val_);
             }
             if (e.button.button == SDL_BUTTON_MIDDLE) {
-                // Middle click starts pan drag — handled in MOUSEMOTION
+                // Middle click starts pan drag - handled in MOUSEMOTION
             }
         }
     }
@@ -878,7 +878,7 @@ void TextureEditor::handleColorPickerInput(const SDL_Event& e) {
         } else if (mx >= alphaX && mx < alphaX + alphaW && my >= alphaY && my < alphaY + alphaH) {
             cpDragMode_ = 3;
         } else {
-            // Click outside — close
+            // Click outside - close
             currentColor_ = hsvToRgb(hue_, sat_, val_, currentColor_.a);
             palette_[paletteIdx_] = currentColor_;
             state_ = TexEditorState::Editing;
@@ -911,7 +911,7 @@ void TextureEditor::handleColorPickerInput(const SDL_Event& e) {
     }
 }
 
-// Helper for palette/toolbar clicks (not declared in header — internal)
+// Helper for palette/toolbar clicks (not declared in header - internal)
 void TextureEditor::handlePaletteClick(int mx, int my) {
     // Palette is rendered on the left side, 200px wide
     // Use consistent Y position from paletteGridY()
@@ -933,7 +933,7 @@ void TextureEditor::handlePaletteClick(int mx, int my) {
 }
 
 void TextureEditor::handleToolbarClick(int mx, int my) {
-   // Toolbar buttons — must match layout in renderToolbar()
+   // Toolbar buttons - must match layout in renderToolbar()
     int numTools = (int)TexTool::Count;
     int btnW = 52, btnH = 36;
     int startX = PALETTE_W + 10;
@@ -946,7 +946,7 @@ void TextureEditor::handleToolbarClick(int mx, int my) {
         }
     }
 
-    // Separator and subsequent buttons — positions must match renderToolbar
+    // Separator and subsequent buttons - positions must match renderToolbar
     int sepX = startX + numTools * (btnW + 4) + 8;
 
     // Save button
@@ -1284,7 +1284,7 @@ void TextureEditor::renderCanvas() {
             r.w = abs(sx1 - sx0); r.h = abs(sy1 - sy0);
             SDL_RenderDrawRect(renderer_, &r);
         } else if (currentTool_ == TexTool::Circle) {
-            // Simple visual feedback — draw bounding rect
+            // Simple visual feedback - draw bounding rect
             SDL_Rect r;
             r.x = std::min(sx0, sx1); r.y = std::min(sy0, sy1);
             r.w = abs(sx1 - sx0); r.h = abs(sy1 - sy0);

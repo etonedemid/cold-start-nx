@@ -1,5 +1,5 @@
 #---------------------------------------------------------------------------------
-# COLD START — Nintendo Switch Homebrew Build
+# COLD START - Nintendo Switch Homebrew Build
 #---------------------------------------------------------------------------------
 ifeq ($(strip $(DEVKITPRO)),)
 $(error "Please set DEVKITPRO in your environment. export DEVKITPRO=<path to>/devkitpro")
@@ -20,7 +20,7 @@ ROMFS		:=	romfs
 
 APP_TITLE	:=	COLD START
 APP_AUTHOR	:=	etonedemid
-APP_VERSION	:=	1.9.0
+APP_VERSION	:=	2.0.0
 
 #---------------------------------------------------------------------------------
 # Compiler flags
@@ -51,7 +51,7 @@ LIBS	:=	$(shell PKG_CONFIG_PATH=$(SWITCH_PKG_CONFIG_PATH) pkg-config --static --
 LIBDIRS	:= $(PORTLIBS) $(LIBNX)
 
 #---------------------------------------------------------------------------------
-# Build rules (devkitPro standard — no need to edit below)
+# Build rules (devkitPro standard - no need to edit below)
 #---------------------------------------------------------------------------------
 ifneq ($(BUILD),$(notdir $(CURDIR)))
 

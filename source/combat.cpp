@@ -36,7 +36,7 @@ void Game::updatePlayer(float dt) {
                 if (currentRules_.lives > 0 && !currentRules_.sharedLives) {
                     if (localLives_ > 0) localLives_--;
                     if (localLives_ <= 0) {
-                        // Out of lives — become a spectator ghost
+                        // Out of lives - become a spectator ghost
                         spectatorMode_ = true;
                         player_.dead   = false;
                         player_.hp     = 1;
@@ -92,7 +92,7 @@ void Game::updatePlayer(float dt) {
     // Apply velocity
     Vec2 newPos = p.pos + p.vel * dt;
 
-    // Tile collision (slide) — spectators clip through walls
+    // Tile collision (slide) - spectators clip through walls
     if (!spectatorMode_) {
         if (!map_.worldCollides(newPos.x, p.pos.y, PLAYER_SIZE * 0.4f))
             p.pos.x = newPos.x;
@@ -153,7 +153,7 @@ void Game::updatePlayer(float dt) {
         //                            next=forward → last was reverse → idle at FIRST=3)
         p.animFrame = p.meleeSwingReverse ? MELEE_ANIM_LAST : MELEE_ANIM_FIRST;
     } else if (p.activeWeapon == 1) {
-        // Axe equipped but never swung yet — hold the axe-ready pose (sprite 0004)
+        // Axe equipped but never swung yet - hold the axe-ready pose (sprite 0004)
         p.animFrame = MELEE_ANIM_FIRST;
     } else {
         // Normal shooting animation
@@ -436,7 +436,7 @@ void Game::updatePlayer(float dt) {
                     }
                 }
             }
-            // Hitting solid walls — clank feedback
+            // Hitting solid walls - clank feedback
             {
                 int wpx = TileMap::toTile(p.pos.x);
                 int wpy = TileMap::toTile(p.pos.y);
@@ -718,7 +718,7 @@ void Game::updateEnemies(float dt) {
     for (auto& e : enemies_) {
         if (!e.alive) continue;
 
-        // Stun (bosses resist stunlock — cap max accumulated stun)
+        // Stun (bosses resist stunlock - cap max accumulated stun)
         if (isBossType(e.type) && e.stunTimer > BOSS_MAX_STUN) e.stunTimer = BOSS_MAX_STUN;
         if (e.stunTimer > 0) { e.stunTimer -= dt; continue; }
 
@@ -747,7 +747,7 @@ void Game::updateEnemies(float dt) {
         // Damage flash decay
         if (e.damageFlash > 0) e.damageFlash -= dt * 2.5f;
 
-        // Vision check — sets e.targetPlayerId if a player is seen
+        // Vision check - sets e.targetPlayerId if a player is seen
         e.canSeePlayer = enemyCanSeeAnyPlayer(e);
         if (e.canSeePlayer) {
             e.state = EnemyState::Chase;
@@ -902,7 +902,7 @@ void Game::updateEnemies(float dt) {
             e.rotation = atan2f(e.vel.y, e.vel.x);
         }
 
-        // Leg animation — all enemy types
+        // Leg animation - all enemy types
         if (!legSprites_.empty()) {
             float spd = e.vel.length();
             if (spd > 1.0f) {
@@ -948,7 +948,7 @@ bool Game::enemyCanSeeAnyPlayer(Enemy& e) {
         Vec2 toPlayer = ppos - e.pos;
         float dist = toPlayer.length();
         if (dist >= ENEMY_VISION_DIST) return;
-        // Raycast (no angle limit — 360° awareness)
+        // Raycast (no angle limit - 360° awareness)
         Vec2 dir = toPlayer.normalized();
         float step = TILE_SIZE * 0.4f;
         for (float d = step; d < dist; d += step) {
@@ -1096,7 +1096,7 @@ void Game::enemyChase(Enemy& e, float dt) {
         return;
     }
 
-    // BossBrute: long-range charge — highest priority, always available
+    // BossBrute: long-range charge - highest priority, always available
     if (e.type == EnemyType::BossBrute && !e.bossCharging
         && e.bossChargeCdTimer <= 0 && !e.dashCharging && !e.isDashing
         && dist > e.dashDistance && dist < BOSS_BRUTE_CHARGE_RANGE) {
@@ -1114,7 +1114,7 @@ void Game::enemyChase(Enemy& e, float dt) {
     bool inOrbitBand = e.dashOnCd && dist > strafeInner && dist < strafeOuter;
 
     if (inOrbitBand) {
-        // Close-range prowl — mostly forward, slight sidestep
+        // Close-range prowl - mostly forward, slight sidestep
         Vec2 toTarget = toPlayer.normalized();
         Vec2 perp = Vec2{-toTarget.y, toTarget.x};
         float sideSign = (sinf(gameTime_ * 1.3f + e.pos.x * 0.01f) > 0) ? 1.0f : -1.0f;
@@ -1124,7 +1124,7 @@ void Game::enemyChase(Enemy& e, float dt) {
     } else if (e.type == EnemyType::BossBrute && e.bossChargeCdTimer > 0
                && dist > strafeOuter && dist < BOSS_BRUTE_CHARGE_RANGE
                && !e.dashCharging && !e.isDashing) {
-        // Wide strafe while charge recharges — circle with light inward pressure
+        // Wide strafe while charge recharges - circle with light inward pressure
         Vec2 toTarget = toPlayer.normalized();
         Vec2 perp = Vec2{-toTarget.y, toTarget.x};
         float sideSign = (sinf(gameTime_ * 0.65f + e.pos.y * 0.007f) > 0) ? 1.0f : -1.0f;
@@ -1137,7 +1137,7 @@ void Game::enemyChase(Enemy& e, float dt) {
         e.vel = Vec2::lerp(e.vel, desired, dt * MELEE_INERTIA);
     }
 
-    // Start dash when close — lock direction immediately
+    // Start dash when close - lock direction immediately
     if (dist < e.dashDistance && !e.dashOnCd && !e.dashCharging) {
         e.dashCharging   = true;
         e.dashDelayTimer = e.dashDelay;
@@ -1148,7 +1148,7 @@ void Game::enemyChase(Enemy& e, float dt) {
 }
 
 void Game::enemyDash(Enemy& e, float dt) {
-    // Short lunge forward — not a screen-crossing dash, just a step into the swing
+    // Short lunge forward - not a screen-crossing dash, just a step into the swing
     e.vel = e.dashDir * e.dashForce;
     e.dashTimer -= dt;
     if (e.dashTimer <= 0) {
@@ -1246,7 +1246,7 @@ void Game::updateBullets(float dt) {
         (NetworkManager::instance().isConnectedToDedicated() && NetworkManager::instance().isLobbyHost());
     for (auto& b : bullets_) {
         b.tick(dt);
-        // Magnet upgrade — gently steer bullets toward the nearest alive enemy
+        // Magnet upgrade - gently steer bullets toward the nearest alive enemy
         if (upgrades_.hasMagnet && b.alive) {
             float bestDist = 420.0f;
             Enemy* target = nullptr;
@@ -1515,7 +1515,7 @@ void Game::updateBombs(float dt) {
         if (!b.alive) continue;
         b.age += dt;
 
-        // Animation — blink between bomb1 and bomb2
+        // Animation - blink between bomb1 and bomb2
         if (!bombSprites_.empty()) {
             b.animTimer += dt;
             float blinkRate = 0.15f;
@@ -1705,7 +1705,7 @@ void Game::updateExplosions(float dt) {
                     }
                 }
             }
-            // In PvP, explosions deal 3 HP damage to the local player — host-validated
+            // In PvP, explosions deal 3 HP damage to the local player - host-validated
             if ((lobbySettings_.isPvp || currentRules_.pvpEnabled) &&
                 !player_.dead &&
                 Vec2::dist(ex.pos, player_.pos) < ex.radius) {
@@ -2138,7 +2138,7 @@ void Game::spawnBomb() {
 // ═════════════════════════════════════════════════════════════════════════════
 
 void Game::updateSpawning(float dt) {
-    // In multiplayer the host is authoritative — clients receive enemy spawns via state packets.
+    // In multiplayer the host is authoritative - clients receive enemy spawns via state packets.
     // Exception: when connected to a headless dedicated server the server has no game simulation;
     // the lobby-host client takes on the simulation role in that case.
     auto& net0 = NetworkManager::instance();
@@ -2150,7 +2150,7 @@ void Game::updateSpawning(float dt) {
     // Offline single-player never sends; ENet host always does; dedicated-server lobby-host does too.
     const bool sendNetEvents = net0.isHost() || (net0.isConnectedToDedicated() && net0.isLobbyHost());
     // In sandbox mode or pure PvP mode skip all wave spawning.
-    // Note: pvpActive here means "PvP arena gamemode" only — friendly fire in PvE does NOT skip waves.
+    // Note: pvpActive here means "PvP arena gamemode" only - friendly fire in PvE does NOT skip waves.
     bool pvpActive = lobbySettings_.isPvp;
     if (sandboxMode_ || pvpActive) return;
     // Wave-based spawning system
@@ -2217,7 +2217,7 @@ void Game::updateSpawning(float dt) {
                     wavePauseTimer_ = 2.0f;  // re-check soon
                     return;
                 }
-                bossWaveActive_ = false;  // boss slain — clear flag
+                bossWaveActive_ = false;  // boss slain - clear flag
                 // If this was the last boss wave, enable endless post-boss scaling
                 {
                     constexpr int LAST_BOSS_WAVE = BOSS_WAVES[sizeof(BOSS_WAVES)/sizeof(*BOSS_WAVES) - 1];
@@ -2239,7 +2239,7 @@ void Game::updateSpawning(float dt) {
             else if (waveNumber_ == 45) bossWaveType = EnemyType::BossGunner;
 
             if (isBossWave) {
-                // Spawn a single boss — no normal enemies this wave
+                // Spawn a single boss - no normal enemies this wave
                 Vec2 bsp = pickEnemySpawnPos();
                 spawnEnemy(bsp, bossWaveType);
                 waveEnemiesLeft_ = 0;
@@ -2525,7 +2525,7 @@ void Game::resolveCollisions() {
         if (jumps > 0 && sfxParry_) playSFX(sfxParry_, config_.sfxVolume / 3);
     };
 
-    // Player bullets vs enemies — all peers resolve locally for instant feedback;
+    // Player bullets vs enemies - all peers resolve locally for instant feedback;
     // the killer also sends EnemyKilled so the host/others stay in sync.
     for (auto& b : bullets_) {
         if (!b.alive) continue;
@@ -2541,7 +2541,7 @@ void Game::resolveCollisions() {
                 }
                 // Visual feedback on all peers
                 e.damageFlash = 1.0f;
-                // Blood splatter — visual only, runs on all peers
+                // Blood splatter - visual only, runs on all peers
                 {
                     Vec2 hitDir = b.vel.normalized();
                     // Directional spray in bullet direction
@@ -2627,7 +2627,7 @@ void Game::resolveCollisions() {
                     float dmg = b.damage * (1.0f - e.bulletDamageReduction);
                     e.hp -= dmg;
                     if (upgrades_.hasStunRounds) e.stunTimer = std::max(e.stunTimer, 0.75f * (float)upgrades_.hasStunRounds);
-                    // Aggro — target the player who shot this bullet
+                    // Aggro - target the player who shot this bullet
                     e.state = EnemyState::Chase;
                     e.lastSeenTime = gameTime_;
                     e.idleTimer    = 0;
@@ -2649,7 +2649,7 @@ void Game::resolveCollisions() {
         if (!b.alive || p.dead || godMode_) continue;
         if (circleOverlap(b.pos, b.size, p.pos, PLAYER_SIZE * 0.5f)) {
             if (p.isParrying) {
-                // Parry reflects — fire back at sniper-bullet speed
+                // Parry reflects - fire back at sniper-bullet speed
                 b.vel = b.vel.normalized() * -(ENEMY_BULLET_SPEED * SNIPER_BULLET_SPEED_MULTI);
                 b.tag = TAG_BULLET;
                 b.damage = PARRY_REFLECT_DAMAGE * (upgrades_.hasParrySurge ? (1 + upgrades_.hasParrySurge) : 1);
@@ -2677,7 +2677,7 @@ void Game::resolveCollisions() {
         }
     }
 
-    // Melee enemies vs player — arc-based strike check (front cone + reach)
+    // Melee enemies vs player - arc-based strike check (front cone + reach)
     if (!p.dead && !godMode_) for (auto& e : enemies_) {
         if (!e.alive || !(e.isDashing || e.bossCharging || e.netIsDashing)) continue;
         Vec2 toP = p.pos - e.pos;
@@ -2728,7 +2728,7 @@ void Game::resolveCollisions() {
         }
     }
 
-    // Enemy body contact vs player — any alive enemy that overlaps the player deals 1 damage.
+    // Enemy body contact vs player - any alive enemy that overlaps the player deals 1 damage.
     // takeDamage() is no-op during the invuln window so this can't spam.
     if (!p.dead && !godMode_) {
         for (auto& e : enemies_) {
@@ -2985,7 +2985,7 @@ void Game::resolveCollisions() {
                 if (!rp.alive) continue;
                 // Team mode: skip same-team players unless friendly fire is on
                 if (currentRules_.teamCount >= 2 && !currentRules_.friendlyFire) {
-                    if (localTeam_ >= 0 && rp.team == localTeam_) continue; // same team — no damage
+                    if (localTeam_ >= 0 && rp.team == localTeam_) continue; // same team - no damage
                 }
                 // Use interpolated position for hit detection
                 Vec2 rpPos = {
@@ -2997,7 +2997,7 @@ void Game::resolveCollisions() {
                 bool sweptHit = sweptCircleOverlap(b.pos, b.vel, 1.0f / 30.0f, rpPos, hitRadius);
                 if (pointHit || sweptHit) {
                     b.alive = false;
-                    // Visual feedback on shooter side — damage/kill is handled victim-side
+                    // Visual feedback on shooter side - damage/kill is handled victim-side
                     // (the bullet is now in bullets_[] on the victim's machine and resolveCollisions
                     // there will call p.takeDamage() and send PlayerDied when HP reaches 0)
                     camera_.addShake(1.5f);
@@ -3060,7 +3060,7 @@ void Game::resolveCollisions() {
                             net.sendPlayerHpSync(net.localPlayerId(), player_.hp, player_.maxHp, b.ownerId);
                         }
                     } else {
-                        // P2P non-host: report hit to host for validation — host will send back HP/death
+                        // P2P non-host: report hit to host for validation - host will send back HP/death
                         net.sendHitRequest(b.netId, b.damage, b.ownerId);
                         // Optimistic visual feedback only (no HP deducted yet)
                         camera_.addShake(1.5f);
@@ -3155,7 +3155,7 @@ void Game::resolveCollisions() {
 }
 
 void Game::killEnemy(Enemy& e, bool trackKill) {
-    if (!e.alive) return;  // already dead — avoid double gib/score effects
+    if (!e.alive) return;  // already dead - avoid double gib/score effects
     e.alive = false;
     // Central blood decal (large)
     BloodDecal bd;
@@ -3166,7 +3166,7 @@ void Game::killEnemy(Enemy& e, bool trackKill) {
     blood_.push_back(bd);
     stampTileBlood(bd.pos, 0.45f * bd.scale);
 
-    // Bloody explosion — big burst of red particles
+    // Bloody explosion - big burst of red particles
 #ifdef __SWITCH__
     int numGibs = 10 + rand() % 6;
 #else
@@ -3189,7 +3189,7 @@ void Game::killEnemy(Enemy& e, bool trackKill) {
         f.color = {(Uint8)shade, 0, 0, 255};
         boxFragments_.push_back(f);
     }
-    // Extra blood splatter decals — varied sizes, spread out
+    // Extra blood splatter decals - varied sizes, spread out
 #ifdef __SWITCH__
     int numExtra = 2 + rand() % 2;
 #else
@@ -3257,7 +3257,7 @@ void Game::killEnemy(Enemy& e, bool trackKill) {
     // (During resolveCollisions, player_ = slot 0; use ownerId if available)
     if (state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) {
         // The kill is credited to slot 0 via player_ above; coopSlots_[0].kills
-        // will be synced after resolveCollisions. Nothing else needed here — the
+        // will be synced after resolveCollisions. Nothing else needed here - the
         // per-slot kill count is incremented in resolveCollisions via b.ownerId.
     }
 }
@@ -3284,7 +3284,7 @@ void Game::destroyBox(int tx, int ty) {
     // Replace the box tile with grass
     map_.set(tx, ty, TILE_GRASS);
     invalidateMinimapCache();
-    // Spawn wood-colored fragment particles — explosive burst
+    // Spawn wood-colored fragment particles - explosive burst
     float wx = TileMap::toWorld(tx);
     float wy = TileMap::toWorld(ty);
     int numFrags = 14 + rand() % 8;
@@ -3327,7 +3327,7 @@ void Game::spawnPlayerDeathEffect(Vec2 pos) {
     auto& net = NetworkManager::instance();
     const bool isOnline = net.isOnline();
 
-    // Camera shake — big in singleplayer, moderate in multiplayer
+    // Camera shake - big in singleplayer, moderate in multiplayer
     camera_.addShake(isOnline ? 5.0f : 12.0f);
     screenFlashTimer_ = isOnline ? 0.08f : 0.22f;
     screenFlashR_ = 255; screenFlashG_ = 55; screenFlashB_ = 20;
@@ -3378,7 +3378,7 @@ void Game::spawnPlayerDeathEffect(Vec2 pos) {
         f.color = {(Uint8)v, (Uint8)v, (Uint8)v, 200};
         boxFragments_.push_back(f);
     }
-    // Scorch marks — many in singleplayer, few in multiplayer
+    // Scorch marks - many in singleplayer, few in multiplayer
     {
         BloodDecal scorch;
         scorch.pos = pos;

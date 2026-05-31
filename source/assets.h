@@ -23,6 +23,12 @@ public:
     // Load a series of numbered PNGs as animation frames
     std::vector<SDL_Texture*> loadAnim(const std::string& basePath, int count, int startIdx = 1);
 
+    // Returns the romfs base path (e.g. "/path/to/exe/romfs/" or "romfs:/")
+    static std::string prefix();
+
+    // Load a texture from a path relative to the romfs root (caches by relPath)
+    SDL_Texture* loadRelTex(const std::string& relPath);
+
 private:
     Assets() = default;
     SDL_Renderer* renderer_ = nullptr;

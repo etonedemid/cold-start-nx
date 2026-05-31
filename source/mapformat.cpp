@@ -131,7 +131,7 @@ bool CustomMap::loadFromFile(const std::string& path) {
         if (fread(enemySpawns.data(), sizeof(EnemySpawn), spawnCount, f) != spawnCount) { fclose(f); return false; }
     }
 
-    // Read custom tile texture paths (optional — older maps simply won't have this)
+    // Read custom tile texture paths (optional - older maps simply won't have this)
     for (int i = 0; i < 8; i++) customTilePaths[i].clear();
     uint8_t customCount = 0;
     if (fread(&customCount, 1, 1, f) == 1) {
@@ -146,7 +146,7 @@ bool CustomMap::loadFromFile(const std::string& path) {
         }
     }
 
-    // Music path (optional trailing string — absent in older maps)
+    // Music path (optional trailing string - absent in older maps)
     musicPath.clear();
     {
         uint16_t mlen = 0;

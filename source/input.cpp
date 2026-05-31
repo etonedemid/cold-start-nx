@@ -363,10 +363,13 @@ void Game::renderSoftKB() {
 
 
 void Game::handleInput() {
-    // Carry over confirmInput_ set by win98Button in the previous frame's render()
-    // (it would be wiped by the reset below before the state machine can see it)
+    // Carry over inputs set by render() buttons in the previous frame
+    // (they would be wiped by the reset below before the state machine can see them)
     bool renderConfirm = confirmInput_;
     bool renderBack    = backInput_;
+    // One-shot render-click left/right: read and clear atomically so they fire exactly once
+    bool renderLeft    = renderLeft_;   renderLeft_  = false;
+    bool renderRight   = renderRight_;  renderRight_ = false;
 
     // Reset per-frame triggers
     bombInput_ = false;
@@ -471,7 +474,7 @@ void Game::handleInput() {
             if (e.type != SDL_QUIT) continue;
         }
 
-        // Toggle dev console with ~ (tilde / backtick) — single-player only
+        // Toggle dev console with ~ (tilde / backtick) - single-player only
         if (e.type == SDL_KEYDOWN && !e.key.repeat) {
             if (e.key.keysym.sym == SDLK_BACKQUOTE) {
                 auto& net = NetworkManager::instance();
@@ -636,7 +639,7 @@ void Game::handleInput() {
                             lobbySubPlayersSent_ = localSubPlayers;
                         }
                     } else if (existingSlot < 0 && !isMultiplayerLobby) {
-                        // Unassigned gamepad pressed B — treat as global back
+                        // Unassigned gamepad pressed B - treat as global back
                         backInput_ = true;
                     }
 #ifdef __SWITCH__
@@ -659,7 +662,7 @@ void Game::handleInput() {
                     }
                     continue; // consumed by lobby
                 }
-                // Other buttons in lobby — fall through to normal handling
+                // Other buttons in lobby - fall through to normal handling
             }
             usingGamepad_ = true;
             switch (btn) {
@@ -725,6 +728,7 @@ void Game::handleInput() {
         }
 
         if (e.type == SDL_MOUSEWHEEL) {
+            ui_.mouseWheelY += e.wheel.y;
             if (state_ == GameState::HostSetup)
                 hostSetupScrollY_ = std::max(0, std::min(206, hostSetupScrollY_ - e.wheel.y * 30));
             else if (state_ == GameState::Lobby)
@@ -738,14 +742,14 @@ void Game::handleInput() {
             usingGamepad_ = false;
         }
 
-        // Mouse click — switch to mouse mode; button activation is handled by win98Button in render.
+        // Mouse click - switch to mouse mode; button activation is handled by win98Button in render.
         // Also set mouseClicked here so fast clicks (press+release within one frame) aren't missed.
         if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
             usingGamepad_ = false;
             if (ui_.clickCooldownFrames == 0) ui_.mouseClicked = true;
         }
 
-        // Touch events — during gameplay route to virtual controls; otherwise drive UI mouse
+        // Touch events - during gameplay route to virtual controls; otherwise drive UI mouse
         {
 #ifdef __ANDROID__
             if (e.type == SDL_FINGERDOWN || e.type == SDL_FINGERMOTION || e.type == SDL_FINGERUP) {
@@ -840,7 +844,7 @@ void Game::handleInput() {
     if (keys[SDL_SCANCODE_A]) moveInput_.x -= 1;
     if (keys[SDL_SCANCODE_D]) moveInput_.x += 1;
 
-    // Controller left stick — use the primary gameplay pad and avoid pads owned by local sub-players.
+    // Controller left stick - use the primary gameplay pad and avoid pads owned by local sub-players.
     SDL_GameController* gc = getPrimaryGameplayController();
 
     // Gamepad stick input (movement + aim)
@@ -949,7 +953,7 @@ void Game::handleInput() {
         }
     }
 
-    // Mouse aiming — always active as fallback when gamepad right stick is idle
+    // Mouse aiming - always active as fallback when gamepad right stick is idle
     {
         int mx, my;
         Uint32 mb = SDL_GetMouseState(&mx, &my);
@@ -966,14 +970,14 @@ void Game::handleInput() {
                 aimInput_ = moveInput_;
             }
         }
-        // Mouse/keyboard fire — always available alongside gamepad
+        // Mouse/keyboard fire - always available alongside gamepad
         fireInput_ = gcFireActive || (mb & SDL_BUTTON_LMASK) || keys[SDL_SCANCODE_J] || keys[SDL_SCANCODE_Z];
         bool rmbDown = (mb & SDL_BUTTON_RMASK) != 0;
         if (rmbDown && !bombLaunchHeld_) bombLaunchInput_ = true;
         if (!gc) bombLaunchHeld_ = rmbDown;  // only track RMB hold when no gamepad (ZL tracks its own)
     }
 
-    // ── Touch (virtual gamepad) — full emulation across all states ──────────
+    // ── Touch (virtual gamepad) - full emulation across all states ──────────
 #ifdef __ANDROID__
     if (touchControls_.anyActive) {
         usingGamepad_ = true;
@@ -1038,6 +1042,9 @@ void Game::handleInput() {
     // Merge render()-sourced inputs (mouse clicks) with event-sourced inputs
     confirmInput_ |= renderConfirm;
     backInput_    |= renderBack;
+    leftInput_    |= renderLeft;
+    rightInput_   |= renderRight;
+    // Note: renderLeft_/renderRight_ are already cleared above; no carry-over.
 
     // Handle menu state transitions
     if (state_ == GameState::BiosIntro) {
@@ -1088,17 +1095,25 @@ void Game::handleInput() {
         if (logOffConfirm_) {
             if (confirmInput_) {
                 if (menuSelection_ == 90) { running_ = false; }
+#ifdef __SWITCH__
                 else { logOffConfirm_ = false; menuSelection_ = 10; }
+#else
+                else { logOffConfirm_ = false; menuSelection_ = 11; }
+#endif
             }
+#ifdef __SWITCH__
             if (backInput_) { logOffConfirm_ = false; menuSelection_ = 10; backInput_ = false; }
+#else
+            if (backInput_) { logOffConfirm_ = false; menuSelection_ = 11; backInput_ = false; }
+#endif
             return; // block all other menu input while dialog is open
         }
 
         if (menuSelection_ < 0) menuSelection_ = 0;
 #ifdef __SWITCH__
-        if (menuSelection_ > 9) menuSelection_ = 9;
-#else
         if (menuSelection_ > 10) menuSelection_ = 10;
+#else
+        if (menuSelection_ > 11) menuSelection_ = 11;
 #endif
 
         if (confirmInput_) {
@@ -1140,7 +1155,7 @@ void Game::handleInput() {
                 menuSelection_ = 0;
             }
             else if (menuSelection_ == 6) {
-                // Create Character — scan first so we can edit existing ones
+                // Create Character - scan first so we can edit existing ones
                 scanCharacters();
                 charCreator_ = CharCreatorState{};
                 state_ = GameState::CharCreator;
@@ -1160,15 +1175,21 @@ void Game::handleInput() {
             }
 #ifndef __SWITCH__
             else if (menuSelection_ == 9) {
-                // UPDATE — open release page
+                // UPDATE - open release page
                 SDL_OpenURL("https://github.com/etonedemid/cold-start-nx/releases/latest");
             }
             else if (menuSelection_ == 10) {
+                creditsOpen_ = !creditsOpen_;
+            }
+            else if (menuSelection_ == 11) {
                 logOffConfirm_ = true;
                 menuSelection_ = 91; // pre-select "No" (safe default)
             }
 #else
             else if (menuSelection_ == 9) {
+                creditsOpen_ = !creditsOpen_;
+            }
+            else if (menuSelection_ == 10) {
                 logOffConfirm_ = true;
                 menuSelection_ = 91;
             }
@@ -1290,7 +1311,7 @@ void Game::handleInput() {
         // Username text input handling
         if (usernameTyping_) {
             // Input is consumed in SDL event loop, we just check for confirm/cancel
-            // (handled via event loop below — this prevents other config actions)
+            // (handled via event loop below - this prevents other config actions)
         } else {
             configSelection_ = menuSelection_;
 
@@ -1858,7 +1879,7 @@ void Game::handleInput() {
                 state_ = GameState::MainMenu; menuSelection_ = 0;
             }
             else {
-                // Saved server — connect directly
+                // Saved server - connect directly
                 int sIdx = multiMenuSelection_ - 3;
                 if (sIdx >= 0 && sIdx < (int)savedServers_.size()) {
                     joinAddress_ = savedServers_[sIdx].address;
@@ -2088,6 +2109,40 @@ void Game::handleInput() {
 
         bool canManageLobby = net.isLobbyHost();
 
+        // ── Chat input - must run before any confirmInput_ check so Enter
+        //    sends the message instead of starting/readying the game.
+        if (chatTyping_) {
+            if (confirmInput_) {
+                std::string msg(chatInputBuf_);
+                if (!msg.empty() && net.isOnline()) {
+                    net.sendChat(msg);
+                    chatInputBuf_[0] = '\0';
+                }
+                chatTyping_ = false;
+                confirmInput_ = false;
+#ifndef __SWITCH__
+                SDL_StopTextInput();
+#endif
+            }
+            if (backInput_) {
+                chatTyping_ = false;
+                chatInputBuf_[0] = '\0';
+                backInput_ = false;
+#ifndef __SWITCH__
+                SDL_StopTextInput();
+#endif
+            }
+        } else {
+            // T key starts typing (keyboard only)
+            const Uint8* keys = SDL_GetKeyboardState(nullptr);
+            if (keys[SDL_SCANCODE_T] && !usingGamepad_) {
+                chatTyping_ = true;
+#ifndef __SWITCH__
+                SDL_StartTextInput();
+#endif
+            }
+        }
+
         // Check if the connection was lost or timed out
         if (!net.isHost()) {
             if (net.state() == NetState::Connecting) {
@@ -2220,7 +2275,7 @@ void Game::handleInput() {
                         lobbySettings_.pvpEnabled   = lobbySettings_.isPvp || lobbySettings_.friendlyFire;
                         currentRules_.pvpEnabled    = lobbySettings_.pvpEnabled;
                         break;
-                    case 1: // PvP/Friendly fire — disabled when PvP-no-teams (always-on)
+                    case 1: // PvP/Friendly fire - disabled when PvP-no-teams (always-on)
                         if (!(lobbySettings_.isPvp && lobbySettings_.teamCount == 0)) {
                             lobbySettings_.friendlyFire = !lobbySettings_.friendlyFire;
                             lobbySettings_.pvpEnabled   = lobbySettings_.isPvp || lobbySettings_.friendlyFire;
@@ -2328,38 +2383,6 @@ void Game::handleInput() {
             }
         }
 
-        // ── Chat input ──
-        if (chatTyping_) {
-            if (confirmInput_) {
-                std::string msg(chatInputBuf_);
-                if (!msg.empty() && net.isOnline()) {
-                    net.sendChat(msg);
-                    chatInputBuf_[0] = '\0';
-                }
-                chatTyping_ = false;
-                confirmInput_ = false;
-#ifndef __SWITCH__
-                SDL_StopTextInput();
-#endif
-            }
-            if (backInput_) {
-                chatTyping_ = false;
-                chatInputBuf_[0] = '\0';
-                backInput_ = false;
-#ifndef __SWITCH__
-                SDL_StopTextInput();
-#endif
-            }
-        } else {
-            // T key starts typing (keyboard only)
-            const Uint8* keys = SDL_GetKeyboardState(nullptr);
-            if (keys[SDL_SCANCODE_T] && !usingGamepad_) {
-                chatTyping_ = true;
-#ifndef __SWITCH__
-                SDL_StartTextInput();
-#endif
-            }
-        }
     }
     else if (state_ == GameState::MultiplayerGame) {
         if (pauseInput_) { state_ = GameState::MultiplayerPaused; menuSelection_ = 0; pauseMenuSub_ = 0; }
@@ -2480,7 +2503,7 @@ void Game::handleInput() {
                 adminMenuSel_    = 0;
                 adminMenuAction_ = 0;
             } else if (isHostPlayer && menuSelection_ == endGameIdx) {
-                // End game — return everyone to lobby
+                // End game - return everyone to lobby
                 net2.sendGameEnd((uint8_t)MatchEndReason::HostEnded);
             } else if (menuSelection_ == dcIdx) {
                 net2.disconnect();

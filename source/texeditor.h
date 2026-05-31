@@ -39,13 +39,13 @@ enum class TexEditorState {
 // ── Template presets for quick canvas creation ──────────────────────────────
 enum class TexTemplate {
     Custom,       // user-defined size
-    Tile16,       // 16×16  — small tile
-    Tile32,       // 32×32  — standard tile
-    Tile64,       // 64×64  — large tile (COLD START default)
-    Sprite32,     // 32×32  — small sprite
-    Sprite64,     // 64×64  — character sprite
-    Sprite128,    // 128×128 — large sprite
-    Icon16,       // 16×16  — UI icon
+    Tile16,       // 16×16  - small tile
+    Tile32,       // 32×32  - standard tile
+    Tile64,       // 64×64  - large tile (COLD START default)
+    Sprite32,     // 32×32  - small sprite
+    Sprite64,     // 64×64  - character sprite
+    Sprite128,    // 128×128 - large sprite
+    Icon16,       // 16×16  - UI icon
     Count
 };
 

@@ -1,1043 +1,1011 @@
-// ─── netmenus.cpp ─── Multiplayer menu rendering
+// ─── netmenus.cpp ─── Multiplayer menu rendering (Win98 Messenger aesthetic)
 #include "game.h"
 #include "game_internal.h"
+#include <algorithm>
+
+// ─── Shared toolbar/icon helpers (used across all four screens) ───────────────
+
+static void drawServerIcon(SDL_Renderer* r, int ix, int iy, SDL_Color c) {
+    SDL_SetRenderDrawColor(r, c.r, c.g, c.b, 255);
+    SDL_Rect t1={ix+1,iy+8,12,6}; SDL_RenderFillRect(r,&t1);
+    SDL_Rect t2={ix+3,iy+4, 8,5}; SDL_RenderFillRect(r,&t2);
+    SDL_Rect t3={ix+5,iy,   4,5}; SDL_RenderFillRect(r,&t3);
+    SDL_SetRenderDrawColor(r, 255,255,255,200);
+    SDL_Rect ts={ix+2,iy+9,4,2};  SDL_RenderFillRect(r,&ts);
+}
+
+static void drawPersonIcon(SDL_Renderer* r, int ix, int iy, SDL_Color c) {
+    SDL_SetRenderDrawColor(r, c.r, c.g, c.b, 255);
+    SDL_Rect head={ix+4,iy,  6, 6}; SDL_RenderFillRect(r,&head);
+    SDL_Rect body={ix+1,iy+7,12, 7}; SDL_RenderFillRect(r,&body);
+}
+
+// ─── Toolbar drawing macro ────────────────────────────────────────────────────
+// Each screen defines its own tbBtn/tbSep lambdas capturing renderer_/ui_/etc.
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  Multiplayer Menu Rendering
+//  Multiplayer Menu
 // ═════════════════════════════════════════════════════════════════════════════
 
 void Game::renderMultiplayerMenu() {
     ui_.drawDesktop();
 
-    // ── Left window: main actions ──
-    const int padX = 14;
-    const int btnH = 26;
-    const int btnGap = 6;
-    const int leftWinW = 300;
-    const int leftWinH = UI::W98::TitleH + 14 + 3*(btnH+btnGap) + 10;
-    const int leftWinX = 60;
-    const int leftWinY = 50;
-    ui_.drawWin98Window(leftWinX, leftWinY, leftWinW, leftWinH, "Multiplayer");
+    const int WX=40, WY=28, WW=SCREEN_W-80, WH=SCREEN_H-56;
+    const int TH = UI::W98::TitleH;
+    ui_.drawWin98Window(WX, WY, WW, WH, "Multiplayer");
 
-    struct MenuItem { const char* label; };
-    MenuItem items[] = { {"Host Game"}, {"IP Connect"}, {"Back"} };
+    // ── Toolbar band ──────────────────────────────────────────────────────────
+    const int TB_Y=WY+TH, TB_H=44, TBY=TB_Y+4;
+    const int TBW=76, TBH=36;
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(renderer_, 212,208,200,255);
+    SDL_Rect tbBg={WX,TB_Y,WW,TB_H}; SDL_RenderFillRect(renderer_,&tbBg);
+    SDL_SetRenderDrawColor(renderer_, 128,128,128,255);
+    SDL_RenderDrawLine(renderer_, WX, TB_Y+TB_H-2, WX+WW-1, TB_Y+TB_H-2);
+    SDL_SetRenderDrawColor(renderer_, 255,255,255,255);
+    SDL_RenderDrawLine(renderer_, WX, TB_Y+TB_H-1, WX+WW-1, TB_Y+TB_H-1);
 
-    int bx = leftWinX + padX;
-    int by = leftWinY + UI::W98::TitleH + 14;
-    for (int i = 0; i < 3; i++) {
-        if (ui_.win98Button(i, items[i].label, bx, by, leftWinW - padX*2, btnH, multiMenuSelection_ == i)) {
-            multiMenuSelection_ = i; menuSelection_ = i;
-            confirmInput_ = true;
+    // Load toolbar icons once (48×48 Win98-style PNGs, rendered at 20×20)
+    SDL_Texture* icHost = Assets::instance().loadRelTex("sprites/ui/tb_host.png");
+    SDL_Texture* icJoin = Assets::instance().loadRelTex("sprites/ui/tb_join.png");
+    SDL_Texture* icBack = Assets::instance().loadRelTex("sprites/ui/tb_back.png");
+
+    // Player list icons (msagent Win98 style)
+    SDL_Texture* icPlayerUser = Assets::instance().loadRelTex("sprites/ui/chat_user.png");
+    SDL_Texture* icPlayerHost = Assets::instance().loadRelTex("sprites/ui/chat_host.png");
+
+    // tbBtn: toolbar button with optional icon texture. Falls back to colored square.
+    auto tbBtn = [&](int id, const char* lbl, int x, int w,
+                     SDL_Texture* icon, SDL_Color fallbackC) -> bool {
+        bool sel = (multiMenuSelection_==id);
+        bool hov = ui_.pointInRect(ui_.mouseX, ui_.mouseY, x, TBY, w, TBH);
+        if (hov) ui_.hoveredItem = id;
+        if (hov && !usingGamepad_) { multiMenuSelection_=id; menuSelection_=id; sel=true; }
+        SDL_SetRenderDrawColor(renderer_, 212,208,200,255);
+        SDL_Rect bg={x,TBY,w,TBH}; SDL_RenderFillRect(renderer_,&bg);
+        ui_.drawWin98Bevel(x,TBY,w,TBH, !(sel&&hov));
+        // Icon: 20×20 centred horizontally, 5px from top
+        const int isz=20;
+        int ix=x+w/2-isz/2, iy=TBY+5;
+        if (icon) {
+            SDL_Rect dst={ix,iy,isz,isz}; SDL_RenderCopy(renderer_,icon,nullptr,&dst);
+        } else {
+            SDL_SetRenderDrawColor(renderer_, fallbackC.r,fallbackC.g,fallbackC.b,255);
+            SDL_Rect ic={ix,iy,isz,isz}; SDL_RenderFillRect(renderer_,&ic);
         }
-        if (ui_.hoveredItem == i && !usingGamepad_) { multiMenuSelection_ = i; menuSelection_ = i; }
-        by += btnH + btnGap;
-    }
+        int tw=(int)(strlen(lbl)*10*0.60f);
+        drawText(lbl, x+w/2-tw/2, TBY+TBH-14, 10, UI::W98::Black);
+        return hov && ui_.mouseClicked;
+    };
+    auto tbSep = [&](int x) {
+        SDL_SetRenderDrawColor(renderer_, 128,128,128,255);
+        SDL_RenderDrawLine(renderer_, x+3, TBY+5, x+3, TBY+TBH-7);
+        SDL_SetRenderDrawColor(renderer_, 255,255,255,255);
+        SDL_RenderDrawLine(renderer_, x+4, TBY+5, x+4, TBY+TBH-7);
+    };
 
-    // ── Right window: Saved Servers ──
-    const int rightWinX = leftWinX + leftWinW + 20;
-    const int rightWinW = SCREEN_W - rightWinX - 60;
-    const int rightWinY = leftWinY;
-    const int rightWinH = SCREEN_H - rightWinY - 60;
-    ui_.drawWin98Window(rightWinX, rightWinY, rightWinW, rightWinH, "Saved Servers");
+    int tbX=WX+6;
+    if (tbBtn(0,"Host Game", tbX, TBW,    icHost, {0,0,128,255}))
+        { multiMenuSelection_=0; menuSelection_=0; confirmInput_=true; }
+    tbX+=TBW+4;
+    if (tbBtn(1,"IP Connect",tbX, TBW,    icJoin, {0,100,0,255}))
+        { multiMenuSelection_=1; menuSelection_=1; confirmInput_=true; }
+    tbX+=TBW+10; tbSep(tbX); tbX+=12;
+    if (tbBtn(2,"Back",      tbX, TBW-10, icBack, {110,70,0,255}))
+        { multiMenuSelection_=2; menuSelection_=2; confirmInput_=true; }
 
-    int listY = rightWinY + UI::W98::TitleH + 10;
-    int listX = rightWinX + padX;
-    int listW = rightWinW - padX*2;
-    const int rowH = 34;
-    const int rowGap = 2;
+    // ── Content: Saved Servers list ───────────────────────────────────────────
+    const int STRIP_H=22, HDR_H=20;
+    const int CONT_Y=TB_Y+TB_H;
+    const int LIST_H=WH-TH-TB_H-HDR_H-STRIP_H-6;  // -6 keeps bevel inside window border
+
+    // Section header
+    SDL_SetRenderDrawColor(renderer_, 212,208,200,255);
+    SDL_Rect hdrBg={WX,CONT_Y,WW,HDR_H}; SDL_RenderFillRect(renderer_,&hdrBg);
+    drawText("Saved Servers", WX+8, CONT_Y+3, 11, UI::W98::Shadow);
+    SDL_SetRenderDrawColor(renderer_, 128,128,128,255);
+    SDL_RenderDrawLine(renderer_, WX, CONT_Y+HDR_H-1, WX+WW-1, CONT_Y+HDR_H-1);
+
+    // Inset list
+    const int LIST_Y=CONT_Y+HDR_H;
+    ui_.drawWin98Bevel(WX+4, LIST_Y, WW-8, LIST_H, false);
+    SDL_SetRenderDrawColor(renderer_, 255,255,255,255);
+    SDL_Rect listBg={WX+6,LIST_Y+2,WW-12,LIST_H-4}; SDL_RenderFillRect(renderer_,&listBg);
 
     if (savedServers_.empty()) {
-        ui_.drawText("No saved servers", listX, listY + 4, 13, UI::W98::Shadow);
-        ui_.drawText("Connect to a server and save it from there.",
-                     listX, listY + 22, 11, UI::W98::Shadow);
+        drawText("No saved servers.", WX+14, LIST_Y+14, 12, UI::W98::Shadow);
+        drawText("Connect to a server and save it - it will appear here.",
+                 WX+14, LIST_Y+32, 11, {130,130,130,255});
     } else {
-        int maxVisible = (rightWinH - UI::W98::TitleH - 20) / (rowH + rowGap);
-        if (maxVisible < 2) maxVisible = 2;
-        int startIdx = 0;
-        if (serverListSelection_ >= maxVisible) startIdx = serverListSelection_ - maxVisible + 1;
-
-        for (int i = startIdx; i < (int)savedServers_.size() && (i - startIdx) < maxVisible; i++) {
-            bool sel = (multiMenuSelection_ == 3 + i);
-            auto& s = savedServers_[i];
-            int rowTop = listY + (i - startIdx) * (rowH + rowGap);
-
-            bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, listX, rowTop, listW, rowH);
-            if (hovered && !usingGamepad_) { multiMenuSelection_ = 3 + i; menuSelection_ = 3 + i; sel = true; }
-            if (hovered) ui_.hoveredItem = 10 + (i - startIdx);
-            if (hovered && ui_.mouseClicked) { multiMenuSelection_ = 3 + i; menuSelection_ = 3 + i; confirmInput_ = true; }
-
-            // Draw as a Win98 button (reuses the 3D look)
-            ui_.win98Button(10 + (i - startIdx), s.name.c_str(), listX, rowTop, listW, rowH, sel);
-
-            // Address sub-line drawn on top
-            char addrBuf[128];
-            snprintf(addrBuf, sizeof(addrBuf), "%s:%d", s.address.c_str(), s.port);
-            ui_.drawText(addrBuf, listX + 6, rowTop + rowH - 14, 10, UI::W98::Shadow);
+        const int ROW_H=28;
+        int lX=WX+6, lW=WW-12, rY=LIST_Y+2;
+        int maxVis=(LIST_H-4)/ROW_H;
+        int startIdx=0;
+        if (serverListSelection_>=maxVis) startIdx=serverListSelection_-maxVis+1;
+        for (int i=startIdx; i<(int)savedServers_.size()&&(i-startIdx)<maxVis; i++) {
+            bool sel=(multiMenuSelection_==3+i);
+            auto& s=savedServers_[i];
+            bool hov=ui_.pointInRect(ui_.mouseX,ui_.mouseY,lX,rY,lW,ROW_H);
+            if (hov) ui_.hoveredItem=10+(i-startIdx);
+            if (hov&&!usingGamepad_) { multiMenuSelection_=3+i; menuSelection_=3+i; sel=true; }
+            if (hov&&ui_.mouseClicked) { multiMenuSelection_=3+i; menuSelection_=3+i; confirmInput_=true; }
+            if (sel)      SDL_SetRenderDrawColor(renderer_, 0,0,128,255);
+            else if (hov) SDL_SetRenderDrawColor(renderer_, 180,200,240,255);
+            else          SDL_SetRenderDrawColor(renderer_, 255,255,255,255);
+            SDL_Rect row={lX,rY,lW,ROW_H}; SDL_RenderFillRect(renderer_,&row);
+            SDL_Color ic=sel?SDL_Color{200,220,255,255}:SDL_Color{0,0,128,255};
+            drawServerIcon(renderer_, lX+5, rY+(ROW_H-14)/2, ic);
+            SDL_Color nc=sel?SDL_Color{255,255,255,255}:UI::W98::Black;
+            SDL_Color ac=sel?SDL_Color{200,220,255,255}:UI::W98::Shadow;
+            drawText(s.name.c_str(), lX+24, rY+7, 13, nc);
+            char addr[128]; snprintf(addr,sizeof(addr),"%s:%d",s.address.c_str(),s.port);
+            ui_.drawTextRight(addr, lX+lW-8, rY+7, 11, ac);
+            rY+=ROW_H;
         }
     }
 
-    // Username in status bar
-    char uname[160];
-    snprintf(uname, sizeof(uname), "Playing as: %s", config_.username.c_str());
-    if (multiMenuSelection_ >= 3 && !savedServers_.empty()) {
-        ui_.drawWin98StatusBar(SCREEN_H - 26, uname);
-        UI::HintPair hints[] = { {UI::Action::Confirm, "Connect"}, {UI::Action::Bomb, "Delete"}, {UI::Action::Back, "Back"} };
-        ui_.drawHintBar(hints, 3);
-    } else {
-        ui_.drawWin98StatusBar(SCREEN_H - 26, uname);
-        UI::HintPair hints[] = { {UI::Action::Confirm, "Select"}, {UI::Action::Back, "Back"} };
-        ui_.drawHintBar(hints, 2);
+    // ── Bottom strip (Discord notice) ─────────────────────────────────────────
+    const int STRIP_Y=WY+WH-STRIP_H-2;
+    SDL_SetRenderDrawColor(renderer_, 212,208,200,255);
+    SDL_Rect strip={WX,STRIP_Y,WW,STRIP_H}; SDL_RenderFillRect(renderer_,&strip);
+    SDL_SetRenderDrawColor(renderer_, 128,128,128,255);
+    SDL_RenderDrawLine(renderer_, WX,STRIP_Y,WX+WW-1,STRIP_Y);
+    SDL_SetRenderDrawColor(renderer_, 255,255,255,255);
+    SDL_RenderDrawLine(renderer_, WX,STRIP_Y+1,WX+WW-1,STRIP_Y+1);
+    {
+        const char* discordTxt = "Join our community on Discord!";
+        bool dhov = ui_.pointInRect(ui_.mouseX, ui_.mouseY, WX+4, STRIP_Y, 220, STRIP_H);
+        drawText(discordTxt, WX+8, STRIP_Y+4, 11, dhov ? SDL_Color{0,0,255,255} : SDL_Color{0,0,160,255});
+        if (dhov && ui_.mouseClicked)
+            SDL_OpenURL("https://discord.gg/dv28MgtaNn");
     }
+
+    // ── Status bar ────────────────────────────────────────────────────────────
+    char uname[160]; snprintf(uname,sizeof(uname),"%s  (Online)",config_.username.c_str());
+    // Green online dot
+    SDL_SetRenderDrawColor(renderer_, 0,180,0,255);
+    SDL_Rect dot={WX+6,SCREEN_H-22,8,8}; SDL_RenderFillRect(renderer_,&dot);
+    ui_.drawWin98StatusBar(SCREEN_H-26, uname);
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Host Setup
+// ═════════════════════════════════════════════════════════════════════════════
 
 void Game::renderHostSetup() {
     ui_.drawDesktop();
 
-    // Overall window
-    int panelW = SCREEN_W - 60;
-    int panelH = SCREEN_H - 60;
-    int px = 30;
-    int py = 30;
-    ui_.drawWin98Window(px, py, panelW, panelH, "Host Session");
+    const int WX=30, WY=26, WW=SCREEN_W-60, WH=SCREEN_H-52;
+    const int TH=UI::W98::TitleH;
+    ui_.drawWin98Window(WX, WY, WW, WH, "Host a Session");
 
-    int leftW = 260;
-    int rightX = px + leftW + 20;
-    int rightW = panelW - leftW - 34;
+    // ── Toolbar band ──────────────────────────────────────────────────────────
+    const int TB_Y=WY+TH, TB_H=44, TBY=TB_Y+4;
+    const int TBH=36;
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(renderer_, 212,208,200,255);
+    SDL_Rect tbBg={WX,TB_Y,WW,TB_H}; SDL_RenderFillRect(renderer_,&tbBg);
+    SDL_SetRenderDrawColor(renderer_, 128,128,128,255);
+    SDL_RenderDrawLine(renderer_, WX, TB_Y+TB_H-2, WX+WW-1, TB_Y+TB_H-2);
+    SDL_SetRenderDrawColor(renderer_, 255,255,255,255);
+    SDL_RenderDrawLine(renderer_, WX, TB_Y+TB_H-1, WX+WW-1, TB_Y+TB_H-1);
 
-    // ── Left summary panel ──
-    int leftContentY = py + UI::W98::TitleH + 10;
-    int leftX = px + 10;
-
-    // Info bevel boxes
-    auto drawInfoBox = [&](int x, int y, int w, const char* title, const std::string& value) {
-        ui_.drawWin98Bevel(x, y, w, 38, false);
-        ui_.drawText(title, x + 6, y + 3, 10, UI::W98::Shadow);
-        ui_.drawText(value.c_str(), x + 6, y + 18, 14, UI::W98::Black);
+    auto tbBtn = [&](int id, const char* lbl, int x, int w, SDL_Color iconC) -> bool {
+        bool sel=(hostSetupSelection_==id);
+        bool hov=ui_.pointInRect(ui_.mouseX,ui_.mouseY,x,TBY,w,TBH);
+        if (hov) ui_.hoveredItem=id;
+        if (hov&&!usingGamepad_) { hostSetupSelection_=id; menuSelection_=id; sel=true; }
+        SDL_SetRenderDrawColor(renderer_, 212,208,200,255);
+        SDL_Rect bg={x,TBY,w,TBH}; SDL_RenderFillRect(renderer_,&bg);
+        ui_.drawWin98Bevel(x,TBY,w,TBH,!(sel&&hov));
+        int ix=x+w/2-7, iy=TBY+5;
+        SDL_SetRenderDrawColor(renderer_, iconC.r,iconC.g,iconC.b,255);
+        SDL_Rect ic={ix,iy,14,14}; SDL_RenderFillRect(renderer_,&ic);
+        SDL_SetRenderDrawColor(renderer_,
+            (Uint8)std::min(255,(int)iconC.r+80),
+            (Uint8)std::min(255,(int)iconC.g+80),
+            (Uint8)std::min(255,(int)iconC.b+80),255);
+        SDL_Rect sh={ix+1,iy+1,6,3}; SDL_RenderFillRect(renderer_,&sh);
+        int tw=(int)(strlen(lbl)*10*0.60f);
+        drawText(lbl, x+w/2-tw/2, TBY+TBH-14, 10, UI::W98::Black);
+        return hov&&ui_.mouseClicked;
+    };
+    auto tbSep=[&](int x){
+        SDL_SetRenderDrawColor(renderer_, 128,128,128,255);
+        SDL_RenderDrawLine(renderer_, x+3,TBY+5,x+3,TBY+TBH-7);
+        SDL_SetRenderDrawColor(renderer_, 255,255,255,255);
+        SDL_RenderDrawLine(renderer_, x+4,TBY+5,x+4,TBY+TBH-7);
     };
 
-    std::string ip = getLocalIP();
-    std::string accessLabel = lobbyPassword_.empty() ? "Open lobby" : "Password locked";
-    std::string modeLabel = lobbySettings_.isPvp ? "PvP skirmish" : "Co-op survival";
+    int tbX=WX+6;
+    if (tbBtn(12,"Start Hosting",tbX,100,{0,100,0,255}))
+        { hostSetupSelection_=12; menuSelection_=12; confirmInput_=true; }
+    tbX+=106; tbSep(tbX); tbX+=12;
+    if (tbBtn(13,"Back",tbX,76,{110,70,0,255}))
+        { hostSetupSelection_=13; menuSelection_=13; confirmInput_=true; }
 
-    drawInfoBox(leftX, leftContentY,      leftW - 4, "LOCAL ADDRESS", ip + ":" + std::to_string(hostPort_));
-    drawInfoBox(leftX, leftContentY + 46, leftW - 4, "ACCESS",        accessLabel);
-    drawInfoBox(leftX, leftContentY + 92, leftW - 4, "PLAYSTYLE",     modeLabel);
+    // ── Content area ──────────────────────────────────────────────────────────
+    const int CONT_Y=TB_Y+TB_H;
+    const int CONT_H=WH-TH-TB_H-2;
+    const int leftW=264, leftX=WX+10;
+    const int rightX=WX+leftW+20, rightW=WW-leftW-34;
+
+    // ── Left: Session card ────────────────────────────────────────────────────
+    // Navy header bar
+    SDL_SetRenderDrawColor(renderer_, 0,0,128,255);
+    SDL_Rect cHdr={leftX,CONT_Y+8,leftW-4,18}; SDL_RenderFillRect(renderer_,&cHdr);
+    drawText("SESSION CARD", leftX+5, CONT_Y+11, 10, {255,255,255,255});
+    int lcY=CONT_Y+28;
+
+    std::string ip=getLocalIP();
+    std::string accessLabel=lobbyPassword_.empty()?"Open":"Password locked";
+    std::string modeLabel=lobbySettings_.isPvp?"PvP skirmish":"Co-op survival";
+    std::string mapLabel="Generated arena";
+    if (hostMapSelectIdx_>0&&hostMapSelectIdx_<=(int)mapFiles_.size()) {
+        mapLabel=mapFiles_[hostMapSelectIdx_-1];
+        size_t s=mapLabel.rfind('/'); if (s==std::string::npos) s=mapLabel.rfind('\\');
+        if (s!=std::string::npos) mapLabel=mapLabel.substr(s+1);
+        size_t d=mapLabel.rfind('.'); if (d!=std::string::npos) mapLabel=mapLabel.substr(0,d);
+    }
+    const char* teamSummary=(lobbySettings_.teamCount==4)?"4 teams":
+                            (lobbySettings_.teamCount==2)?"2 teams":"open teams";
+    std::string livesSummary=(lobbySettings_.livesPerPlayer==0)
+        ?"infinite lives":std::to_string(lobbySettings_.livesPerPlayer)+" lives";
+
+    auto infoBox=[&](const char* title, const std::string& val){
+        ui_.drawWin98Bevel(leftX,lcY,leftW-4,38,false);
+        drawText(title, leftX+5,lcY+3,10,UI::W98::Shadow);
+        drawText(val.c_str(), leftX+5,lcY+18,13,UI::W98::Black);
+        lcY+=44;
+    };
+    infoBox("ADDRESS",   ip+":"+std::to_string(hostPort_));
+    infoBox("ACCESS",    accessLabel);
+    infoBox("PLAYSTYLE", modeLabel);
 
     // Snapshot bevel
-    int snapY = leftContentY + 146;
-    ui_.drawWin98Bevel(leftX, snapY, leftW - 4, 210, false);
-    ui_.drawText("SESSION SNAPSHOT", leftX + 6, snapY + 6, 11, UI::W98::Shadow);
-    ui_.drawText(config_.username.c_str(), leftX + 6, snapY + 24, 16, UI::W98::Black);
-
-    std::string mapLabel = "Generated arena";
-    if (hostMapSelectIdx_ > 0 && hostMapSelectIdx_ <= (int)mapFiles_.size()) {
-        mapLabel = mapFiles_[hostMapSelectIdx_ - 1];
-        size_t slash = mapLabel.rfind('/'); if (slash == std::string::npos) slash = mapLabel.rfind('\\');
-        if (slash != std::string::npos) mapLabel = mapLabel.substr(slash + 1);
-        size_t dot = mapLabel.rfind('.'); if (dot != std::string::npos) mapLabel = mapLabel.substr(0, dot);
-    }
-
-    char summary1[96];
-    const char* teamSummary = (lobbySettings_.teamCount == 4) ? "4 teams" : (lobbySettings_.teamCount == 2 ? "2 teams" : "open teams");
-    snprintf(summary1, sizeof(summary1), "%d slots  %s", hostMaxPlayers_, teamSummary);
-    ui_.drawText(summary1, leftX + 6, snapY + 46, 12, UI::W98::Shadow);
-
-    std::string livesSummary = (lobbySettings_.livesPerPlayer == 0)
-        ? "infinite lives"
-        : std::to_string(lobbySettings_.livesPerPlayer) + " lives";
-    char summary2[96]; snprintf(summary2, sizeof(summary2), "HP %d  %s", lobbySettings_.playerMaxHp, livesSummary.c_str());
-    ui_.drawText(summary2, leftX + 6, snapY + 62, 12, UI::W98::Shadow);
-    ui_.drawText("Map:", leftX + 6, snapY + 84, 10, UI::W98::Shadow);
-    ui_.drawText(mapLabel.c_str(), leftX + 6, snapY + 98, 13, UI::W98::Black);
-    ui_.drawText("Objective:", leftX + 6, snapY + 120, 10, UI::W98::Shadow);
+    int snapH=CONT_H-(lcY-CONT_Y)-12;
+    ui_.drawWin98Bevel(leftX,lcY,leftW-4,snapH,false);
+    drawText("SNAPSHOT", leftX+5,lcY+5,10,UI::W98::Shadow);
+    SDL_SetRenderDrawColor(renderer_, 128,128,128,255);
+    SDL_RenderDrawLine(renderer_, leftX+68,lcY+12,leftX+leftW-10,lcY+12);
+    int sY=lcY+18;
+    drawText(config_.username.c_str(),leftX+5,sY,15,UI::W98::Black); sY+=19;
+    char s1[96]; snprintf(s1,sizeof(s1),"%d slots · %s",hostMaxPlayers_,teamSummary);
+    drawText(s1,leftX+5,sY,12,UI::W98::Shadow); sY+=15;
+    char s2[96]; snprintf(s2,sizeof(s2),"HP %d · %s",lobbySettings_.playerMaxHp,livesSummary.c_str());
+    drawText(s2,leftX+5,sY,12,UI::W98::Shadow); sY+=19;
+    drawText("Map:",leftX+5,sY,10,UI::W98::Shadow); sY+=13;
+    drawText(mapLabel.c_str(),leftX+5,sY,13,UI::W98::Black); sY+=17;
+    drawText("Objective:",leftX+5,sY,10,UI::W98::Shadow); sY+=13;
     if (lobbySettings_.isPvp) {
         char obj[64];
-        if (lobbySettings_.pvpMatchDuration <= 0.0f) snprintf(obj, sizeof(obj), "Last team alive wins");
-        else snprintf(obj, sizeof(obj), "%d:%02d round timer", (int)lobbySettings_.pvpMatchDuration / 60, (int)lobbySettings_.pvpMatchDuration % 60);
-        ui_.drawText(obj, leftX + 6, snapY + 134, 13, UI::W98::Black);
+        if (lobbySettings_.pvpMatchDuration<=0) snprintf(obj,sizeof(obj),"Last team alive");
+        else snprintf(obj,sizeof(obj),"%d:%02d round",(int)lobbySettings_.pvpMatchDuration/60,(int)lobbySettings_.pvpMatchDuration%60);
+        drawText(obj,leftX+5,sY,13,UI::W98::Black);
     } else {
         char obj[64];
-        if (lobbySettings_.waveCount == 0) snprintf(obj, sizeof(obj), "Endless waves");
-        else snprintf(obj, sizeof(obj), "%d-wave run", lobbySettings_.waveCount);
-        ui_.drawText(obj, leftX + 6, snapY + 134, 13, UI::W98::Black);
+        if (lobbySettings_.waveCount==0) snprintf(obj,sizeof(obj),"Endless waves");
+        else snprintf(obj,sizeof(obj),"%d-wave run",lobbySettings_.waveCount);
+        drawText(obj,leftX+5,sY,13,UI::W98::Black);
     }
-    ui_.drawText("Tip: use presets for recurring lobbies.", leftX + 6, snapY + 162, 10, UI::W98::Shadow);
-    ui_.drawText("The lobby exposes full tuning after start.", leftX + 6, snapY + 176, 10, UI::W98::Shadow);
 
-    // ── Right options panel ──
-    ui_.drawWin98Bevel(rightX, py + UI::W98::TitleH + 10, rightW, panelH - UI::W98::TitleH - 20, false);
-    ui_.drawText("HOST OPTIONS", rightX + 8, py + UI::W98::TitleH + 14, 14, UI::W98::Black);
-    ui_.drawText("Navigate with arrows/stick. Confirm to edit.", rightX + 8, py + UI::W98::TitleH + 32, 11, UI::W98::Shadow);
-    ui_.drawWin98Bevel(rightX + 4, py + UI::W98::TitleH + 48, rightW - 8, 2, false);
+    // ── Right: Options panel ──────────────────────────────────────────────────
+    // Navy header bar
+    SDL_SetRenderDrawColor(renderer_, 0,0,128,255);
+    SDL_Rect oHdr={rightX,CONT_Y+8,rightW,18}; SDL_RenderFillRect(renderer_,&oHdr);
+    drawText("HOST OPTIONS", rightX+8,CONT_Y+11,11,{255,255,255,255});
+    drawText("Navigate · Confirm to edit", rightX+108,CONT_Y+13,10,{180,200,255,255});
 
-    // ── Row helpers ──
-    // Clip rows to the right-panel area
-    const int rowAreaTop = py + UI::W98::TitleH + 56;
-    const int rowAreaBot = py + panelH - 70; // leave room for Start/Back buttons
-    const int rowH = 28;
-    const int rowGap = 2;
+    ui_.drawWin98Bevel(rightX,CONT_Y+28,rightW,CONT_H-36,false);
 
-    auto sectionHeader = [&](const char* label, int y) {
-        ui_.drawText(label, rightX + 6, y + 2, 10, UI::W98::Shadow);
-        ui_.drawWin98Bevel(rightX + 80, y + 7, rightW - 88, 2, false);
+    const int rowAreaTop=CONT_Y+36, rowAreaBot=CONT_Y+CONT_H-42;
+    const int rowH=28, rowGap=2;
+
+    auto sectionHeader=[&](const char* label,int y){
+        drawText(label, rightX+6,y+2,10,UI::W98::Shadow);
+        ui_.drawWin98Bevel(rightX+80,y+7,rightW-88,2,false);
     };
-
-    auto drawOptionRow = [&](int idx, int y, const char* label, const std::string& value,
-                             const char* /*hint*/, bool editable = true, bool dim = false) {
-        bool sel = (hostSetupSelection_ == idx);
-        SDL_Rect row = {rightX, y, rightW, rowH};
-        bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, row.x, row.y, row.w, row.h);
-        if (hovered) ui_.hoveredItem = idx;
-        if (hovered && !usingGamepad_) { hostSetupSelection_ = idx; menuSelection_ = idx; }
-        if (hovered && ui_.mouseClicked) { hostSetupSelection_ = idx; menuSelection_ = idx; confirmInput_ = true; }
-
-        // Background: silver selected, lighter silver hovered, white normal
+    auto drawOptionRow=[&](int idx,int y,const char* label,const std::string& value,
+                           bool editable=true,bool dim=false){
+        bool sel=(hostSetupSelection_==idx);
+        SDL_Rect row={rightX,y,rightW,rowH};
+        bool hov=ui_.pointInRect(ui_.mouseX,ui_.mouseY,row.x,row.y,row.w,row.h);
+        if (hov) ui_.hoveredItem=idx;
+        if (hov&&!usingGamepad_) { hostSetupSelection_=idx; menuSelection_=idx; }
+        if (hov&&ui_.mouseClicked) { hostSetupSelection_=idx; menuSelection_=idx; confirmInput_=true; }
         SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
-        Uint8 bg = dim ? 210 : (sel ? 180 : (hovered ? 220 : 232));
-        SDL_SetRenderDrawColor(renderer_, bg, bg, bg, 255);
-        SDL_RenderFillRect(renderer_, &row);
-        // Thin bottom border
-        SDL_SetRenderDrawColor(renderer_, 160, 160, 160, 255);
-        SDL_Rect bot = {row.x, row.y + row.h - 1, row.w, 1};
-        SDL_RenderFillRect(renderer_, &bot);
+        Uint8 bg=dim?210:(sel?180:(hov?220:232));
+        SDL_SetRenderDrawColor(renderer_,bg,bg,bg,255);
+        SDL_RenderFillRect(renderer_,&row);
+        SDL_SetRenderDrawColor(renderer_,160,160,160,255);
+        SDL_Rect bot={row.x,row.y+row.h-1,row.w,1}; SDL_RenderFillRect(renderer_,&bot);
         if (sel) {
-            // Dotted focus rect approximation: navy left strip
-            SDL_SetRenderDrawColor(renderer_, 0, 0, 128, 255);
-            SDL_Rect bar = {row.x, row.y, 3, row.h};
-            SDL_RenderFillRect(renderer_, &bar);
+            SDL_SetRenderDrawColor(renderer_,0,0,128,255);
+            SDL_Rect bar={row.x,row.y,3,row.h}; SDL_RenderFillRect(renderer_,&bar);
         }
-
-        SDL_Color labelCol = dim ? UI::W98::Shadow : UI::W98::Black;
-        drawText(label, rightX + 8, y + 6, 13, labelCol);
-
-        std::string shown = value;
-        if (sel && editable) shown = "< " + shown + " >";
-        ui_.drawTextRight(shown.c_str(), rightX + rightW - 6, y + 6, 13, dim ? UI::W98::Shadow : UI::W98::Black);
+        SDL_Color lc=dim?UI::W98::Shadow:UI::W98::Black;
+        drawText(label,rightX+8,y+6,13,lc);
+        std::string shown=value;
+        if (sel&&editable) shown="< "+shown+" >";
+        ui_.drawTextRight(shown.c_str(),rightX+rightW-6,y+6,13,dim?UI::W98::Shadow:UI::W98::Black);
     };
 
-    // ── Auto-scroll to keep selection visible ──
+    // Auto-scroll
     {
-        static const int ROW_REL_Y[] = { 20, 52, 84, 116, 162, 194, 226, 258, 290, 322, 354, 400, 444, 486 };
-        const int VIS_H   = rowAreaBot - rowAreaTop;
-        constexpr int MAX_SCR = 206;
-        if (hostSetupSelection_ >= 0 && hostSetupSelection_ < 14) {
-            int iy = ROW_REL_Y[hostSetupSelection_];
-            if (iy < hostSetupScrollY_)                  hostSetupScrollY_ = iy;
-            if (iy + rowH > hostSetupScrollY_ + VIS_H)  hostSetupScrollY_ = iy + rowH - VIS_H;
-            hostSetupScrollY_ = std::max(0, std::min(MAX_SCR, hostSetupScrollY_));
+        static const int ROW_REL_Y[]={20,52,84,116,162,194,226,258,290,322,354,400,444,486};
+        const int VIS_H=rowAreaBot-rowAreaTop;
+        constexpr int MAX_SCR=206;
+        if (hostSetupSelection_>=0&&hostSetupSelection_<14) {
+            int iy=ROW_REL_Y[hostSetupSelection_];
+            if (iy<hostSetupScrollY_) hostSetupScrollY_=iy;
+            if (iy+rowH>hostSetupScrollY_+VIS_H) hostSetupScrollY_=iy+rowH-VIS_H;
+            hostSetupScrollY_=std::max(0,std::min(206,hostSetupScrollY_));
         }
     }
 
-    // ── Scissor-clip the rows ──
-    SDL_Rect prevClipRect;
-    SDL_RenderGetClipRect(renderer_, &prevClipRect);
+    // Clip rows
+    SDL_Rect prevClip; SDL_RenderGetClipRect(renderer_,&prevClip);
+    {SDL_Rect clip={rightX,rowAreaTop,rightW,rowAreaBot-rowAreaTop}; SDL_RenderSetClipRect(renderer_,&clip);}
+
+    int rowY=rowAreaTop-hostSetupScrollY_;
+    sectionHeader("NETWORK",rowY); rowY+=18;
+    drawOptionRow(0,rowY,"Max players",std::to_string(hostMaxPlayers_)); rowY+=rowH+rowGap;
     {
-        SDL_Rect clip = {rightX, rowAreaTop, rightW, rowAreaBot - rowAreaTop};
-        SDL_RenderSetClipRect(renderer_, &clip);
-    }
-
-    int rowY = rowAreaTop - hostSetupScrollY_;
-    sectionHeader("NETWORK", rowY); rowY += 18;
-
-    drawOptionRow(0, rowY, "Max players", std::to_string(hostMaxPlayers_), "", true); rowY += rowH + rowGap;
-
-    std::string portDisplay = portTyping_ ? portStr_ : std::to_string(hostPort_);
-    if (portTyping_) portDisplay += ((int)(gameTime_ * 3.0f) % 2 == 0) ? '_' : ' ';
-    drawOptionRow(1, rowY, "Port", portDisplay, "", false); rowY += rowH + rowGap;
-
-    std::string userDisplay = config_.username;
-    if (mpUsernameTyping_) userDisplay += ((int)(gameTime_ * 3.0f) % 2 == 0) ? '_' : ' ';
-    drawOptionRow(2, rowY, "Host name", userDisplay, "", false); rowY += rowH + rowGap;
-
-    std::string passwordDisplay;
-    if (hostPasswordTyping_) {
-        passwordDisplay = lobbyPassword_;
-        passwordDisplay += ((int)(gameTime_ * 3.0f) % 2 == 0) ? '_' : ' ';
-    } else if (lobbyPassword_.empty()) {
-        passwordDisplay = "Open";
-    } else {
-        passwordDisplay = std::string(lobbyPassword_.size(), '*');
-    }
-    drawOptionRow(3, rowY, "Password", passwordDisplay, "", false); rowY += rowH + rowGap + 8;
-
-    sectionHeader("MATCH", rowY); rowY += 18;
-
-    drawOptionRow(4, rowY, "Mode",      lobbySettings_.isPvp ? "PvP" : "PvE",        "", true);  rowY += rowH + rowGap;
-    drawOptionRow(5, rowY, "Map",       mapLabel,                                     "", true);  rowY += rowH + rowGap;
-    drawOptionRow(6, rowY, "Teams",     teamSummary,                                  "", true);  rowY += rowH + rowGap;
-    drawOptionRow(7, rowY, "Player HP", std::to_string(lobbySettings_.playerMaxHp),   "", true);  rowY += rowH + rowGap;
-    drawOptionRow(8, rowY, "Lives",     livesSummary,                                 "", true);  rowY += rowH + rowGap;
-
-    std::string objectiveLabel;
-    if (lobbySettings_.isPvp) {
-        if (lobbySettings_.pvpMatchDuration <= 0.0f) objectiveLabel = "Unlimited";
-        else {
-            char buf2[32]; snprintf(buf2, sizeof(buf2), "%d:%02d", (int)lobbySettings_.pvpMatchDuration / 60, (int)lobbySettings_.pvpMatchDuration % 60);
-            objectiveLabel = buf2;
-        }
-    } else {
-        objectiveLabel = (lobbySettings_.waveCount == 0) ? "Endless" : std::to_string(lobbySettings_.waveCount) + " waves";
-    }
-    drawOptionRow(9, rowY, lobbySettings_.isPvp ? "Round timer" : "Wave goal", objectiveLabel, "", true); rowY += rowH + rowGap;
-
-    bool ffForced = lobbySettings_.isPvp && lobbySettings_.teamCount == 0;
-    std::string ffLabel = ffForced ? "Forced on" : (lobbySettings_.friendlyFire ? "On" : "Off");
-    drawOptionRow(10, rowY, lobbySettings_.isPvp ? "Friendly fire" : "PvP damage", ffLabel, "", !ffForced, ffForced); rowY += rowH + rowGap + 8;
-
-    sectionHeader("PRESET", rowY); rowY += 18;
-    std::string presetLabel = serverPresets_.empty() ? "No presets saved" : serverPresets_[presetSelection_ % (int)serverPresets_.size()].name;
-    drawOptionRow(11, rowY, "Load preset", presetLabel, "", !serverPresets_.empty(), serverPresets_.empty()); rowY += rowH + rowGap;
-
-    // ── Restore clip rect ──
-    SDL_RenderSetClipRect(renderer_, prevClipRect.w > 0 ? &prevClipRect : nullptr);
-
-    // ── Scrollbar (Win98 style: silver track + dark thumb) ──
+        std::string portDisplay=portTyping_?portStr_:std::to_string(hostPort_);
+        if (portTyping_) portDisplay+=((int)(gameTime_*3.0f)%2==0)?'_':' ';
+        drawOptionRow(1,rowY,"Port",portDisplay,false);
+    } rowY+=rowH+rowGap;
     {
-        constexpr int CONTENT_H = 520;
-        const     int VIS_H     = rowAreaBot - rowAreaTop;
-        constexpr int MAX_SCR   = 206;
-        int sbX = rightX + rightW + 2;
+        std::string ud=config_.username;
+        if (mpUsernameTyping_) ud+=((int)(gameTime_*3.0f)%2==0)?'_':' ';
+        drawOptionRow(2,rowY,"Host name",ud,false);
+    } rowY+=rowH+rowGap;
+    {
+        std::string pd;
+        if (hostPasswordTyping_) { pd=lobbyPassword_; pd+=((int)(gameTime_*3.0f)%2==0)?'_':' '; }
+        else if (lobbyPassword_.empty()) pd="Open";
+        else pd=std::string(lobbyPassword_.size(),'*');
+        drawOptionRow(3,rowY,"Password",pd,false);
+    } rowY+=rowH+rowGap+8;
+
+    sectionHeader("MATCH",rowY); rowY+=18;
+    drawOptionRow(4,rowY,"Mode",       lobbySettings_.isPvp?"PvP":"PvE"); rowY+=rowH+rowGap;
+    drawOptionRow(5,rowY,"Map",        mapLabel);                         rowY+=rowH+rowGap;
+    drawOptionRow(6,rowY,"Teams",      teamSummary);                      rowY+=rowH+rowGap;
+    drawOptionRow(7,rowY,"Player HP",  std::to_string(lobbySettings_.playerMaxHp)); rowY+=rowH+rowGap;
+    drawOptionRow(8,rowY,"Lives",      livesSummary);                     rowY+=rowH+rowGap;
+    {
+        std::string obj;
+        if (lobbySettings_.isPvp) {
+            if (lobbySettings_.pvpMatchDuration<=0) obj="Unlimited";
+            else {char b[32]; snprintf(b,sizeof(b),"%d:%02d",(int)lobbySettings_.pvpMatchDuration/60,(int)lobbySettings_.pvpMatchDuration%60); obj=b;}
+        } else { obj=(lobbySettings_.waveCount==0)?"Endless":std::to_string(lobbySettings_.waveCount)+" waves"; }
+        drawOptionRow(9,rowY,lobbySettings_.isPvp?"Round timer":"Wave goal",obj);
+    } rowY+=rowH+rowGap;
+    {
+        bool ffForced=lobbySettings_.isPvp&&lobbySettings_.teamCount==0;
+        std::string ffLabel=ffForced?"Forced on":(lobbySettings_.friendlyFire?"On":"Off");
+        drawOptionRow(10,rowY,lobbySettings_.isPvp?"Friendly fire":"PvP damage",ffLabel,!ffForced,ffForced);
+    } rowY+=rowH+rowGap+8;
+
+    sectionHeader("PRESET",rowY); rowY+=18;
+    {
+        std::string pl=serverPresets_.empty()?"No presets saved":serverPresets_[presetSelection_%(int)serverPresets_.size()].name;
+        drawOptionRow(11,rowY,"Load preset",pl,!serverPresets_.empty(),serverPresets_.empty());
+    }
+
+    SDL_RenderSetClipRect(renderer_, prevClip.w>0?&prevClip:nullptr);
+
+    // Scrollbar
+    {
+        constexpr int CONT_H2=520; const int VIS_H=rowAreaBot-rowAreaTop; constexpr int MAX_SCR=206;
+        int sbX=rightX+rightW+2;
         SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
-        SDL_SetRenderDrawColor(renderer_, 212, 208, 200, 255);
-        SDL_Rect track = {sbX, rowAreaTop, 10, VIS_H};
-        SDL_RenderFillRect(renderer_, &track);
-        ui_.drawWin98Bevel(sbX, rowAreaTop, 10, VIS_H, false);
-        int thumbH = std::max(16, VIS_H * VIS_H / CONTENT_H);
-        int thumbY = rowAreaTop + (int)((long long)hostSetupScrollY_ * (VIS_H - thumbH) / MAX_SCR);
-        SDL_SetRenderDrawColor(renderer_, 212, 208, 200, 255);
-        SDL_Rect thumb = {sbX, thumbY, 10, thumbH};
-        SDL_RenderFillRect(renderer_, &thumb);
-        ui_.drawWin98Bevel(sbX, thumbY, 10, thumbH, true);
+        SDL_SetRenderDrawColor(renderer_,212,208,200,255);
+        SDL_Rect track={sbX,rowAreaTop,10,VIS_H}; SDL_RenderFillRect(renderer_,&track);
+        ui_.drawWin98Bevel(sbX,rowAreaTop,10,VIS_H,false);
+        int thumbH=std::max(16,VIS_H*VIS_H/CONT_H2);
+        int thumbY=rowAreaTop+(int)((long long)hostSetupScrollY_*(VIS_H-thumbH)/MAX_SCR);
+        SDL_SetRenderDrawColor(renderer_,212,208,200,255);
+        SDL_Rect thumb={sbX,thumbY,10,thumbH}; SDL_RenderFillRect(renderer_,&thumb);
+        ui_.drawWin98Bevel(sbX,thumbY,10,thumbH,true);
     }
 
-    // ── START / BACK buttons ──
-    int btnAreaY = rowAreaBot + 6;
-    int btnW = (rightW - 10) / 2;
-    if (ui_.win98Button(12, "Start Hosting", rightX, btnAreaY, btnW, 26, hostSetupSelection_ == 12)) {
-        hostSetupSelection_ = 12; menuSelection_ = 12; confirmInput_ = true;
-    }
-    if (ui_.hoveredItem == 12 && !usingGamepad_) { hostSetupSelection_ = 12; menuSelection_ = 12; }
+    // Start/Back buttons (below row area)
+    int btnAreaY=rowAreaBot+6, btnW=(rightW-10)/2;
+    if (ui_.win98Button(12,"Start Hosting",rightX,btnAreaY,btnW,26,hostSetupSelection_==12))
+        { hostSetupSelection_=12; menuSelection_=12; confirmInput_=true; }
+    if (ui_.hoveredItem==12&&!usingGamepad_) { hostSetupSelection_=12; menuSelection_=12; }
+    if (ui_.win98Button(13,"Back",rightX+btnW+10,btnAreaY,btnW,26,hostSetupSelection_==13))
+        { hostSetupSelection_=13; menuSelection_=13; confirmInput_=true; }
+    if (ui_.hoveredItem==13&&!usingGamepad_) { hostSetupSelection_=13; menuSelection_=13; }
 
-    if (ui_.win98Button(13, "Back", rightX + btnW + 10, btnAreaY, btnW, 26, hostSetupSelection_ == 13)) {
-        hostSetupSelection_ = 13; menuSelection_ = 13; confirmInput_ = true;
-    }
-    if (ui_.hoveredItem == 13 && !usingGamepad_) { hostSetupSelection_ = 13; menuSelection_ = 13; }
+    if (softKB_.active) renderSoftKB();
 
-    if (softKB_.active) {
-        renderSoftKB();
-    }
-
-    ui_.drawWin98StatusBar(SCREEN_H - 26, "Navigate with arrows/stick  |  Enter: Edit/Apply  |  Esc: Cancel");
+    ui_.drawWin98StatusBar(SCREEN_H-26,"Navigate with arrows/stick  |  Enter: Edit/Apply  |  Esc: Cancel");
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Join Menu
+// ═════════════════════════════════════════════════════════════════════════════
 
 void Game::renderJoinMenu() {
     ui_.drawDesktop();
 
-    const int padX = 14;
-    const int fieldH = 40;
-    const int fieldGap = 8;
-    const int btnH = 26;
-    const int btnGap = 6;
-    const int winW = 440;
+    const int padX=14, fieldH=40, fieldGap=8, btnH=26, btnGap=6, winW=460;
+    const int TH=UI::W98::TitleH;
+    const int TB_H=44, TBH_BTN=36, TBW_BTN=80;
 
-    // Calculate window height: TitleH + pad + status(20) + 4 fields + sep + 3 btns + pad
-    const int winH = UI::W98::TitleH + 10
-                   + 20 + 6                          // status line
-                   + 4 * (fieldH + fieldGap) + 6     // four input fields
-                   + 2 + 8                            // separator
-                   + 3 * (btnH + btnGap) + 10;        // three buttons
-    const int winX = (SCREEN_W - winW) / 2;
-    const int winY = (SCREEN_H - winH) / 2;
-    ui_.drawWin98Window(winX, winY, winW, winH, "Join Game");
+    // Window height: toolbar + status + 4 fields + sep + 3 btns + pad
+    const int winH=TH+TB_H+10+20+6+4*(fieldH+fieldGap)+6+2+8+3*(btnH+btnGap)+10;
+    const int winX=(SCREEN_W-winW)/2, winY=(SCREEN_H-winH)/2;
+    ui_.drawWin98Window(winX, winY, winW, winH, "Join a Game");
 
-    const int fieldW = winW - padX * 2;
-    const int fieldX = winX + padX;
+    // ── Toolbar ──────────────────────────────────────────────────────────────
+    const int TB_Y=winY+TH, TBY=TB_Y+4;
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(renderer_, 212,208,200,255);
+    SDL_Rect tbBg={winX,TB_Y,winW,TB_H}; SDL_RenderFillRect(renderer_,&tbBg);
+    SDL_SetRenderDrawColor(renderer_, 128,128,128,255);
+    SDL_RenderDrawLine(renderer_, winX,TB_Y+TB_H-2,winX+winW-1,TB_Y+TB_H-2);
+    SDL_SetRenderDrawColor(renderer_, 255,255,255,255);
+    SDL_RenderDrawLine(renderer_, winX,TB_Y+TB_H-1,winX+winW-1,TB_Y+TB_H-1);
 
-    // Connection status
-    auto& net = NetworkManager::instance();
-    int statusY = winY + UI::W98::TitleH + 10;
-    if (net.state() == NetState::Connecting) {
-        ui_.drawTextCentered("Connecting...", statusY, 14, UI::W98::Shadow);
-    } else if (!connectStatus_.empty()) {
-        bool isSaved = connectStatus_.find("saved") != std::string::npos ||
-                       connectStatus_.find("Saved") != std::string::npos;
-        SDL_Color sc = isSaved ? SDL_Color{0,128,0,255} : SDL_Color{180,0,0,255};
-        ui_.drawTextCentered(connectStatus_.c_str(), statusY, 13, sc);
-    }
-
-    int fieldY = statusY + 26;
-
-    auto drawField = [&](int idx, const char* label, const std::string& value,
-                         bool editing, bool password = false) {
-        bool focused = (joinMenuSelection_ == idx);
-        // Build display text with cursor blink
-        std::string display = value;
-        if (editing) display += ((int)(gameTime_ * 3.0f) % 2 == 0) ? '_' : ' ';
-        ui_.drawText(label, fieldX, fieldY, 11, UI::W98::Shadow);
-        ui_.drawWin98TextField(fieldX, fieldY + 13, fieldW, fieldH - 13,
-                               display.c_str(), focused, password, gameTime_);
-
-        bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, fieldX, fieldY, fieldW, fieldH);
-        if (hovered && !usingGamepad_) { menuSelection_ = idx; joinMenuSelection_ = idx; }
-        if (hovered) ui_.hoveredItem = idx;
-        if (hovered && ui_.mouseClicked) { menuSelection_ = idx; joinMenuSelection_ = idx; confirmInput_ = true; }
-
-        fieldY += fieldH + fieldGap;
+    auto tbBtn=[&](int id, const char* lbl, int x, SDL_Color iconC) -> bool {
+        bool sel=(joinMenuSelection_==id);
+        bool hov=ui_.pointInRect(ui_.mouseX,ui_.mouseY,x,TBY,TBW_BTN,TBH_BTN);
+        if (hov) ui_.hoveredItem=id;
+        if (hov&&!usingGamepad_) { joinMenuSelection_=id; menuSelection_=id; sel=true; }
+        SDL_SetRenderDrawColor(renderer_, 212,208,200,255);
+        SDL_Rect bg={x,TBY,TBW_BTN,TBH_BTN}; SDL_RenderFillRect(renderer_,&bg);
+        ui_.drawWin98Bevel(x,TBY,TBW_BTN,TBH_BTN,!(sel&&hov));
+        int ix=x+TBW_BTN/2-7, iy=TBY+5;
+        SDL_SetRenderDrawColor(renderer_, iconC.r,iconC.g,iconC.b,255);
+        SDL_Rect ic={ix,iy,14,14}; SDL_RenderFillRect(renderer_,&ic);
+        SDL_SetRenderDrawColor(renderer_,
+            (Uint8)std::min(255,(int)iconC.r+80),(Uint8)std::min(255,(int)iconC.g+80),
+            (Uint8)std::min(255,(int)iconC.b+80),255);
+        SDL_Rect sh={ix+1,iy+1,6,3}; SDL_RenderFillRect(renderer_,&sh);
+        int tw=(int)(strlen(lbl)*10*0.60f);
+        drawText(lbl, x+TBW_BTN/2-tw/2, TBY+TBH_BTN-14, 10, UI::W98::Black);
+        return hov&&ui_.mouseClicked;
+    };
+    auto tbSep=[&](int x){
+        SDL_SetRenderDrawColor(renderer_, 128,128,128,255);
+        SDL_RenderDrawLine(renderer_, x+3,TBY+5,x+3,TBY+TBH_BTN-7);
+        SDL_SetRenderDrawColor(renderer_, 255,255,255,255);
+        SDL_RenderDrawLine(renderer_, x+4,TBY+5,x+4,TBY+TBH_BTN-7);
     };
 
-    drawField(0, "IP / Host (e.g. 192.168.1.10 or play.example.com)", joinAddress_, ipTyping_);
+    int tbX=winX+6;
+    if (tbBtn(4,"Connect",tbX,{0,100,0,255}))  { joinMenuSelection_=4; menuSelection_=4; confirmInput_=true; }
+    tbX+=TBW_BTN+4;
+    if (tbBtn(5,"Save",tbX,{0,0,128,255}))     { joinMenuSelection_=5; menuSelection_=5; confirmInput_=true; }
+    tbX+=TBW_BTN+10; tbSep(tbX); tbX+=12;
+    if (tbBtn(6,"Back",tbX,{110,70,0,255}))    { joinMenuSelection_=6; menuSelection_=6; confirmInput_=true; }
 
-    {
-        std::string pStr = joinPortTyping_ ? joinPortStr_ : std::to_string(joinPort_);
-        drawField(1, "Port", pStr, joinPortTyping_);
+    // ── Fields ────────────────────────────────────────────────────────────────
+    const int fieldW=winW-padX*2, fieldX=winX+padX;
+    auto& net=NetworkManager::instance();
+    int statusY=winY+TH+TB_H+10;
+
+    if (net.state()==NetState::Connecting) {
+        ui_.drawTextCentered("Connecting...", statusY, 14, UI::W98::Shadow);
+    } else if (!connectStatus_.empty()) {
+        bool isSaved=connectStatus_.find("saved")!=std::string::npos||connectStatus_.find("Saved")!=std::string::npos;
+        SDL_Color sc=isSaved?SDL_Color{0,128,0,255}:SDL_Color{180,0,0,255};
+        ui_.drawTextCentered(connectStatus_.c_str(), statusY, 13, sc);
     }
+    int fieldY=statusY+26;
 
-    drawField(2, "Username", config_.username, mpUsernameTyping_);
+    auto drawField=[&](int idx, const char* label, const std::string& value,
+                       bool editing, bool password=false){
+        bool focused=(joinMenuSelection_==idx);
+        std::string display=value;
+        if (editing) display+=((int)(gameTime_*3.0f)%2==0)?'_':' ';
+        drawText(label, fieldX, fieldY, 11, UI::W98::Shadow);
+        ui_.drawWin98TextField(fieldX, fieldY+13, fieldW, fieldH-13,
+                               display.c_str(), focused, password, gameTime_);
+        bool hov=ui_.pointInRect(ui_.mouseX,ui_.mouseY,fieldX,fieldY,fieldW,fieldH);
+        if (hov&&!usingGamepad_) { menuSelection_=idx; joinMenuSelection_=idx; }
+        if (hov) ui_.hoveredItem=idx;
+        if (hov&&ui_.mouseClicked) { menuSelection_=idx; joinMenuSelection_=idx; confirmInput_=true; }
+        fieldY+=fieldH+fieldGap;
+    };
 
-    {
-        std::string pwDisp;
-        if (joinPasswordTyping_) pwDisp = joinPassword_;
-        else if (!joinPassword_.empty()) pwDisp = std::string(joinPassword_.size(), '*');
-        drawField(3, "Password (leave blank if none)", pwDisp, joinPasswordTyping_, true);
-    }
+    drawField(0,"IP / Host (e.g. 192.168.1.10 or play.example.com)",joinAddress_,ipTyping_);
+    {std::string ps=joinPortTyping_?joinPortStr_:std::to_string(joinPort_);
+     drawField(1,"Port",ps,joinPortTyping_);}
+    drawField(2,"Username",config_.username,mpUsernameTyping_);
+    {std::string pw;
+     if (joinPasswordTyping_) pw=joinPassword_;
+     else if (!joinPassword_.empty()) pw=std::string(joinPassword_.size(),'*');
+     drawField(3,"Password (leave blank if none)",pw,joinPasswordTyping_,true);}
 
     if (softKB_.active) {
         renderSoftKB();
     } else {
-        ui_.drawWin98Bevel(fieldX, fieldY, fieldW, 2, false);
-        fieldY += 8;
-
-        if (ui_.win98Button(4, "Connect", fieldX, fieldY, fieldW, btnH, joinMenuSelection_ == 4)) {
-            menuSelection_ = 4; joinMenuSelection_ = 4; confirmInput_ = true;
-        }
-        if (ui_.hoveredItem == 4 && !usingGamepad_) { menuSelection_ = 4; joinMenuSelection_ = 4; }
-        fieldY += btnH + btnGap;
-
-        if (ui_.win98Button(5, "Save Server", fieldX, fieldY, fieldW, btnH, joinMenuSelection_ == 5)) {
-            menuSelection_ = 5; joinMenuSelection_ = 5; confirmInput_ = true;
-        }
-        if (ui_.hoveredItem == 5 && !usingGamepad_) { menuSelection_ = 5; joinMenuSelection_ = 5; }
-        fieldY += btnH + btnGap;
-
-        if (ui_.win98Button(6, "Back", fieldX, fieldY, fieldW, btnH, joinMenuSelection_ == 6)) {
-            menuSelection_ = 6; joinMenuSelection_ = 6; confirmInput_ = true;
-        }
-        if (ui_.hoveredItem == 6 && !usingGamepad_) { menuSelection_ = 6; joinMenuSelection_ = 6; }
-
-        ui_.drawWin98StatusBar(SCREEN_H - 26, "Enter connection details then click Connect");
+        ui_.drawWin98Bevel(fieldX,fieldY,fieldW,2,false); fieldY+=8;
+        if (ui_.win98Button(4,"Connect",fieldX,fieldY,fieldW,btnH,joinMenuSelection_==4))
+            { menuSelection_=4; joinMenuSelection_=4; confirmInput_=true; }
+        if (ui_.hoveredItem==4&&!usingGamepad_) { menuSelection_=4; joinMenuSelection_=4; }
+        fieldY+=btnH+btnGap;
+        if (ui_.win98Button(5,"Save Server",fieldX,fieldY,fieldW,btnH,joinMenuSelection_==5))
+            { menuSelection_=5; joinMenuSelection_=5; confirmInput_=true; }
+        if (ui_.hoveredItem==5&&!usingGamepad_) { menuSelection_=5; joinMenuSelection_=5; }
+        fieldY+=btnH+btnGap;
+        if (ui_.win98Button(6,"Back",fieldX,fieldY,fieldW,btnH,joinMenuSelection_==6))
+            { menuSelection_=6; joinMenuSelection_=6; confirmInput_=true; }
+        if (ui_.hoveredItem==6&&!usingGamepad_) { menuSelection_=6; joinMenuSelection_=6; }
+        ui_.drawWin98StatusBar(SCREEN_H-26,"Enter connection details then click Connect");
     }
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Lobby
+// ═════════════════════════════════════════════════════════════════════════════
 
 void Game::renderLobby() {
     ui_.drawDesktop();
 
-    auto& net = NetworkManager::instance();
-    // Color aliases used in player-list and kick-mode rows below
-    SDL_Color white  = {255, 255, 255, 255};
-    SDL_Color gray   = {120, 120, 130, 255};
-    SDL_Color green  = {50, 255, 100, 255};
-    SDL_Color dimGrn = {30, 160, 60, 255};
-    SDL_Color yellow = {255, 220, 60, 255};
-    SDL_Color red    = {255, 80, 80, 255};
-    (void)white; (void)gray; (void)green; (void)dimGrn; (void)yellow; (void)red;
+    auto& net=NetworkManager::instance();
+    static const SDL_Color teamColors[4]={
+        {180,0,0,255},{0,0,180,255},{0,140,0,255},{160,120,0,255}
+    };
 
-    // If still connecting (client), show a simple Win98 connecting window
-    if (!net.isHost() && net.state() == NetState::Connecting) {
-        const int cwinW = 400, cwinH = 160;
-        const int cwinX = (SCREEN_W - cwinW) / 2;
-        const int cwinY = (SCREEN_H - cwinH) / 2;
-        ui_.drawWin98Window(cwinX, cwinY, cwinW, cwinH, "Connecting...");
+    SDL_Texture* icPlayerUser = Assets::instance().loadRelTex("sprites/ui/chat_user.png");
+    SDL_Texture* icPlayerHost = Assets::instance().loadRelTex("sprites/ui/chat_host.png");
 
-        float remaining = connectTimer_;
-        if (remaining < 0) remaining = 0;
-
-        int dots = ((int)(gameTime_ * 3)) % 4;
-        char dotBuf[8] = "";
-        for (int i = 0; i < dots; i++) strcat(dotBuf, ".");
-        char statusBuf[128];
-        snprintf(statusBuf, sizeof(statusBuf), "Connecting to %s:%d%s", joinAddress_.c_str(), joinPort_, dotBuf);
-        ui_.drawTextCentered(statusBuf, cwinY + UI::W98::TitleH + 14, 13, UI::W98::Black);
-
-        char timBuf[64];
-        snprintf(timBuf, sizeof(timBuf), "Timeout in %.1fs", remaining);
-        ui_.drawTextCentered(timBuf, cwinY + UI::W98::TitleH + 34, 12, UI::W98::Shadow);
-
-        // Progress bar as a Win98 bevel trough
-        const int barX = cwinX + 20, barY = cwinY + UI::W98::TitleH + 60;
-        const int barW = cwinW - 40, barH = 14;
-        ui_.drawWin98Bevel(barX, barY, barW, barH, false);
-        float prog = 1.0f - (remaining / 5.0f);
-        if (prog < 0) prog = 0; if (prog > 1) prog = 1;
-        SDL_SetRenderDrawColor(renderer_, 0, 0, 128, 255);
-        SDL_Rect fill = {barX + 2, barY + 2, (int)((barW - 4) * prog), barH - 4};
-        SDL_RenderFillRect(renderer_, &fill);
-
-        ui_.drawWin98StatusBar(SCREEN_H - 26, "Press Esc / B to cancel");
-        { UI::HintPair hints[] = { {UI::Action::Back, "Cancel"} };
-          ui_.drawHintBar(hints, 1, SCREEN_H - 40); }
+    // ── Connecting overlay ────────────────────────────────────────────────────
+    if (!net.isHost()&&net.state()==NetState::Connecting) {
+        const int cW=400, cH=160;
+        const int cX=(SCREEN_W-cW)/2, cY=(SCREEN_H-cH)/2;
+        ui_.drawWin98Window(cX,cY,cW,cH,"Connecting...");
+        float rem=std::max(0.0f,connectTimer_);
+        int dots=((int)(gameTime_*3))%4;
+        char dotBuf[8]=""; for (int i=0;i<dots;i++) strcat(dotBuf,".");
+        char st[128]; snprintf(st,sizeof(st),"Connecting to %s:%d%s",joinAddress_.c_str(),joinPort_,dotBuf);
+        ui_.drawTextCentered(st, cY+UI::W98::TitleH+14, 13, UI::W98::Black);
+        char tb[64]; snprintf(tb,sizeof(tb),"Timeout in %.1fs",rem);
+        ui_.drawTextCentered(tb, cY+UI::W98::TitleH+34, 12, UI::W98::Shadow);
+        const int bX=cX+20, bY=cY+UI::W98::TitleH+60, bW=cW-40, bH=14;
+        ui_.drawWin98Bevel(bX,bY,bW,bH,false);
+        float prog=std::max(0.0f,std::min(1.0f,1.0f-(rem/5.0f)));
+        SDL_SetRenderDrawColor(renderer_,0,0,128,255);
+        SDL_Rect fill={bX+2,bY+2,(int)((bW-4)*prog),bH-4}; SDL_RenderFillRect(renderer_,&fill);
+        ui_.drawWin98StatusBar(SCREEN_H-26,"Press Esc / B to cancel");
+        {UI::HintPair h[]={{UI::Action::Back,"Cancel"}}; ui_.drawHintBar(h,1,SCREEN_H-40);}
         return;
     }
 
-    // ── Main lobby window ──
-    const int winX = 30, winY = 30;
-    const int winW = SCREEN_W - 60, winH = SCREEN_H - 60;
-    ui_.drawWin98Window(winX, winY, winW, winH, "Lobby");
+    const int WX=30, WY=26, WW=SCREEN_W-60, WH=SCREEN_H-52;
+    const int TH=UI::W98::TitleH;
 
-    int readyPlayers = 0;
-    for (const auto& p : net.players()) if (p.ready || p.id == net.lobbyHostId()) readyPlayers++;
+    // Build window title from host name
+    std::string hostName=net.lobbyInfo().hostName.empty()?config_.username:net.lobbyInfo().hostName;
+    char winTitle[128]; snprintf(winTitle,sizeof(winTitle),"Lobby \xe2\x80\x94 %s",hostName.c_str());
+    ui_.drawWin98Window(WX,WY,WW,WH,winTitle);
 
-    std::string hostName = net.lobbyInfo().hostName.empty() ? config_.username : net.lobbyInfo().hostName;
-    std::string modeSummary = lobbySettings_.isPvp ? "PvP" : "PvE";
-    if (lobbySettings_.teamCount == 2) modeSummary += " - 2 teams";
-    else if (lobbySettings_.teamCount == 4) modeSummary += " - 4 teams";
-    else modeSummary += " - open";
+    // ── Toolbar band ──────────────────────────────────────────────────────────
+    const int TB_Y=WY+TH, TB_H=44, TBY=TB_Y+4;
+    const int TBH_B=36, TBW_B=90;
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(renderer_, 212,208,200,255);
+    SDL_Rect tbBg={WX,TB_Y,WW,TB_H}; SDL_RenderFillRect(renderer_,&tbBg);
+    SDL_SetRenderDrawColor(renderer_, 128,128,128,255);
+    SDL_RenderDrawLine(renderer_, WX,TB_Y+TB_H-2,WX+WW-1,TB_Y+TB_H-2);
+    SDL_SetRenderDrawColor(renderer_, 255,255,255,255);
+    SDL_RenderDrawLine(renderer_, WX,TB_Y+TB_H-1,WX+WW-1,TB_Y+TB_H-1);
 
-    std::string mapSummary = (lobbyMapIdx_ == 0) ? "Generated arena" : net.lobbyInfo().mapName;
-    if (mapSummary.empty()) mapSummary = "Generated arena";
-    std::string accessSummary = lobbyPassword_.empty() ? "Open" : "Password";
-    std::string readySummary = std::to_string(readyPlayers) + "/" + std::to_string((int)net.players().size()) + " ready  " + accessSummary;
+    bool canManage=net.isLobbyHost();
+    const auto& players=net.players();
+    int readyPlayers=0;
+    for (const auto& p:players) if (p.ready||p.id==net.lobbyHostId()) readyPlayers++;
+    bool allReady=true;
+    for (auto& p:players) if (!p.ready&&p.id!=net.lobbyHostId()) allReady=false;
 
-    // Info badges as bevel boxes across the top of the window
-    int badgeY = winY + UI::W98::TitleH + 8;
-    int badgeH = 36;
-    int badgeGap = 6;
-    int badgeW = (winW - 28 - badgeGap * 3) / 4;
-    int badgeX = winX + 14;
-
-    auto drawBadge = [&](int x, const char* title, const std::string& value) {
-        ui_.drawWin98Bevel(x, badgeY, badgeW, badgeH, false);
-        ui_.drawText(title, x + 6, badgeY + 3, 10, UI::W98::Shadow);
-        ui_.drawText(value.c_str(), x + 6, badgeY + 17, 13, UI::W98::Black);
+    auto tbBtn=[&](int id, const char* lbl, int x, int w, SDL_Color iconC) -> bool {
+        bool hov=ui_.pointInRect(ui_.mouseX,ui_.mouseY,x,TBY,w,TBH_B);
+        if (hov) ui_.hoveredItem=id;
+        SDL_SetRenderDrawColor(renderer_, 212,208,200,255);
+        SDL_Rect bg={x,TBY,w,TBH_B}; SDL_RenderFillRect(renderer_,&bg);
+        ui_.drawWin98Bevel(x,TBY,w,TBH_B,true);
+        int ix=x+w/2-7, iy=TBY+5;
+        SDL_SetRenderDrawColor(renderer_, iconC.r,iconC.g,iconC.b,255);
+        SDL_Rect ic={ix,iy,14,14}; SDL_RenderFillRect(renderer_,&ic);
+        SDL_SetRenderDrawColor(renderer_,
+            (Uint8)std::min(255,(int)iconC.r+80),(Uint8)std::min(255,(int)iconC.g+80),
+            (Uint8)std::min(255,(int)iconC.b+80),255);
+        SDL_Rect sh={ix+1,iy+1,6,3}; SDL_RenderFillRect(renderer_,&sh);
+        int tw=(int)(strlen(lbl)*10*0.60f);
+        drawText(lbl, x+w/2-tw/2, TBY+TBH_B-14, 10, UI::W98::Black);
+        return hov&&ui_.mouseClicked;
     };
-    drawBadge(badgeX,                              "HOST",  hostName);
-    drawBadge(badgeX + (badgeW + badgeGap),        "MODE",  modeSummary);
-    drawBadge(badgeX + (badgeW + badgeGap) * 2,   "MAP",   mapSummary);
-    drawBadge(badgeX + (badgeW + badgeGap) * 3,   "READY", readySummary);
+    auto tbSep=[&](int x){
+        SDL_SetRenderDrawColor(renderer_, 128,128,128,255);
+        SDL_RenderDrawLine(renderer_, x+3,TBY+5,x+3,TBY+TBH_B-7);
+        SDL_SetRenderDrawColor(renderer_, 255,255,255,255);
+        SDL_RenderDrawLine(renderer_, x+4,TBY+5,x+4,TBY+TBH_B-7);
+    };
 
-    // ══════════════════════════════════════════════════════════
-    //  Settings panel (left side) — host can adjust, clients read-only
-    // ══════════════════════════════════════════════════════════
+    int tbX=WX+6;
+    if (canManage) {
+        const char* startLbl=allReady||players.size()<=1?"Start Game":"Start Game";
+        if (tbBtn(50,startLbl,tbX,TBW_B,{0,120,0,255})) confirmInput_=true;
+    } else {
+        const char* rdyLbl=lobbyReady_?"Unready":"Ready Up";
+        SDL_Color rdyC=lobbyReady_?SDL_Color{0,100,0,255}:SDL_Color{0,0,128,255};
+        if (tbBtn(50,rdyLbl,tbX,TBW_B,rdyC)) confirmInput_=true;
+    }
+    tbX+=TBW_B+10; tbSep(tbX); tbX+=12;
+    if (tbBtn(51,"Leave",tbX,TBW_B-10,{140,0,0,255})) backInput_=true;
+
+    // ── Address bar (like "To: channel/session info") ─────────────────────────
+    const int ADDR_Y=TB_Y+TB_H, ADDR_H=24;
+    SDL_SetRenderDrawColor(renderer_, 212,208,200,255);
+    SDL_Rect addrBg={WX,ADDR_Y,WW,ADDR_H}; SDL_RenderFillRect(renderer_,&addrBg);
+    drawText("Session:", WX+8, ADDR_Y+5, 11, UI::W98::Shadow);
+    // Build address bar content
+    std::string mapSumm=(net.lobbyInfo().mapName.empty()||net.lobbyInfo().mapName=="Generated arena")
+        ?"Generated arena":net.lobbyInfo().mapName;
+    std::string modeSumm=lobbySettings_.isPvp?"PvP":"PvE";
+    if (lobbySettings_.teamCount==2) modeSumm+=" · 2 Teams";
+    else if (lobbySettings_.teamCount==4) modeSumm+=" · 4 Teams";
+    char rdyStr[32]; snprintf(rdyStr,sizeof(rdyStr),"%d/%d ready",readyPlayers,(int)players.size());
+    char addrContent[256]; snprintf(addrContent,sizeof(addrContent),
+        "%s  ·  %s  ·  %s  ·  %s",hostName.c_str(),modeSumm.c_str(),mapSumm.c_str(),rdyStr);
+    // Inset text field
+    ui_.drawWin98Bevel(WX+70, ADDR_Y+2, WW-78, ADDR_H-4, false);
+    SDL_SetRenderDrawColor(renderer_, 255,255,255,255);
+    SDL_Rect addrFld={WX+72,ADDR_Y+4,WW-82,ADDR_H-8}; SDL_RenderFillRect(renderer_,&addrFld);
+    drawText(addrContent, WX+76, ADDR_Y+6, 11, UI::W98::Black);
+    // Bottom separator
+    SDL_SetRenderDrawColor(renderer_, 128,128,128,255);
+    SDL_RenderDrawLine(renderer_, WX,ADDR_Y+ADDR_H-1,WX+WW-1,ADDR_Y+ADDR_H-1);
+
+    // ── Content area ──────────────────────────────────────────────────────────
+    const int CONT_Y=ADDR_Y+ADDR_H, CONT_H=WH-TH-TB_H-ADDR_H-40;
+    const int halfW=WW/2-16, settX=WX+12, playX=WX+WW/2+4;
+
+    // ── Settings panel (left) ─────────────────────────────────────────────────
+    // Navy header
+    SDL_SetRenderDrawColor(renderer_, 0,0,128,255);
+    SDL_Rect sHdr={settX,CONT_Y+4,halfW,18}; SDL_RenderFillRect(renderer_,&sHdr);
+    drawText("SETTINGS", settX+6, CONT_Y+7, 11, {255,255,255,255});
+    bool isHostPlayer=net.isLobbyHost();
+    const char* settHint=isHostPlayer?"You can tweak these live.":"Read-only - host controls these.";
+    drawText(settHint, settX+74, CONT_Y+9, 10, {180,200,255,255});
+
+    const int panelH=CONT_H-8;
+    ui_.drawWin98Bevel(settX,CONT_Y+24,halfW,panelH,false);
+
+    const int rowStep=26, clipTop=CONT_Y+28, clipBot=CONT_Y+24+panelH-4;
+    const int rowsVisH=clipBot-clipTop;
+
+    // Auto-scroll
     {
-        bool isHostPlayer = net.isLobbyHost();
-        int panelX = winX + 14;
-        int panelY = winY + UI::W98::TitleH + badgeH + 16;
-        int panelW = winW / 2 - 20;
-        int panelH = winH - (panelY - winY) - 50;
-
-        ui_.drawWin98Bevel(panelX, panelY, panelW, panelH, false);
-        ui_.drawText("SETTINGS", panelX + 6, panelY + 4, 12, UI::W98::Black);
-        const char* settHint = isHostPlayer
-            ? "You can tweak these live before starting."
-            : "Read-only - host controls these.";
-        ui_.drawText(settHint, panelX + 74, panelY + 6, 10, UI::W98::Shadow);
-        ui_.drawWin98Bevel(panelX + 4, panelY + 22, panelW - 8, 2, false);
-
-        int rowStep = 26;
-        int rowsVisH = panelH - 32;
-        int clipTop  = panelY + 28;
-        int clipBot  = panelY + panelH - 4;
-
-        // ── Auto-scroll to keep selection visible ──
-        {
-            int rowTop = 28 + lobbySettingsSel_ * rowStep;
-            if (rowTop < lobbySettingsScrollY_)
-                lobbySettingsScrollY_ = rowTop;
-            if (rowTop + rowStep > lobbySettingsScrollY_ + rowsVisH)
-                lobbySettingsScrollY_ = rowTop + rowStep - rowsVisH;
-            lobbySettingsScrollY_ = std::max(0, lobbySettingsScrollY_);
-        }
-
-        int rowY = panelY + 28 - lobbySettingsScrollY_;
-
-        SDL_Rect prevClip;
-        SDL_RenderGetClipRect(renderer_, &prevClip);
-        {
-            SDL_Rect rowClip = {panelX, clipTop, panelW, clipBot - clipTop};
-            SDL_RenderSetClipRect(renderer_, &rowClip);
-        }
-
-        auto drawSettingRow = [&](int idx, const char* label, const char* value, SDL_Color /*valColor*/ = {255,255,255,255}) {
-            bool sel = isHostPlayer && (lobbySettingsSel_ == idx);
-
-            if (isHostPlayer) {
-                bool rowVisible = (rowY >= clipTop - rowStep) && (rowY < clipBot);
-                bool hovered = rowVisible && ui_.pointInRect(ui_.mouseX, ui_.mouseY, panelX + 2, rowY, panelW - 4, rowStep - 2);
-                if (hovered) ui_.hoveredItem = 100 + idx;
-                if (hovered && !usingGamepad_) { lobbySettingsSel_ = idx; menuSelection_ = idx; }
-                if (hovered && ui_.mouseClicked) { lobbySettingsSel_ = idx; menuSelection_ = idx; confirmInput_ = true; }
-            }
-
-            // Row bg
-            if (sel) {
-                SDL_SetRenderDrawColor(renderer_, 0, 0, 128, 255);
-                SDL_Rect bar = {panelX + 2, rowY, 3, rowStep - 2};
-                SDL_RenderFillRect(renderer_, &bar);
-                SDL_SetRenderDrawColor(renderer_, 200, 200, 220, 255);
-                SDL_Rect bg = {panelX + 5, rowY, panelW - 7, rowStep - 2};
-                SDL_RenderFillRect(renderer_, &bg);
-            }
-
-            char buf[128];
-            if (sel) snprintf(buf, sizeof(buf), "%s  < %s >", label, value);
-            else      snprintf(buf, sizeof(buf), "%s  %s",    label, value);
-            SDL_Color lc = sel ? UI::W98::Black : UI::W98::Shadow;
-            drawText(buf, panelX + 8, rowY + 4, sel ? 13 : 12, lc);
-            rowY += rowStep;
-        };
-
-        // 0: Gamemode (PVP vs PVE)
-        {
-            const char* val = lobbySettings_.isPvp ? "PVP" : "PVE";
-            drawSettingRow(0, "Gamemode:", val);
-        }
-
-        // 1: PvP toggle — shown in PvE mode as "PvP" (player damage), in PvP team mode as "Friendly Fire",
-        //    greyed-out (implicit ON) in PvP no-teams mode.
-        {
-            bool pvpNoTeams = lobbySettings_.isPvp && lobbySettings_.teamCount == 0;
-            if (pvpNoTeams) {
-                // Greyed out — PvP is always-on in this mode
-                char buf2[128]; snprintf(buf2, sizeof(buf2), "PvP:  ON");
-                drawText(buf2, panelX + 4, rowY, 14, SDL_Color{55, 55, 65, 255});
-                rowY += rowStep;
-            } else if (!lobbySettings_.isPvp) {
-                // PvE mode — show an explicit PvP (friendly fire) toggle
-                const char* val = lobbySettings_.friendlyFire ? "ON" : "OFF";
-                drawSettingRow(1, "PvP:", val,
-                    lobbySettings_.friendlyFire ? red : (SDL_Color){80,200,120,255});
-            } else {
-                // PvP team mode — show as "Friendly Fire"
-                const char* val = lobbySettings_.friendlyFire ? "ON" : "OFF";
-                drawSettingRow(1, "Friendly Fire:", val,
-                    lobbySettings_.friendlyFire ? red : (SDL_Color){80,200,120,255});
-            }
-        }
-
-        // 2: Upgrades
-        {
-            const char* val = lobbySettings_.upgradesShared ? "Shared (all players)" : "Individual (picker only)";
-            drawSettingRow(2, "Upgrades:", val);
-        }
-
-        // 3: Map selection (Generated or custom map file)
-        {
-            std::string mapLabel = "Generated";
-            if (lobbyMapIdx_ > 0 && lobbyMapIdx_ <= (int)mapFiles_.size()) {
-                std::string mf = mapFiles_[lobbyMapIdx_ - 1];
-                size_t sl = mf.rfind('/'); if (sl == std::string::npos) sl = mf.rfind('\\');
-                std::string base = (sl != std::string::npos) ? mf.substr(sl + 1) : mf;
-                size_t dot = base.rfind('.'); if (dot != std::string::npos) base = base.substr(0, dot);
-                mapLabel = base;
-            }
-            if (mapFiles_.empty()) mapLabel = "Generated (no custom maps)";
-            drawSettingRow(3, "Map:", mapLabel.c_str());
-        }
-
-        // 4: Map width (greyed out when custom map selected)
-        {
-            bool custom = (lobbyMapIdx_ > 0);
-            char v[16];
-            if (custom) snprintf(v, sizeof(v), "(custom)");
-            else        snprintf(v, sizeof(v), "%d", lobbySettings_.mapWidth);
-            SDL_Color dc = custom ? SDL_Color{55,55,65,255} : SDL_Color{255,255,255,255};
-            // dim the row text manually when custom map is active
-            bool saved_sel = isHostPlayer && (lobbySettingsSel_ == 4);
-            if (custom && !saved_sel) {
-                // draw as plain dim text, no arrows
-                char buf[128]; snprintf(buf, sizeof(buf), "Map Width:  %s", v);
-                drawText(buf, panelX + 4, rowY, 14, dc);
-                rowY += rowStep;
-            } else {
-                drawSettingRow(4, "Map Width:", v);
-            }
-        }
-
-        // 5: Map height (greyed out when custom map selected)
-        {
-            bool custom = (lobbyMapIdx_ > 0);
-            char v[16];
-            if (custom) snprintf(v, sizeof(v), "(custom)");
-            else        snprintf(v, sizeof(v), "%d", lobbySettings_.mapHeight);
-            SDL_Color dc = custom ? SDL_Color{55,55,65,255} : SDL_Color{255,255,255,255};
-            bool saved_sel = isHostPlayer && (lobbySettingsSel_ == 5);
-            if (custom && !saved_sel) {
-                char buf[128]; snprintf(buf, sizeof(buf), "Map Height:  %s", v);
-                drawText(buf, panelX + 4, rowY, 14, dc);
-                rowY += rowStep;
-            } else {
-                drawSettingRow(5, "Map Height:", v);
-            }
-        }
-
-        // 6: Enemy HP (greyed out in PVP)
-        {
-            char v[16]; snprintf(v, sizeof(v), "%.1fx", lobbySettings_.enemyHpScale);
-            if (lobbySettings_.isPvp) {
-                char buf[128]; snprintf(buf, sizeof(buf), "Enemy HP:  %s", v);
-                drawText(buf, panelX + 4, rowY, 14, SDL_Color{55,55,65,255});
-                rowY += rowStep;
-            } else {
-                drawSettingRow(6, "Enemy HP:", v);
-            }
-        }
-
-        // 7: Enemy speed (greyed out in PVP)
-        {
-            char v[16]; snprintf(v, sizeof(v), "%.1fx", lobbySettings_.enemySpeedScale);
-            if (lobbySettings_.isPvp) {
-                char buf[128]; snprintf(buf, sizeof(buf), "Enemy Speed:  %s", v);
-                drawText(buf, panelX + 4, rowY, 14, SDL_Color{55,55,65,255});
-                rowY += rowStep;
-            } else {
-                drawSettingRow(7, "Enemy Speed:", v);
-            }
-        }
-
-        // 8: Spawn rate (greyed out in PVP)
-        {
-            char v[16]; snprintf(v, sizeof(v), "%.1fx", lobbySettings_.spawnRateScale);
-            if (lobbySettings_.isPvp) {
-                char buf[128]; snprintf(buf, sizeof(buf), "Spawn Rate:  %s", v);
-                drawText(buf, panelX + 4, rowY, 14, SDL_Color{55,55,65,255});
-                rowY += rowStep;
-            } else {
-                drawSettingRow(8, "Spawn Rate:", v);
-            }
-        }
-
-        // 9: Player HP
-        {
-            char v[16]; snprintf(v, sizeof(v), "%d", lobbySettings_.playerMaxHp);
-            drawSettingRow(9, "Player HP:", v);
-        }
-
-        // 10: Team count
-        {
-            const char* val = (lobbySettings_.teamCount == 4) ? "4 Teams" :
-                              (lobbySettings_.teamCount == 2) ? "2 Teams" : "None";
-            drawSettingRow(10, "Teams:", val);
-        }
-
-        // 11: Lives per player (up to 100)
-        {
-            char v[16];
-            if (lobbySettings_.livesPerPlayer == 0)
-                snprintf(v, sizeof(v), "Infinite");
-            else
-                snprintf(v, sizeof(v), "%d", lobbySettings_.livesPerPlayer);
-            drawSettingRow(11, "Lives:", v);
-        }
-
-        // 12: Lives mode (only shown when lives are limited)
-        if (lobbySettings_.livesPerPlayer > 0) {
-            const char* val = lobbySettings_.livesShared ? "Shared Pool" : "Individual";
-            drawSettingRow(12, "Lives Mode:", val);
-        }
-
-        // 13 / 12: Crate Interval (PVP) or Wave Count (PVE) — index depends on whether LivesMode is visible
-        {
-            int condIdx = (lobbySettings_.livesPerPlayer > 0) ? 13 : 12;
-            if (lobbySettings_.isPvp) {
-                char v[16]; snprintf(v, sizeof(v), "%.0fs", lobbySettings_.crateInterval);
-                drawSettingRow(condIdx, "Crate Interval:", v);
-            } else {
-                char v[16];
-                if (lobbySettings_.waveCount == 0)
-                    snprintf(v, sizeof(v), "Endless");
-                else
-                    snprintf(v, sizeof(v), "%d", lobbySettings_.waveCount);
-                drawSettingRow(condIdx, "Waves:", v);
-            }
-            // Match Time (PVP only)
-            int matchTimeIdx  = -1;
-            int presetSaveIdx = condIdx + 1;
-            int presetLoadIdx = condIdx + 2;
-            if (lobbySettings_.isPvp) {
-                matchTimeIdx  = condIdx + 1;
-                presetSaveIdx = condIdx + 2;
-                presetLoadIdx = condIdx + 3;
-                char v[16];
-                if (lobbySettings_.pvpMatchDuration <= 0.0f)
-                    snprintf(v, sizeof(v), "Unlimited");
-                else
-                    snprintf(v, sizeof(v), "%d:%02d",
-                             (int)lobbySettings_.pvpMatchDuration / 60,
-                             (int)lobbySettings_.pvpMatchDuration % 60);
-                drawSettingRow(matchTimeIdx, "Match Time:", v);
-            }
-            drawSettingRow(presetSaveIdx, "Save Preset:", "[confirm]");
-            {
-                const char* presetLabel = serverPresets_.empty()
-                    ? "(none saved)"
-                    : serverPresets_[presetSelection_ % (int)serverPresets_.size()].name.c_str();
-                drawSettingRow(presetLoadIdx, "Load Preset:", presetLabel);
-            }
-        }
-
-        // Restore clip rect
-        SDL_RenderSetClipRect(renderer_, prevClip.w > 0 ? &prevClip : nullptr);
-
-        // Win98-style scrollbar
-        {
-            int contentH = 17 * rowStep;
-            if (contentH > rowsVisH) {
-                int maxScroll = contentH - rowsVisH;
-                int sbX = panelX + panelW - 10;
-                SDL_SetRenderDrawColor(renderer_, 212, 208, 200, 255);
-                SDL_Rect track = {sbX, clipTop, 10, rowsVisH};
-                SDL_RenderFillRect(renderer_, &track);
-                ui_.drawWin98Bevel(sbX, clipTop, 10, rowsVisH, false);
-                int thumbH = std::max(14, rowsVisH * rowsVisH / contentH);
-                int thumbY = clipTop + (int)((long long)lobbySettingsScrollY_ * (rowsVisH - thumbH) / maxScroll);
-                SDL_SetRenderDrawColor(renderer_, 212, 208, 200, 255);
-                SDL_Rect thumb = {sbX, thumbY, 10, thumbH};
-                SDL_RenderFillRect(renderer_, &thumb);
-                ui_.drawWin98Bevel(sbX, thumbY, 10, thumbH, true);
-            }
-        }
+        int rowTop=28+lobbySettingsSel_*rowStep;
+        if (rowTop<lobbySettingsScrollY_) lobbySettingsScrollY_=rowTop;
+        if (rowTop+rowStep>lobbySettingsScrollY_+rowsVisH) lobbySettingsScrollY_=rowTop+rowStep-rowsVisH;
+        lobbySettingsScrollY_=std::max(0,lobbySettingsScrollY_);
     }
 
-    // ══════════════════════════════════════════════════════════
-    //  Player list (right side)
-    // ══════════════════════════════════════════════════════════
-    int listX = winX + winW / 2 + 6;
-    int listY = winY + UI::W98::TitleH + badgeH + 16;
-    int listPanelW = winW / 2 - 20;
-    int listPanelH = winH - (listY - winY) - 50;
-    ui_.drawWin98Bevel(listX, listY, listPanelW, listPanelH, false);
-    ui_.drawText("PLAYERS", listX + 6, listY + 4, 12, UI::W98::Black);
-    bool canManageLobby = net.isLobbyHost();
-    bool isHostInKickMode = canManageLobby && (lobbyKickCursor_ >= 0);
-    if (canManageLobby) {
-        const char* kickLabel = isHostInKickMode
-            ? "[A] Kick  [X] Xfer Host  [B] Cancel"
-            : "[Y/TAB] Host Actions";
-        SDL_Color kickHintC = isHostInKickMode ? SDL_Color{180,0,0,255} : UI::W98::Shadow;
-        drawText(kickLabel, listX + 74, listY + 6, 10, kickHintC);
-    }
-    ui_.drawWin98Bevel(listX + 4, listY + 22, listPanelW - 8, 2, false);
+    int rowY=clipTop-lobbySettingsScrollY_;
+    SDL_Rect prevClip; SDL_RenderGetClipRect(renderer_,&prevClip);
+    {SDL_Rect rc={settX,clipTop,halfW,clipBot-clipTop}; SDL_RenderSetClipRect(renderer_,&rc);}
 
-    // Team colors for display
-    static const SDL_Color teamColors[4] = {
-        {180, 0, 0, 255}, {0, 0, 180, 255}, {0, 140, 0, 255}, {160, 120, 0, 255}
+    // Config-menu style row with clickable < > arrow buttons for mouse control.
+    // isConfirm=true replaces < > with a "Save" button that fires confirmInput_.
+    const int ARR_W=22, ARR_H=rowStep-4;
+    auto drawSettingRow=[&](int idx, const char* label, const char* value,
+                            bool editable=true, bool dim=false, bool isConfirm=false){
+        bool sel=isHostPlayer&&(lobbySettingsSel_==idx)&&!dim;
+        bool rv=(rowY>=clipTop-rowStep)&&(rowY<clipBot);
+
+        // Row background + border + left bar
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+        Uint8 bg=dim?210:(sel?188:232);
+        SDL_SetRenderDrawColor(renderer_,bg,bg,bg,255);
+        SDL_Rect rowBg={settX,rowY,halfW,rowStep-1}; SDL_RenderFillRect(renderer_,&rowBg);
+        SDL_SetRenderDrawColor(renderer_,160,160,160,255);
+        SDL_Rect bot={settX,rowY+rowStep-2,halfW,1}; SDL_RenderFillRect(renderer_,&bot);
+        if (sel) {
+            SDL_SetRenderDrawColor(renderer_,0,0,128,255);
+            SDL_Rect bar={settX,rowY,3,rowStep-1}; SDL_RenderFillRect(renderer_,&bar);
+        }
+        // Row hover/click (anywhere on row selects it)
+        if (isHostPlayer&&rv&&!dim) {
+            bool hov=ui_.pointInRect(ui_.mouseX,ui_.mouseY,settX,rowY,halfW,rowStep-1);
+            if (hov&&!usingGamepad_) { lobbySettingsSel_=idx; menuSelection_=idx; }
+            if (hov&&ui_.mouseClicked) { lobbySettingsSel_=idx; menuSelection_=idx; }
+        }
+
+        SDL_Color lc=dim?UI::W98::Shadow:UI::W98::Black;
+        drawText(label, settX+8, rowY+5, 13, lc);
+
+        if (!dim && isHostPlayer && rv) {
+            if (isConfirm) {
+                // "Save" action button on the right
+                const int bW=48, bH=rowStep-6, bX=settX+halfW-bW-4, bY=rowY+3;
+                bool bHov=ui_.pointInRect(ui_.mouseX,ui_.mouseY,bX,bY,bW,bH);
+                if (bHov) ui_.hoveredItem=400+idx;
+                SDL_SetRenderDrawColor(renderer_,212,208,200,255);
+                SDL_Rect bb={bX,bY,bW,bH}; SDL_RenderFillRect(renderer_,&bb);
+                ui_.drawWin98Bevel(bX,bY,bW,bH,true);
+                int tw2=(int)(strlen("Save")*10*0.60f);
+                drawText("Save", bX+bW/2-tw2/2, bY+bH/2-6, 10, UI::W98::Black);
+                if (bHov&&ui_.mouseClicked) { lobbySettingsSel_=idx; menuSelection_=idx; confirmInput_=true; }
+            } else if (editable) {
+                // < > spinner buttons
+                const int rBtnX=settX+halfW-ARR_W-4, lBtnX=rBtnX-ARR_W-2;
+                const int bY=rowY+2;
+                // < button
+                bool lhov=ui_.pointInRect(ui_.mouseX,ui_.mouseY,lBtnX,bY,ARR_W,ARR_H);
+                if (lhov) ui_.hoveredItem=200+idx;
+                SDL_SetRenderDrawColor(renderer_,212,208,200,255);
+                SDL_Rect lb={lBtnX,bY,ARR_W,ARR_H}; SDL_RenderFillRect(renderer_,&lb);
+                ui_.drawWin98Bevel(lBtnX,bY,ARR_W,ARR_H,true);
+                int aw=(int)(strlen("<")*10*0.60f);
+                drawText("<", lBtnX+ARR_W/2-aw/2, bY+ARR_H/2-7, 11, UI::W98::Black);
+                if (lhov&&ui_.mouseClicked) { lobbySettingsSel_=idx; menuSelection_=idx; renderLeft_=true; ui_.mouseClicked=false; ui_.clickCooldownFrames=3; }
+                // > button
+                bool rhov=ui_.pointInRect(ui_.mouseX,ui_.mouseY,rBtnX,bY,ARR_W,ARR_H);
+                if (rhov) ui_.hoveredItem=300+idx;
+                SDL_SetRenderDrawColor(renderer_,212,208,200,255);
+                SDL_Rect rb={rBtnX,bY,ARR_W,ARR_H}; SDL_RenderFillRect(renderer_,&rb);
+                ui_.drawWin98Bevel(rBtnX,bY,ARR_W,ARR_H,true);
+                int aw2=(int)(strlen(">")*10*0.60f);
+                drawText(">", rBtnX+ARR_W/2-aw2/2, bY+ARR_H/2-7, 11, UI::W98::Black);
+                if (rhov&&ui_.mouseClicked) { lobbySettingsSel_=idx; menuSelection_=idx; renderRight_=true; ui_.mouseClicked=false; ui_.clickCooldownFrames=3; }
+                // Value text between buttons
+                ui_.drawTextRight(value, lBtnX-6, rowY+5, 13, UI::W98::Black);
+            } else {
+                ui_.drawTextRight(value, settX+halfW-8, rowY+5, 13, UI::W98::Shadow);
+            }
+        } else {
+            ui_.drawTextRight(value, settX+halfW-8, rowY+5, 13, dim?UI::W98::Shadow:UI::W98::Black);
+        }
+        rowY+=rowStep;
     };
 
-    const auto& players = net.players();
-    int plY = listY + 28;
-    for (size_t i = 0; i < players.size(); i++) {
-        bool isLocal = (players[i].id == net.localPlayerId());
-        bool isHostP = (players[i].id == net.lobbyHostId());
-        bool isKickTarget = isHostInKickMode && ((int)i == lobbyKickCursor_);
-
-        // Row highlight
-        if (isKickTarget) {
-            SDL_SetRenderDrawColor(renderer_, 220, 180, 180, 255);
-            SDL_Rect row = {listX + 4, plY - 2, listPanelW - 8, 24};
-            SDL_RenderFillRect(renderer_, &row);
-        } else if (isLocal) {
-            SDL_SetRenderDrawColor(renderer_, 200, 210, 230, 255);
-            SDL_Rect row = {listX + 4, plY - 2, listPanelW - 8, 24};
-            SDL_RenderFillRect(renderer_, &row);
+    drawSettingRow(0,"Gamemode", lobbySettings_.isPvp?"PvP":"PvE");
+    {
+        bool pvpNoTeams=lobbySettings_.isPvp&&lobbySettings_.teamCount==0;
+        if (pvpNoTeams) drawSettingRow(1,"PvP","ON",false,true);
+        else if (!lobbySettings_.isPvp) drawSettingRow(1,"PvP damage", lobbySettings_.friendlyFire?"ON":"OFF");
+        else drawSettingRow(1,"Friendly Fire", lobbySettings_.friendlyFire?"ON":"OFF");
+    }
+    drawSettingRow(2,"Upgrades", lobbySettings_.upgradesShared?"Shared":"Individual");
+    {
+        std::string ml="Generated";
+        if (lobbyMapIdx_>0&&lobbyMapIdx_<=(int)mapFiles_.size()) {
+            std::string mf=mapFiles_[lobbyMapIdx_-1];
+            size_t sl=mf.rfind('/'); if (sl==std::string::npos) sl=mf.rfind('\\');
+            std::string base=(sl!=std::string::npos)?mf.substr(sl+1):mf;
+            size_t dot=base.rfind('.'); if (dot!=std::string::npos) base=base.substr(0,dot);
+            ml=base;
         }
-
-        // Ready indicator dot
-        if (players[i].ready) {
-            SDL_SetRenderDrawColor(renderer_, 0, 128, 0, 255);
+        if (mapFiles_.empty()) ml="Generated";
+        drawSettingRow(3,"Map",ml.c_str());
+    }
+    {bool c=(lobbyMapIdx_>0); char v[16]; snprintf(v,sizeof(v),c?"(custom)":"%d",lobbySettings_.mapWidth);
+     drawSettingRow(4,"Map Width",v,!c,c);}
+    {bool c=(lobbyMapIdx_>0); char v[16]; snprintf(v,sizeof(v),c?"(custom)":"%d",lobbySettings_.mapHeight);
+     drawSettingRow(5,"Map Height",v,!c,c);}
+    {char v[16]; snprintf(v,sizeof(v),"%.1fx",lobbySettings_.enemyHpScale);
+     drawSettingRow(6,"Enemy HP",v,!lobbySettings_.isPvp,lobbySettings_.isPvp);}
+    {char v[16]; snprintf(v,sizeof(v),"%.1fx",lobbySettings_.enemySpeedScale);
+     drawSettingRow(7,"Enemy Speed",v,!lobbySettings_.isPvp,lobbySettings_.isPvp);}
+    {char v[16]; snprintf(v,sizeof(v),"%.1fx",lobbySettings_.spawnRateScale);
+     drawSettingRow(8,"Spawn Rate",v,!lobbySettings_.isPvp,lobbySettings_.isPvp);}
+    {char v[16]; snprintf(v,sizeof(v),"%d",lobbySettings_.playerMaxHp); drawSettingRow(9,"Player HP",v);}
+    {const char* tv=(lobbySettings_.teamCount==4)?"4 Teams":(lobbySettings_.teamCount==2)?"2 Teams":"None";
+     drawSettingRow(10,"Teams",tv);}
+    {char v[16]; if(lobbySettings_.livesPerPlayer==0) snprintf(v,sizeof(v),"Infinite");
+     else snprintf(v,sizeof(v),"%d",lobbySettings_.livesPerPlayer); drawSettingRow(11,"Lives",v);}
+    if (lobbySettings_.livesPerPlayer>0) {
+        drawSettingRow(12,"Lives Mode",lobbySettings_.livesShared?"Shared Pool":"Individual");
+    }
+    {
+        int cIdx=(lobbySettings_.livesPerPlayer>0)?13:12;
+        if (lobbySettings_.isPvp) {
+            char v[16]; snprintf(v,sizeof(v),"%.0fs",lobbySettings_.crateInterval);
+            drawSettingRow(cIdx,"Crate Interval",v);
         } else {
-            SDL_SetRenderDrawColor(renderer_, 160, 160, 160, 255);
+            char v[16]; if(lobbySettings_.waveCount==0) snprintf(v,sizeof(v),"Endless");
+            else snprintf(v,sizeof(v),"%d",lobbySettings_.waveCount);
+            drawSettingRow(cIdx,"Waves",v);
         }
-        SDL_Rect dot = {listX + 8, plY + 6, 8, 8};
-        SDL_RenderFillRect(renderer_, &dot);
+        int ptIdx=cIdx+1, plIdx=cIdx+2;
+        if (lobbySettings_.isPvp) {
+            char v[16]; if(lobbySettings_.pvpMatchDuration<=0) snprintf(v,sizeof(v),"Unlimited");
+            else snprintf(v,sizeof(v),"%d:%02d",(int)lobbySettings_.pvpMatchDuration/60,(int)lobbySettings_.pvpMatchDuration%60);
+            drawSettingRow(ptIdx,"Match Time",v);
+        }
+        drawSettingRow(plIdx,"Save Preset","",true,false,true);
+        {const char* pl=serverPresets_.empty()?"(none saved)":serverPresets_[presetSelection_%(int)serverPresets_.size()].name.c_str();
+         drawSettingRow(plIdx+1,"Load Preset",pl,!serverPresets_.empty(),serverPresets_.empty());}
+    }
+
+    SDL_RenderSetClipRect(renderer_, prevClip.w>0?&prevClip:nullptr);
+
+    // Settings scrollbar
+    {
+        int contentH=17*rowStep;
+        if (contentH>rowsVisH) {
+            int maxScroll=contentH-rowsVisH;
+            int sbX=settX+halfW-10;
+            SDL_SetRenderDrawColor(renderer_, 212,208,200,255);
+            SDL_Rect track={sbX,clipTop,10,rowsVisH}; SDL_RenderFillRect(renderer_,&track);
+            ui_.drawWin98Bevel(sbX,clipTop,10,rowsVisH,false);
+            int tH=std::max(14,rowsVisH*rowsVisH/contentH);
+            int tY=clipTop+(int)((long long)lobbySettingsScrollY_*(rowsVisH-tH)/maxScroll);
+            SDL_SetRenderDrawColor(renderer_, 212,208,200,255);
+            SDL_Rect th={sbX,tY,10,tH}; SDL_RenderFillRect(renderer_,&th);
+            ui_.drawWin98Bevel(sbX,tY,10,tH,true);
+        }
+    }
+
+    // ── Players panel (right) - ICQ-style friends list ────────────────────────
+    bool isHostInKickMode=canManage&&(lobbyKickCursor_>=0);
+
+    // Navy header
+    SDL_SetRenderDrawColor(renderer_, 0,0,128,255);
+    SDL_Rect pHdr={playX,CONT_Y+4,halfW,18}; SDL_RenderFillRect(renderer_,&pHdr);
+    drawText("PLAYERS", playX+6, CONT_Y+7, 11, {255,255,255,255});
+    if (canManage) {
+        const char* kl=isHostInKickMode?"[A] Kick  [X] Xfer  [B] Cancel":"[Y] Host Actions";
+        SDL_Color kc=isHostInKickMode?SDL_Color{255,180,180,255}:SDL_Color{180,200,255,255};
+        drawText(kl, playX+78, CONT_Y+9, 10, kc);
+    }
+
+    ui_.drawWin98Bevel(playX,CONT_Y+24,halfW,panelH,false);
+    // White background
+    SDL_SetRenderDrawColor(renderer_, 255,255,255,255);
+    SDL_Rect plBg={playX+2,CONT_Y+26,halfW-4,panelH-4}; SDL_RenderFillRect(renderer_,&plBg);
+
+    int plY=CONT_Y+32;
+    for (size_t i=0;i<players.size();i++) {
+        bool isLocal=(players[i].id==net.localPlayerId());
+        bool isHostP=(players[i].id==net.lobbyHostId());
+        bool isKick=isHostInKickMode&&((int)i==lobbyKickCursor_);
+        const int ENTRY_H=28;
+
+        // Row bg
+        if (isKick) {
+            SDL_SetRenderDrawColor(renderer_, 255,220,220,255);
+        } else if (isLocal) {
+            SDL_SetRenderDrawColor(renderer_, 200,215,240,255);
+        } else {
+            SDL_SetRenderDrawColor(renderer_, 255,255,255,255);
+        }
+        SDL_Rect rowBg={playX+2,plY,halfW-4,ENTRY_H}; SDL_RenderFillRect(renderer_,&rowBg);
+
+        // Ready dot (8×8)
+        SDL_SetRenderDrawColor(renderer_, players[i].ready?0:160, players[i].ready?140:160, 0, 255);
+        SDL_Rect rdot={playX+6,plY+(ENTRY_H-8)/2,8,8}; SDL_RenderFillRect(renderer_,&rdot);
+
+        // Player icon (msagent, 16×16)
+        SDL_Texture* playerIc = isHostP ? icPlayerHost : icPlayerUser;
+        if (playerIc) {
+            SDL_Rect dst={playX+16, plY+(ENTRY_H-16)/2, 16, 16};
+            if (isKick) SDL_SetTextureColorMod(playerIc, 255, 120, 120);
+            else        SDL_SetTextureColorMod(playerIc, 255, 255, 255);
+            SDL_RenderCopy(renderer_, playerIc, nullptr, &dst);
+        } else {
+            SDL_Color ic;
+            if (isKick) ic={180,0,0,255};
+            else if (isHostP) ic={0,0,160,255};
+            else if (players[i].team>=0&&players[i].team<4) ic=teamColors[players[i].team];
+            else ic={80,80,120,255};
+            drawPersonIcon(renderer_, playX+18, plY+(ENTRY_H-14)/2, ic);
+        }
 
         // Name
         char entryBuf[128];
-        snprintf(entryBuf, sizeof(entryBuf), "%s%s%s", players[i].username.c_str(),
-                 isHostP ? " *" : "",
-                 isKickTarget ? " [X]" : "");
-        SDL_Color nameC = isKickTarget ? SDL_Color{180, 0, 0, 255}
-                        : isLocal      ? UI::W98::Black
-                        : UI::W98::Shadow;
-        if (!isKickTarget && players[i].team >= 0 && players[i].team < 4)
-            nameC = teamColors[players[i].team];
-        drawText(entryBuf, listX + 20, plY, 14, nameC);
+        snprintf(entryBuf,sizeof(entryBuf),"%s%s%s",
+                 players[i].username.c_str(), isHostP?" ★":"", isKick?" [×]":"");
+        SDL_Color nc=isKick?SDL_Color{180,0,0,255}:isLocal?UI::W98::Black:UI::W98::Shadow;
+        drawText(entryBuf, playX+36, plY+7, 13, nc);
 
-        // Ping
+        // Ping (right side)
         if (!isLocal) {
-            uint32_t peerPing = net.getPlayerPing(players[i].id);
-            if (peerPing > 0) {
-                char pingBuf[32];
-                snprintf(pingBuf, sizeof(pingBuf), "%dms", peerPing);
-                SDL_Color pc = (peerPing < 50) ? SDL_Color{0, 128, 0, 255} :
-                               (peerPing < 100) ? SDL_Color{160, 100, 0, 255} :
-                               SDL_Color{180, 0, 0, 255};
-                drawText(pingBuf, listX + listPanelW - 50, plY, 11, pc);
+            uint32_t ping=net.getPlayerPing(players[i].id);
+            if (ping>0) {
+                char pingBuf[32]; snprintf(pingBuf,sizeof(pingBuf),"%dms",ping);
+                SDL_Color pc=(ping<50)?SDL_Color{0,128,0,255}:(ping<100)?SDL_Color{160,100,0,255}:SDL_Color{180,0,0,255};
+                ui_.drawTextRight(pingBuf, playX+halfW-8, plY+7, 11, pc);
             }
+        } else {
+            ui_.drawTextRight("(you)", playX+halfW-8, plY+7, 11, UI::W98::Shadow);
         }
 
-        plY += 26;
+        plY+=ENTRY_H;
 
         // Sub-players
-        int subCount = (int)players[i].localSubPlayers;
-        if (subCount < 0) subCount = 0;
-        if (subCount > 3) subCount = 3;
-        for (int s = 0; s < subCount; s++) {
+        int subCount=(int)players[i].localSubPlayers;
+        subCount=std::max(0,std::min(3,subCount));
+        for (int s=0;s<subCount;s++) {
             std::string subLabel;
             if (isLocal) {
-                int found = 0;
-                for (int si = 1; si < 4; si++) {
+                int found=0;
+                for (int si=1;si<4;si++) {
                     if (!coopSlots_[si].joined) continue;
-                    if (found == s) {
-                        subLabel = coopSlots_[si].username.empty() ? ("local-" + std::to_string(s + 1)) : coopSlots_[si].username;
-                        break;
-                    }
+                    if (found==s) { subLabel=coopSlots_[si].username.empty()?("local-"+std::to_string(s+1)):coopSlots_[si].username; break; }
                     found++;
                 }
-                if (subLabel.empty()) subLabel = "local-" + std::to_string(s + 1);
-            } else {
-                subLabel = "local-" + std::to_string(s + 1);
-            }
-            std::string rowText = std::string("  -> ") + subLabel;
-            drawText(rowText.c_str(), listX + 20, plY - 1, 11, UI::W98::Shadow);
-            plY += 16;
+                if (subLabel.empty()) subLabel="local-"+std::to_string(s+1);
+            } else { subLabel="local-"+std::to_string(s+1); }
+            drawText(("  → "+subLabel).c_str(), playX+36, plY, 11, UI::W98::Shadow);
+            plY+=16;
         }
     }
 
-    // ── Bottom action button ──
-    int btnAreaY = winY + winH - 36;
-    int btnW = 200;
-    int btnX = (SCREEN_W - btnW) / 2;
-    if (canManageLobby) {
-        bool allReady = true;
-        for (auto& p : players) { if (!p.ready && p.id != net.lobbyHostId()) allReady = false; }
-        if (ui_.win98Button(50, "Start Game", btnX, btnAreaY, btnW, 26, true)) {
-            confirmInput_ = true;
-        }
-        if (!allReady && players.size() > 1) {
-            ui_.drawWin98StatusBar(SCREEN_H - 26, "Waiting for everyone to ready up...");
-        } else {
-            ui_.drawWin98StatusBar(SCREEN_H - 26, "All ready - press Start Game!");
-        }
+    // Separator between players and bottom buttons (within players panel)
+    SDL_SetRenderDrawColor(renderer_, 128,128,128,255);
+    SDL_RenderDrawLine(renderer_, playX+4, CONT_Y+24+panelH-2, playX+halfW-4, CONT_Y+24+panelH-2);
+
+    // ── Status bar only (toolbar buttons replace bottom action buttons) ──────────
+    if (canManage) {
+        if (!allReady&&players.size()>1)
+            ui_.drawWin98StatusBar(SCREEN_H-26,"Waiting for all players to ready up...");
+        else
+            ui_.drawWin98StatusBar(SCREEN_H-26,"All ready - click Start Game in the toolbar!");
     } else {
-        const char* rdyLabel = lobbyReady_ ? "Unready" : "Ready Up";
-        if (ui_.win98Button(50, rdyLabel, btnX, btnAreaY, btnW, 26, lobbyReady_)) {
-            confirmInput_ = true;
-        }
-        ui_.drawWin98StatusBar(SCREEN_H - 26,
-            lobbyReady_ ? "You are ready. Press again to unready." : "Press Ready Up when happy with the setup.");
-    }
-    { UI::HintPair hints[] = { {UI::Action::Back, "Leave"}, {UI::Action::Navigate, "Navigate/Adjust"} };
-      ui_.drawHintBar(hints, 2, SCREEN_H - 40); }
-    if (canManageLobby) {
-        const char* kickHintStr = isHostInKickMode
-            ? "[Y/TAB] Exit action mode    [A] Kick    [X] Transfer Host    [B] Cancel"
-            : "[Y/TAB] Kick / Transfer Host mode";
-        drawTextCentered(kickHintStr, SCREEN_H - 22, 12,
-                         isHostInKickMode ? SDL_Color{180, 0, 0, 220} : SDL_Color{80, 80, 90, 180});
+        ui_.drawWin98StatusBar(SCREEN_H-26,
+            lobbyReady_?"You are ready. Click Unready in the toolbar to cancel.":"Click Ready Up in the toolbar when happy with the setup.");
     }
 
-    // ── Floating chat window ────────────────────────────────────────────────
+    // ── Floating chat window ──────────────────────────────────────────────────
     {
-        const int chatW = 300, chatH = 200;
-
-        // First-frame init: position to default, clamped to screen
-        if (!chatWinInit_) {
-            chatWinInit_ = true;
-            chatWinX_ = 880;
-            chatWinY_ = 460;
-        }
-        chatWinX_ = std::max(0, std::min(SCREEN_W - chatW, chatWinX_));
-        chatWinY_ = std::max(0, std::min(SCREEN_H - chatH, chatWinY_));
-
-        // Title-bar drag
-        bool overTitle = ui_.pointInRect(ui_.mouseX, ui_.mouseY,
-            chatWinX_, chatWinY_, chatW - 22, UI::W98::TitleH);
-        if (overTitle && ui_.mouseClicked) {
-            chatWinDrag_ = true;
-            chatWinDragOX_ = ui_.mouseX - chatWinX_;
-            chatWinDragOY_ = ui_.mouseY - chatWinY_;
-        }
-        if (!ui_.mouseDown) chatWinDrag_ = false;
+        const int chatW=400, chatH=280;
+        if (!chatWinInit_) { chatWinInit_=true; chatWinX_=860; chatWinY_=430; }
+        chatWinX_=std::max(0,std::min(SCREEN_W-chatW,chatWinX_));
+        chatWinY_=std::max(0,std::min(SCREEN_H-chatH,chatWinY_));
+        bool overTitle=ui_.pointInRect(ui_.mouseX,ui_.mouseY,chatWinX_,chatWinY_,chatW-22,UI::W98::TitleH);
+        if (overTitle&&ui_.mouseClicked) { chatWinDrag_=true; chatWinDragOX_=ui_.mouseX-chatWinX_; chatWinDragOY_=ui_.mouseY-chatWinY_; }
+        if (!ui_.mouseDown) chatWinDrag_=false;
         if (chatWinDrag_) {
-            chatWinX_ = ui_.mouseX - chatWinDragOX_;
-            chatWinY_ = ui_.mouseY - chatWinDragOY_;
-            chatWinX_ = std::max(0, std::min(SCREEN_W - chatW, chatWinX_));
-            chatWinY_ = std::max(0, std::min(SCREEN_H - chatH, chatWinY_));
+            chatWinX_=std::max(0,std::min(SCREEN_W-chatW,ui_.mouseX-chatWinDragOX_));
+            chatWinY_=std::max(0,std::min(SCREEN_H-chatH,ui_.mouseY-chatWinDragOY_));
         }
-
-        ui_.drawWin98Window(chatWinX_, chatWinY_, chatW, chatH, "Chat");
-
-        // Inner layout constants
-        const int innerX   = chatWinX_ + 4;
-        const int innerY   = chatWinY_ + UI::W98::TitleH + 2;
-        const int inputH   = 22;
-        const int fieldW   = chatW - 60;
-        const int sendW    = 46;
-        const int bottomY  = chatWinY_ + chatH - inputH - 4;
-        const int msgAreaH = bottomY - innerY - 2;
-
-        // Message area background
-        ui_.drawWin98Bevel(innerX, innerY, chatW - 8, msgAreaH, false);
-
-        // Clip and draw messages
-        SDL_Rect prevClipChat;
-        SDL_RenderGetClipRect(renderer_, &prevClipChat);
+        ui_.drawWin98Window(chatWinX_,chatWinY_,chatW,chatH,"Chat");
+        const int iX=chatWinX_+4, iY=chatWinY_+UI::W98::TitleH+2;
+        const int inputH=22, fieldW=chatW-60, sendW=46;
+        const int botY=chatWinY_+chatH-inputH-4, msgH=botY-iY-2;
+        ui_.drawWin98Bevel(iX,iY,chatW-8,msgH,false);
+        SDL_Rect prevCC; SDL_RenderGetClipRect(renderer_,&prevCC);
+        {SDL_Rect mc={iX+2,iY+2,chatW-12,msgH-4}; SDL_RenderSetClipRect(renderer_,&mc);}
+        const auto& hist=net.chatHistory();
+        const int lH=14; int maxL=(msgH-4)/lH; if(maxL<1) maxL=1;
+        int sm=(int)hist.size()-maxL; if(sm<0) sm=0;
+        int mY=iY+msgH-4-(int)(hist.size()-sm)*lH;
+        for (int mi=sm;mi<(int)hist.size();mi++) {
+            char lb[128]; snprintf(lb,sizeof(lb),"%s: %s",hist[mi].sender.c_str(),hist[mi].text.c_str());
+            std::string line=lb; while(line.size()>52&&!line.empty()) line.resize(line.size()-1);
+            ui_.drawText(line.c_str(),iX+4,mY,11,UI::W98::Black); mY+=lH;
+        }
+        SDL_RenderSetClipRect(renderer_,prevCC.w>0?&prevCC:nullptr);
         {
-            SDL_Rect msgClip = {innerX + 2, innerY + 2, chatW - 12, msgAreaH - 4};
-            SDL_RenderSetClipRect(renderer_, &msgClip);
-        }
-
-        const auto& history = net.chatHistory();
-        const int msgFontSz = 11;
-        const int lineH = 14;
-        int maxLines = (msgAreaH - 4) / lineH;
-        if (maxLines < 1) maxLines = 1;
-        int startMsg = (int)history.size() - maxLines;
-        if (startMsg < 0) startMsg = 0;
-
-        int msgY = innerY + msgAreaH - 4 - (int)(history.size() - startMsg) * lineH;
-        for (int mi = startMsg; mi < (int)history.size(); mi++) {
-            char lineBuf[128];
-            snprintf(lineBuf, sizeof(lineBuf), "%s: %s",
-                     history[mi].sender.c_str(), history[mi].text.c_str());
-            // Truncate to fit
-            std::string line = lineBuf;
-            while (line.size() > 36 && !line.empty()) line.resize(line.size() - 1);
-            ui_.drawText(line.c_str(), innerX + 4, msgY, msgFontSz, UI::W98::Black);
-            msgY += lineH;
-        }
-
-        SDL_RenderSetClipRect(renderer_, prevClipChat.w > 0 ? &prevClipChat : nullptr);
-
-        // Input field
-        {
-            std::string display = chatInputBuf_;
-            if (chatTyping_) {
-                display += ((int)(gameTime_ * 3.0f) % 2 == 0) ? '_' : ' ';
+            std::string disp=chatInputBuf_;
+            ui_.drawWin98TextField(iX,botY,fieldW,inputH,disp.c_str(),chatTyping_,false,gameTime_);
+            // Click field to start typing
+            if (!chatTyping_&&ui_.pointInRect(ui_.mouseX,ui_.mouseY,iX,botY,fieldW,inputH)&&ui_.mouseClicked) {
+                chatTyping_=true;
+#ifndef __SWITCH__
+                SDL_StartTextInput();
+#endif
             }
-            ui_.drawWin98TextField(innerX, bottomY, fieldW, inputH,
-                                   display.c_str(), chatTyping_, false, gameTime_);
-
-            // Send button
-            if (ui_.win98Button(210, "Send", innerX + fieldW + 2, bottomY, sendW, inputH, false)) {
+            if (ui_.win98Button(210,"Send",iX+fieldW+2,botY,sendW,inputH,false)) {
                 std::string msg(chatInputBuf_);
-                if (!msg.empty()) {
-                    net.sendChat(msg);
-                    chatInputBuf_[0] = '\0';
-                }
-                chatTyping_ = false;
+                if (!msg.empty()) { net.sendChat(msg); chatInputBuf_[0]='\0'; }
+                chatTyping_=false;
             }
-        }
-
-        // Hint
-        if (!chatTyping_) {
-            ui_.drawText("T = Chat", chatWinX_ + chatW - 68, chatWinY_ + chatH - 14, 10, UI::W98::Shadow);
         }
     }
 }
 
 void Game::renderMultiplayerGame() {
-    // Reuse the standard gameplay rendering — this is called from render()
-    // The actual gameplay scene is rendered in the Playing case, we just add MP HUD on top
     renderMultiplayerHUD();
 }
 
@@ -1054,14 +1022,14 @@ void Game::renderMultiplayerHUD() {
         Vec2 sp = camera_.worldToScreen(rp.pos);
         if (sp.x < -50 || sp.x > SCREEN_W + 50 || sp.y < -50 || sp.y > SCREEN_H + 50) continue;
 
-        // Health bar — drawn first so name tag renders on top
+        // Health bar - drawn first so name tag renders on top
         float barW = 40.0f;
         float barH = 4.0f;
         float hpRatio = (rp.maxHp > 0) ? (float)rp.hp / rp.maxHp : 0;
         SDL_FRect bgBar = {sp.x - barW / 2, sp.y - 28, barW, barH};
         SDL_FRect fgBar = {sp.x - barW / 2, sp.y - 28, barW * hpRatio, barH};
 
-        // Name tag — above the HP bar
+        // Name tag - above the HP bar
         {
             // Team colors for name tags
             static const SDL_Color teamNameColors[4] = {
@@ -1092,7 +1060,7 @@ void Game::renderMultiplayerHUD() {
         SDL_RenderFillRectF(renderer_, &fgBar);
     }
 
-    // Kill/death/score + ping — compact panel in top-right corner
+    // Kill/death/score + ping - compact panel in top-right corner
     NetPlayer* local = net.localPlayer();
 
     // Match timer (PVP: center-top)
@@ -1363,212 +1331,167 @@ void Game::renderMultiplayerDeath() {
 }
 
 void Game::renderWinLoss() {
-    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-
-    // Background — dark with a tinted overlay
-    SDL_SetRenderDrawColor(renderer_, 4, 6, 14, 255);
-    SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
-    SDL_RenderFillRect(renderer_, &full);
+    ui_.drawDesktop();
 
     const bool isWin = matchResult_.isWin;
+    bool isNeutral = (matchResult_.reason == MatchEndReason::HostEnded ||
+                      matchResult_.reason == MatchEndReason::Unknown);
 
-    // Banner overlay tint — green for win, red for loss, grey for neutral
-    if (matchResult_.reason == MatchEndReason::HostEnded || matchResult_.reason == MatchEndReason::Unknown) {
-        SDL_SetRenderDrawColor(renderer_, 60, 60, 80, 40);
-    } else if (isWin) {
-        SDL_SetRenderDrawColor(renderer_, 20, 180, 60, 40);
-    } else {
-        SDL_SetRenderDrawColor(renderer_, 180, 20, 20, 40);
-    }
-    SDL_RenderFillRect(renderer_, &full);
+    // Window title bar color: navy for neutral, dark-green for win, dark-red for loss
+    const char* winTitle = matchResult_.headline.c_str();
 
-    // Headline colour
-    SDL_Color headCol = isWin
-        ? SDL_Color{80, 255, 120, 255}
-        : (matchResult_.reason == MatchEndReason::HostEnded || matchResult_.reason == MatchEndReason::Unknown)
-            ? SDL_Color{180, 180, 200, 255}
-            : SDL_Color{255, 60, 60, 255};
+    const int WX=120, WY=60, WW=SCREEN_W-240;
+    const int TH=UI::W98::TitleH;
 
-    SDL_Color white = {220, 220, 220, 255};
-    SDL_Color gray  = {110, 110, 120, 255};
-    SDL_Color cyan  = {0, 255, 228, 255};
-    SDL_Color gold  = {255, 200, 50, 255};
+    // Estimate content height
+    auto& netR = NetworkManager::instance();
+    auto players = netR.players();
+    std::sort(players.begin(), players.end(),
+              [](const NetPlayer& a, const NetPlayer& b){ return a.kills > b.kills; });
+    bool hasTable=(matchResult_.reason==MatchEndReason::TimeUp||matchResult_.reason==MatchEndReason::LastAlive);
+    int tableRows=hasTable?(int)std::min(players.size(),(size_t)8):0;
+    int WH=TH+20+24+20+20+20+(hasTable?(26+28+tableRows*26):40)+20+36+16;
+    WH=std::max(WH,240);
+    int WYc=(SCREEN_H-WH)/2;
 
-    // Headline (VICTORY / DEFEAT / GAME OVER)
-    int headY = SCREEN_H / 6;
-    drawTextCentered(matchResult_.headline.c_str(), headY, 54, headCol);
+    ui_.drawWin98Window(WX, WYc, WW, WH, winTitle);
 
-    // Decorative separator
-    SDL_SetRenderDrawColor(renderer_, headCol.r, headCol.g, headCol.b, 80);
-    SDL_Rect sep = {SCREEN_W / 2 - 120, headY + 64, 240, 2};
-    SDL_RenderFillRect(renderer_, &sep);
+    int cy=WYc+TH+16;
+
+    // Outcome badge (navy bar)
+    SDL_Color badgeC=isNeutral?SDL_Color{80,80,120,255}:isWin?SDL_Color{0,100,0,255}:SDL_Color{140,0,0,255};
+    SDL_SetRenderDrawColor(renderer_, badgeC.r,badgeC.g,badgeC.b,255);
+    SDL_Rect badge={WX+10,cy,WW-20,22}; SDL_RenderFillRect(renderer_,&badge);
+    SDL_Color badgeTxt={255,255,255,255};
+    drawTextCentered(matchResult_.headline.c_str(), cy+4, 14, badgeTxt);
+    cy+=28;
 
     // Subtitle
     if (!matchResult_.subtitle.empty()) {
-        drawTextCentered(matchResult_.subtitle.c_str(), headY + 82, 20, white);
+        drawTextCentered(matchResult_.subtitle.c_str(), cy, 13, UI::W98::Shadow);
+        cy+=18;
     }
 
-    // Match duration
-    {
-        int secs = (int)matchResult_.matchElapsed;
-        char dur[32];
-        snprintf(dur, sizeof(dur), "Match time:  %d:%02d", secs / 60, secs % 60);
-        drawTextCentered(dur, headY + 116, 16, gray);
-    }
+    // Match time
+    {int s=(int)matchResult_.matchElapsed;
+     char dur[48]; snprintf(dur,sizeof(dur),"Match time:  %d:%02d",s/60,s%60);
+     drawTextCentered(dur, cy, 12, UI::W98::Shadow); cy+=20;}
 
-    // Player / team highlight block
-    int blockY = headY + 158;
+    // Separator
+    ui_.drawWin98Bevel(WX+10, cy, WW-20, 2, false); cy+=10;
 
-    if (matchResult_.reason == MatchEndReason::TimeUp || matchResult_.reason == MatchEndReason::LastAlive) {
-        auto& netR = NetworkManager::instance();
-        auto  players = netR.players();
+    if (hasTable) {
+        // Column headers inside inset panel
+        const int tX=WX+14, tW=WW-28;
+        const int c0=tX, c1=tX+30, c2=tX+tW-120, c3=tX+tW-60;
+        SDL_SetRenderDrawColor(renderer_, 0,0,128,255);
+        SDL_Rect hdr={tX,cy,tW,20}; SDL_RenderFillRect(renderer_,&hdr);
+        drawText("#",      c0,    cy+3, 11, {255,255,255,255});
+        drawText("PLAYER", c1,    cy+3, 11, {255,255,255,255});
+        drawText("KILLS",  c2,    cy+3, 11, {255,255,255,255});
+        drawText("STATUS", c3,    cy+3, 11, {255,255,255,255});
+        cy+=22;
 
-        // Sort by kills descending
-        std::sort(players.begin(), players.end(),
-                  [](const NetPlayer& a, const NetPlayer& b){ return a.kills > b.kills; });
+        for (size_t i=0;i<players.size()&&i<8;i++) {
+            bool isLocal=(players[i].id==netR.localPlayerId());
+            bool survived=!players[i].spectating;
+            if (isLocal) SDL_SetRenderDrawColor(renderer_,200,215,240,255);
+            else SDL_SetRenderDrawColor(renderer_,i%2==0?245:255,i%2==0?245:255,i%2==0?245:255,255);
+            SDL_Rect row={tX,cy,tW,24}; SDL_RenderFillRect(renderer_,&row);
+            SDL_SetRenderDrawColor(renderer_,160,160,160,255);
+            SDL_Rect bot2={tX,cy+23,tW,1}; SDL_RenderFillRect(renderer_,&bot2);
 
-        const int tableW = 480;
-        const int tableX = (SCREEN_W - tableW) / 2;
-
-        // Column headers
-        drawText("#",       tableX,         blockY, 13, gray);
-        drawText("PLAYER",  tableX + 32,    blockY, 13, gray);
-        drawText("KILLS",   tableX + 300,   blockY, 13, gray);
-        drawText("STATUS",  tableX + 388,   blockY, 13, gray);
-        blockY += 24;
-
-        for (size_t i = 0; i < players.size() && i < 8; i++) {
-            bool isLocal = (players[i].id == netR.localPlayerId());
-            bool survived = !players[i].spectating;
-            SDL_Color rc = isLocal ? gold : white;
-            if (!survived) { rc.r = (Uint8)(rc.r / 2); rc.g = (Uint8)(rc.g / 2); rc.b = (Uint8)(rc.b / 2); }
-
-            // Row bg
-            if (isLocal) {
-                SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 20);
-                SDL_Rect row = {tableX - 8, blockY - 2, tableW + 16, 24};
-                SDL_RenderFillRect(renderer_, &row);
-            }
-
-            char rankBuf[4], killBuf[8];
-            snprintf(rankBuf, sizeof(rankBuf), "%d", (int)i + 1);
-            snprintf(killBuf, sizeof(killBuf), "%d", players[i].kills);
-
-            drawText(rankBuf,               tableX,         blockY, 16, i == 0 ? gold : gray);
-            drawText(players[i].username.c_str(), tableX + 32, blockY, 16, rc);
-            drawText(killBuf,               tableX + 300,   blockY, 16, rc);
-            drawText(survived ? "Alive" : "Eliminated", tableX + 388, blockY, 14,
-                     survived ? SDL_Color{50, 220, 80, 255} : SDL_Color{200, 60, 60, 255});
-            blockY += 26;
+            char rank[4],kills[8]; snprintf(rank,sizeof(rank),"%d",(int)i+1); snprintf(kills,sizeof(kills),"%d",players[i].kills);
+            SDL_Color nc=isLocal?UI::W98::Black:UI::W98::Shadow;
+            drawText(rank,           c0,    cy+5, 12, nc);
+            drawText(players[i].username.c_str(), c1, cy+5, 13, nc);
+            drawText(kills,          c2,    cy+5, 12, nc);
+            drawText(survived?"Alive":"Out", c3, cy+5, 12,
+                survived?SDL_Color{0,120,0,255}:SDL_Color{160,0,0,255});
+            cy+=26;
         }
-    } else if (matchResult_.reason == MatchEndReason::WavesCleared) {
-        // PVE win — show wave count
-        char waveBuf[64];
-        if (lobbySettings_.waveCount > 0)
-            snprintf(waveBuf, sizeof(waveBuf), "Cleared %d waves!", lobbySettings_.waveCount);
-        else
-            snprintf(waveBuf, sizeof(waveBuf), "All enemies defeated!");
-        drawTextCentered(waveBuf, blockY, 22, gold);
-        blockY += 36;
-
-        // Show all players survived
-        auto& netR = NetworkManager::instance();
-        drawTextCentered("All players survived", blockY, 16, {80, 220, 80, 255});
-        (void)netR;
+        cy+=6;
+    } else if (matchResult_.reason==MatchEndReason::WavesCleared) {
+        char w[64];
+        if (lobbySettings_.waveCount>0) snprintf(w,sizeof(w),"Cleared %d waves!",lobbySettings_.waveCount);
+        else snprintf(w,sizeof(w),"All enemies defeated!");
+        drawTextCentered(w, cy, 14, {0,100,0,255}); cy+=20;
+        drawTextCentered("All players survived", cy, 13, UI::W98::Shadow); cy+=20;
     }
 
-    // Hint — clickable button
-    if (ui_.menuItem(0, "View Full Scoreboard", SCREEN_W / 2, SCREEN_H - 44, 300, 32,
-                     gray, true, 14, 16)) {
-        confirmInput_ = true;
-    }
-    SDL_Color hintLine = isWin ? SDL_Color{50, 200, 80, 100} : SDL_Color{200, 60, 60, 100};
-    SDL_SetRenderDrawColor(renderer_, hintLine.r, hintLine.g, hintLine.b, hintLine.a);
-    SDL_Rect hintBar = {0, SCREEN_H - 52, SCREEN_W, 2};
-    SDL_RenderFillRect(renderer_, &hintBar);
+    // Button
+    const int btnW=220, btnX=WX+(WW-btnW)/2;
+    if (ui_.win98Button(0,"View Full Scoreboard",btnX,cy,btnW,26,true)) confirmInput_=true;
+
+    ui_.drawWin98StatusBar(SCREEN_H-26,"Press Enter or click to continue to full scoreboard");
 }
 
 void Game::renderScoreboard() {
-    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(renderer_, 4, 6, 14, 220);
-    SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
-    SDL_RenderFillRect(renderer_, &full);
+    ui_.drawDesktop();
 
-    SDL_Color cyan   = {0, 255, 228, 255};
-    SDL_Color white  = {220, 220, 220, 255};
-    SDL_Color gray   = {100, 100, 110, 255};
-    SDL_Color yellow = {255, 255, 100, 255};
-    SDL_Color gold   = {255, 200, 50, 255};
-
-    drawTextCentered("SCOREBOARD", SCREEN_H / 10, 34, cyan);
-    SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 60);
-    SDL_Rect tl = {SCREEN_W / 2 - 100, SCREEN_H / 10 + 42, 200, 1};
-    SDL_RenderFillRect(renderer_, &tl);
-
-    // Table layout — centered
-    int tableW = 600;
-    int tableX = (SCREEN_W - tableW) / 2;
-    int col0 = tableX;       // #
-    int col1 = tableX + 40;  // Player
-    int col2 = tableX + 320; // Kills
-    int col3 = tableX + 410; // Deaths
-    int col4 = tableX + 510; // Score
-
-    // Header
-    int headerY = SCREEN_H / 5 + 10;
-    SDL_SetRenderDrawColor(renderer_, 20, 22, 35, 255);
-    SDL_Rect hdrBg = {tableX - 12, headerY - 6, tableW + 24, 28};
-    SDL_RenderFillRect(renderer_, &hdrBg);
-
-    drawText("#", col0, headerY, 14, gray);
-    drawText("PLAYER", col1, headerY, 14, gray);
-    drawText("KILLS", col2, headerY, 14, gray);
-    drawText("DEATHS", col3, headerY, 14, gray);
-    drawText("SCORE", col4, headerY, 14, gray);
-
-    // Player rows — sorted by score desc
     auto& net = NetworkManager::instance();
-    auto players = net.players(); // copy for sorting
-    std::sort(players.begin(), players.end(), [](const NetPlayer& a, const NetPlayer& b) {
-        return a.score > b.score;
-    });
+    auto players = net.players();
+    std::sort(players.begin(), players.end(),
+              [](const NetPlayer& a, const NetPlayer& b){ return a.score > b.score; });
 
-    int y = headerY + 36;
+    const int ROW_H = 26;
+    const int WX = 80, WY = 40, WW = SCREEN_W - 160;
+    const int TH = UI::W98::TitleH;
+    const int WH = TH + 14 + 24 + (int)players.size() * ROW_H + 10 + 36 + 14;
+    const int WYc = std::max(WY, (SCREEN_H - WH) / 2);
+    ui_.drawWin98Window(WX, WYc, WW, WH, "Scoreboard");
+
+    const int tX = WX + 10, tW = WW - 20;
+    const int c0 = tX, c1 = tX + 30, c2 = tX + tW - 200, c3 = tX + tW - 130, c4 = tX + tW - 60;
+
+    int cy = WYc + TH + 10;
+
+    // Navy column header bar
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(renderer_, 0, 0, 128, 255);
+    SDL_Rect hdr = {tX, cy, tW, 22}; SDL_RenderFillRect(renderer_, &hdr);
+    drawText("#",      c0, cy+4, 11, {255,255,255,255});
+    drawText("PLAYER", c1, cy+4, 11, {255,255,255,255});
+    drawText("KILLS",  c2, cy+4, 11, {255,255,255,255});
+    drawText("DEATHS", c3, cy+4, 11, {255,255,255,255});
+    drawText("SCORE",  c4, cy+4, 11, {255,255,255,255});
+    cy += 24;
+
     for (size_t i = 0; i < players.size(); i++) {
         bool isLocal = (players[i].id == net.localPlayerId());
-
-        // Row background
+        // Row bg (config-menu style alternating)
+        Uint8 bg = isLocal ? 200 : (i % 2 == 0 ? 232 : 245);
+        SDL_SetRenderDrawColor(renderer_, bg, isLocal ? 210 : bg, isLocal ? 240 : bg, 255);
+        SDL_Rect row = {tX, cy, tW, ROW_H}; SDL_RenderFillRect(renderer_, &row);
+        // Bottom border
+        SDL_SetRenderDrawColor(renderer_, 160, 160, 160, 255);
+        SDL_Rect bot = {tX, cy + ROW_H - 1, tW, 1}; SDL_RenderFillRect(renderer_, &bot);
+        // Blue left bar for local player (like config menu selection)
         if (isLocal) {
-            SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 30);
-            SDL_Rect row = {tableX - 12, y - 4, tableW + 24, 28};
-            SDL_RenderFillRect(renderer_, &row);
-        } else if (i % 2 == 0) {
-            SDL_SetRenderDrawColor(renderer_, 16, 18, 28, 180);
-            SDL_Rect row = {tableX - 12, y - 4, tableW + 24, 28};
-            SDL_RenderFillRect(renderer_, &row);
+            SDL_SetRenderDrawColor(renderer_, 0, 0, 128, 255);
+            SDL_Rect bar = {tX, cy, 3, ROW_H}; SDL_RenderFillRect(renderer_, &bar);
         }
 
-        SDL_Color c = isLocal ? yellow : white;
-        SDL_Color rankC = (i == 0) ? gold : gray;
+        char rank[8], kills[16], deaths[16], score[16];
+        snprintf(rank,   sizeof(rank),   "%d", (int)i + 1);
+        snprintf(kills,  sizeof(kills),  "%d", players[i].kills);
+        snprintf(deaths, sizeof(deaths), "%d", players[i].deaths);
+        snprintf(score,  sizeof(score),  "%d", players[i].score);
 
-        char rankBuf[8], killBuf[32], deathBuf[32], scoreBuf[32];
-        snprintf(rankBuf, sizeof(rankBuf), "%d", (int)i + 1);
-        snprintf(killBuf, sizeof(killBuf), "%d", players[i].kills);
-        snprintf(deathBuf, sizeof(deathBuf), "%d", players[i].deaths);
-        snprintf(scoreBuf, sizeof(scoreBuf), "%d", players[i].score);
-
-        drawText(rankBuf, col0, y, 18, rankC);
-        drawText(players[i].username.c_str(), col1, y, 18, c);
-        drawText(killBuf, col2, y, 18, c);
-        drawText(deathBuf, col3, y, 18, c);
-        drawText(scoreBuf, col4, y, 18, c);
-        y += 32;
+        SDL_Color nc = isLocal ? UI::W98::Black : UI::W98::Shadow;
+        drawText(rank,   c0, cy + 5, 12, i == 0 ? SDL_Color{160,100,0,255} : nc);
+        drawText(players[i].username.c_str(), c1, cy + 5, 13, nc);
+        ui_.drawTextRight(kills,  c2 + 40, cy + 5, 12, nc);
+        ui_.drawTextRight(deaths, c3 + 40, cy + 5, 12, nc);
+        ui_.drawTextRight(score,  c4 + 40, cy + 5, 12, nc);
+        cy += ROW_H;
     }
+    cy += 10;
 
-    if (ui_.menuItem(0, "Continue", SCREEN_W / 2, SCREEN_H - 50, 200, 32,
-                     {80, 80, 90, 255}, true, 14, 16)) {
-        confirmInput_ = true;
-    }
+    const int btnW = 160, btnX = WX + (WW - btnW) / 2;
+    if (ui_.win98Button(0, "Continue", btnX, cy, btnW, 26, true)) confirmInput_ = true;
+
+    ui_.drawWin98StatusBar(SCREEN_H - 26, "Press Enter to return to lobby");
 }
 
 void Game::renderRemotePlayers() {
@@ -1626,7 +1549,7 @@ void Game::renderRemotePlayers() {
             if (isGhost) SDL_SetTextureAlphaMod(legTex, 255);
         }
 
-        // Body — tint by team color or default blue
+        // Body - tint by team color or default blue
         if (!bodyFrames->empty()) {
             int idx = rp.animFrame % (int)bodyFrames->size();
             SDL_Texture* bodyTex = (*bodyFrames)[idx];
@@ -1654,7 +1577,7 @@ void Game::renderRemotePlayers() {
                 int idx = sp.legFrame % (int)legFrames->size();
                 renderSprite((*legFrames)[idx], spPos, sp.legRotation + (float)M_PI / 2, 1.5f);
             }
-            // Body — slightly different tint from primary
+            // Body - slightly different tint from primary
             if (!bodyFrames->empty()) {
                 int idx = sp.animFrame % (int)bodyFrames->size();
                 Vec2 bodyPos = spPos + Vec2::fromAngle(spRot) * 6.0f;
@@ -1753,7 +1676,7 @@ void Game::renderTeamSelect() {
             SDL_RenderDrawRect(renderer_, &box);
         }
 
-        // Team name — centered in box
+        // Team name - centered in box
         drawBoxCentered(teamNames[t], boxY + 20, 26, selected ? tc2 : gray);
 
         // Color swatch
@@ -1761,7 +1684,7 @@ void Game::renderTeamSelect() {
         SDL_Rect swatch = {cx - 20, boxY + 60, 40, 40};
         SDL_RenderFillRect(renderer_, &swatch);
 
-        // Player count on this team — centered in box
+        // Player count on this team - centered in box
         auto& net = NetworkManager::instance();
         int count = 0;
         for (auto& p : net.players()) {
@@ -1771,7 +1694,7 @@ void Game::renderTeamSelect() {
         snprintf(countBuf, sizeof(countBuf), "%d player%s", count, count == 1 ? "" : "s");
         drawBoxCentered(countBuf, boxY + 120, 14, gray);
 
-        // List player names on this team — centered in box
+        // List player names on this team - centered in box
         int nameY = boxY + 140;
         for (auto& p : net.players()) {
             if (p.team == t) {
@@ -1999,7 +1922,7 @@ void Game::renderModMenu() {
         }
     }
 
-    // Close button — uses backInput_ so it never accidentally toggles a mod
+    // Close button - uses backInput_ so it never accidentally toggles a mod
     if (ui_.win98Button(62, "Close", winX + winW - pad - 86, btnY, 86, 26, false)) {
         backInput_ = true;
     }
