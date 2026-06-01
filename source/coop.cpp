@@ -1,4 +1,3 @@
-﻿// ─── coop.cpp ─── Map packs and local co-op
 #include "game.h"
 #include "game_internal.h"
 #include <ctime>
@@ -86,6 +85,8 @@ void Game::startPackLevel() {
     map_.height = customMap_.height;
     map_.tiles  = customMap_.tiles;
     map_.ceiling = customMap_.ceiling;
+    map_.noCollide = customMap_.tileNoCollide;
+    map_.noCollide.resize(map_.tiles.size(), 0);
 
     enemies_.clear(); bullets_.clear(); enemyBullets_.clear();
     bombs_.clear(); explosions_.clear(); debris_.clear();
@@ -187,9 +188,7 @@ void Game::renderPackLevelWin() {
     ui_.drawWin98StatusBar(SCREEN_H - 26, "Level complete");
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Local Co-op (splitscreen, up to 4 players)
-// ═════════════════════════════════════════════════════════════════════════════
+// Local Co-op (splitscreen, up to 4 players)
 
 // Splitscreen zoom-out: each viewport sees 1/SPLITSCREEN_ZOOM times more world.
 // SDL_RenderSetScale is applied inside each viewport so HUD stays at 1:1.
@@ -490,7 +489,7 @@ void Game::updateLocalCoopPlayers(float dt) {
         }
     }
 
-    // All dead + no lives → game over
+    // All dead + no lives -> game over
     bool anyAlive = false;
     bool anyCanRespawn = false;
     for (int i = 0; i < 4; i++) {
@@ -660,7 +659,5 @@ void Game::renderPackComplete() {
     ui_.drawWin98StatusBar(SCREEN_H - 26, "Campaign complete!");
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Multiplayer Splitscreen Rendering
-// ═════════════════════════════════════════════════════════════════════════════
+// Multiplayer Splitscreen Rendering
 

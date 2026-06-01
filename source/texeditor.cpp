@@ -1,4 +1,3 @@
-// ─── texeditor.cpp ─── Pixel Art / Sprite Editor implementation ─────────────
 #include "texeditor.h"
 #include <cstdio>
 #include <cstring>
@@ -30,9 +29,7 @@ inline Uint8 remapButton(Uint8 btn) {
 }
 } // namespace
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Init / Shutdown
-// ═════════════════════════════════════════════════════════════════════════════
+// Init / Shutdown
 
 bool TextureEditor::init(SDL_Renderer* renderer, int screenW, int screenH) {
     renderer_ = renderer;
@@ -68,9 +65,7 @@ void TextureEditor::showConfig() {
     scanImageFiles();
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Default palette - 32 curated colors
-// ═════════════════════════════════════════════════════════════════════════════
+// Default palette - 32 curated colors
 
 void TextureEditor::initDefaultPalette() {
     // Row 1: grayscale
@@ -114,9 +109,7 @@ void TextureEditor::initDefaultPalette() {
     paletteIdx_ = 7;
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Canvas management
-// ═════════════════════════════════════════════════════════════════════════════
+// Canvas management
 
 void TextureEditor::newCanvas(int w, int h) {
     canvasW_ = w;
@@ -170,9 +163,7 @@ TexelColor TextureEditor::getPixel(int x, int y) const {
     return pixels_[y * canvasW_ + x];
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Drawing algorithms
-// ═════════════════════════════════════════════════════════════════════════════
+// Drawing algorithms
 
 void TextureEditor::floodFill(int x, int y, TexelColor target, TexelColor fill) {
     if (target == fill) return;
@@ -252,9 +243,7 @@ void TextureEditor::drawCirclePixels(int cx, int cy, int rx, int ry, TexelColor 
     }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Undo / Redo
-// ═════════════════════════════════════════════════════════════════════════════
+// Undo / Redo
 
 void TextureEditor::pushUndo() {
     undoStack_.push_back(pixels_);
@@ -279,9 +268,7 @@ void TextureEditor::redo() {
     updateCanvasTexture();
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Coordinate conversion
-// ═════════════════════════════════════════════════════════════════════════════
+// Coordinate conversion
 
 int TextureEditor::canvasOriginX() const {
     float areaW = screenW_ - PALETTE_W;
@@ -311,9 +298,7 @@ int TextureEditor::paletteGridY() const {
     return TOOLBAR_H + 8 + 16 + 40 + 12 + 16;
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Color picker - HSV conversion
-// ═════════════════════════════════════════════════════════════════════════════
+// Color picker - HSV conversion
 
 TexelColor TextureEditor::hsvToRgb(float h, float s, float v, uint8_t a) {
     float c = v * s;
@@ -341,9 +326,7 @@ void TextureEditor::rgbToHsv(TexelColor c, float& h, float& s, float& v) {
     else              h = 60.0f * ((r - g) / d + 4.0f);
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  File I/O
-// ═════════════════════════════════════════════════════════════════════════════
+// File I/O
 
 bool TextureEditor::saveImage(const std::string& path) {
     SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, canvasW_, canvasH_, 32,
@@ -367,7 +350,7 @@ bool TextureEditor::saveImage(const std::string& path) {
 }
 
 void TextureEditor::performModSave(const std::string& modFolder, int cat) {
-    // Map category index → subdirectory
+    // Map category index -> subdirectory
     static const char* catSubPaths[] = {
         "sprites/tiles/ground",
         "sprites/tiles/walls",
@@ -441,9 +424,7 @@ void TextureEditor::scanImageFiles() {
     loadFileIdx_ = 0;
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Tool application
-// ═════════════════════════════════════════════════════════════════════════════
+// Tool application
 
 void TextureEditor::applyBrushAt(int cx, int cy, TexelColor c) {
     int r = brushSize_ - 1; // 0 for single pixel
@@ -515,9 +496,7 @@ void TextureEditor::applyToolAtPixel(int cx, int cy) {
     }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Input handling
-// ═════════════════════════════════════════════════════════════════════════════
+// Input handling
 
 void TextureEditor::handleInput(const SDL_Event& e) {
     if (!active_) return;
@@ -969,9 +948,7 @@ void TextureEditor::handleToolbarClick(int mx, int my) {
     }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Update
-// ═════════════════════════════════════════════════════════════════════════════
+// Update
 
 void TextureEditor::update(float dt) {
     if (!active_) return;
@@ -1001,9 +978,7 @@ void TextureEditor::update(float dt) {
     }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Rendering
-// ═════════════════════════════════════════════════════════════════════════════
+// Rendering
 
 void TextureEditor::render() {
     if (!active_) return;

@@ -1,4 +1,3 @@
-// ─── discord_rpc.cpp ── Minimal Discord Rich Presence via IPC ────────────────
 // Connects to the Discord desktop client's local IPC socket/pipe and sends
 // SET_ACTIVITY commands.  No external dependency - pure Win32 / POSIX sockets.
 // Stubs out to no-ops on non-PC platforms (Switch, Android, server).
@@ -22,7 +21,7 @@
 #  include <errno.h>
 #endif
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// Helpers
 
 static std::string jsonEscape(const std::string& s) {
     std::string out;
@@ -62,14 +61,14 @@ static std::string buildSetActivity(const DiscordActivity& a, int64_t pid, int64
     return buf;
 }
 
-// ── Singleton ─────────────────────────────────────────────────────────────────
+// Singleton
 
 DiscordRPC& DiscordRPC::instance() {
     static DiscordRPC inst;
     return inst;
 }
 
-// ── Platform I/O ─────────────────────────────────────────────────────────────
+// Platform I/O
 
 bool DiscordRPC::sendRaw(uint32_t op, const char* json, uint32_t len) {
 #ifdef _WIN32
@@ -226,7 +225,7 @@ void DiscordRPC::flushPending() {
     if (sendRaw(1, payload.c_str(), static_cast<uint32_t>(payload.size()))) {
         hasPending_ = false;
     } else {
-        // Write failure → assume disconnect; retry on next tick
+        // Write failure -> assume disconnect; retry on next tick
 #ifdef _WIN32
         if (pipe_ != (void*)(intptr_t)-1) {
             CloseHandle((HANDLE)pipe_);
@@ -239,7 +238,7 @@ void DiscordRPC::flushPending() {
     }
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
+// Public API
 
 void DiscordRPC::init() {
     // Lazy - first tick handles connection
@@ -283,8 +282,7 @@ void DiscordRPC::tick(float dt) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-#else  // ── Stubs for Switch / server / Android ──────────────────────────────
+#else  // Stubs for Switch / server / Android
 
 DiscordRPC& DiscordRPC::instance() { static DiscordRPC inst; return inst; }
 void DiscordRPC::init()                           {}

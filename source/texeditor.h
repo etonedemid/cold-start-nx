@@ -1,23 +1,21 @@
 #pragma once
-// ─── texeditor.h ─── Pixel Art / Sprite Editor for COLD START ───────────────
 // A built-in Aseprite-style pixel art tool for creating map tiles, characters,
 // props, and UI sprites.  Supports canvas editing, color picker, palette,
 // drawing tools, undo/redo, grid overlay, and PNG save/load.
-// ─────────────────────────────────────────────────────────────────────────────
 #include "assets.h"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 #include <string>
 #include <vector>
 
-// ── Pixel color ─────────────────────────────────────────────────────────────
+// Pixel color
 struct TexelColor {
     uint8_t r = 0, g = 0, b = 0, a = 255;
     bool operator==(const TexelColor& o) const { return r==o.r && g==o.g && b==o.b && a==o.a; }
     bool operator!=(const TexelColor& o) const { return !(*this == o); }
 };
 
-// ── Drawing tools ───────────────────────────────────────────────────────────
+// Drawing tools
 enum class TexTool {
     Pen,
     Eraser,
@@ -29,14 +27,14 @@ enum class TexTool {
     Count
 };
 
-// ── Editor sub-state ────────────────────────────────────────────────────────
+// Editor sub-state
 enum class TexEditorState {
     Config,     // new/load dialog
     Editing,    // main canvas editing
     ColorPicker // color picker overlay
 };
 
-// ── Template presets for quick canvas creation ──────────────────────────────
+// Template presets for quick canvas creation
 enum class TexTemplate {
     Custom,       // user-defined size
     Tile16,       // 16×16  - small tile
@@ -49,7 +47,7 @@ enum class TexTemplate {
     Count
 };
 
-// ── Config screen data ─────────────────────────────────────────────────────
+// Config screen data
 struct TexEditorConfig {
     enum Action { NewImage, LoadImage } action = NewImage;
     int canvasW = 32;
@@ -62,7 +60,7 @@ struct TexEditorConfig {
     int gpCharIdx = 0;  // gamepad char palette index
 };
 
-// ── Main class ──────────────────────────────────────────────────────────────
+// Main class
 class TextureEditor {
 public:
     bool init(SDL_Renderer* renderer, int screenW, int screenH);
@@ -89,7 +87,7 @@ public:
     const TexEditorConfig& config() const { return config_; }
 
 private:
-    // ── Canvas ──────────────────────────────────────────────────────────
+    // Canvas
     int canvasW_ = 32, canvasH_ = 32;
     std::vector<TexelColor> pixels_;      // canvasW_ * canvasH_
     SDL_Texture* canvasTex_ = nullptr;    // GPU texture mirror of pixels_
@@ -103,7 +101,7 @@ private:
     void drawRectPixels(int x0, int y0, int x1, int y1, TexelColor c, bool filled);
     void drawCirclePixels(int cx, int cy, int rx, int ry, TexelColor c, bool filled);
 
-    // ── Undo / Redo ─────────────────────────────────────────────────────
+    // Undo / Redo
     static constexpr int MAX_UNDO = 50;
     std::vector<std::vector<TexelColor>> undoStack_;
     std::vector<std::vector<TexelColor>> redoStack_;
@@ -111,7 +109,7 @@ private:
     void undo();
     void redo();
 
-    // ── Tools ───────────────────────────────────────────────────────────
+    // Tools
     TexTool currentTool_ = TexTool::Pen;
     TexelColor currentColor_ = {255, 255, 255, 255};
     int brushSize_ = 1;             // brush radius (1=single pixel, 2=3x3, etc.)
@@ -120,39 +118,39 @@ private:
     bool shapeStarted_ = false;     // line/rect/circle first point set
     int shapeX0_ = 0, shapeY0_ = 0;
 
-    // ── Palette ─────────────────────────────────────────────────────────
+    // Palette
     static constexpr int PALETTE_SIZE = 32;
     TexelColor palette_[PALETTE_SIZE];
     int paletteIdx_ = 0;
     void initDefaultPalette();
 
-    // ── Color picker (HSV) ──────────────────────────────────────────────
+    // Color picker (HSV)
     float hue_ = 0, sat_ = 1, val_ = 1;
     int cpDragMode_ = 0;           // 0=none 1=sv square 2=hue bar 3=alpha bar
     static TexelColor hsvToRgb(float h, float s, float v, uint8_t a = 255);
     static void rgbToHsv(TexelColor c, float& h, float& s, float& v);
 
-    // ── View ────────────────────────────────────────────────────────────
+    // View
     float zoom_ = 8.0f;            // pixels on screen per canvas pixel
     float panX_ = 0, panY_ = 0;   // canvas scroll offset (in canvas pixels)
     bool showGrid_ = true;
 
-    // ── Coordinate conversion ───────────────────────────────────────────
-    //  canvasOriginX/Y: screen position of canvas pixel (0,0)
+    // Coordinate conversion
+    // canvasOriginX/Y: screen position of canvas pixel (0,0)
     int canvasOriginX() const;
     int canvasOriginY() const;
     bool screenToCanvas(int sx, int sy, int& cx, int& cy) const;
     void canvasToScreen(int cx, int cy, int& sx, int& sy) const;
 
-    // ── Layout constants ────────────────────────────────────────────────
+    // Layout constants
     static constexpr int TOOLBAR_H   = 48;
     static constexpr int PALETTE_W   = 200;
     static constexpr int STATUS_H    = 28;
 
-    // ── Layout helpers ──────────────────────────────────────────────────
+    // Layout helpers
     int paletteGridY() const;       // Y position of palette color grid
 
-    // ── Rendering sub-functions ─────────────────────────────────────────
+    // Rendering sub-functions
     void renderConfig();
     void renderCanvas();
     void renderGrid();
@@ -164,7 +162,7 @@ private:
     void renderCursor();
     void renderBrushSettings();
 
-    // ── File I/O ────────────────────────────────────────────────────────
+    // File I/O
     bool saveImage(const std::string& path);
     bool loadImage(const std::string& path);
     std::string savePath_;
@@ -172,27 +170,27 @@ private:
     std::string saveMessage_;
     float saveMessageTimer_ = 0;
 
-    // ── File browser (for Load) ─────────────────────────────────────────
+    // File browser (for Load)
     std::vector<std::string> loadFiles_;
     int loadFileIdx_ = 0;
     void scanImageFiles();
 
-    // ── State ───────────────────────────────────────────────────────────
+    // State
     TexEditorState state_ = TexEditorState::Config;
     TexEditorConfig config_;
     bool active_       = false;
     bool wantsExit_    = false;
     bool wantsModSave_ = false;
 
-    // ── SDL ─────────────────────────────────────────────────────────────
+    // SDL
     SDL_Renderer* renderer_ = nullptr;
     int screenW_ = 1280, screenH_ = 720;
 
-    // ── Gamepad virtual cursor ──────────────────────────────────────────
+    // Gamepad virtual cursor
     float cursorX_ = 640, cursorY_ = 360;
     bool useGamepadCursor_ = false;
 
-    // ── Input helpers ───────────────────────────────────────────────────
+    // Input helpers
     void handleConfigInput(const SDL_Event& e);
     void handleEditingInput(const SDL_Event& e);
     void handleColorPickerInput(const SDL_Event& e);

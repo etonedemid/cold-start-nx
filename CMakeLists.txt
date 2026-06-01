@@ -203,5 +203,5 @@ if(UNIX AND NOT APPLE AND NOT SERVER_ONLY)
     add_custom_target(dist
         DEPENDS cold_start
         COMMAND ${CMAKE_BINARY_DIR}/bundle.sh
-        COMMENT "Packaging distributable bundle → dist/")
+        COMMENT "Packaging distributable bundle -> dist/")
 endif()

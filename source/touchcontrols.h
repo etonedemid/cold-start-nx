@@ -1,13 +1,12 @@
 #pragma once
-// ─── touchcontrols.h ─── On-screen virtual gamepad ──────────────────────────
 #include "vec2.h"
 #include <SDL2/SDL.h>
 
 struct TouchControls {
-    // ── Visibility ──────────────────────────────────────────────────────────
+    // Visibility
     bool visible_ = false;   // toggled by the top-left button; auto-set true in gameplay
 
-    // ── Output (read by input.cpp after compute()) ───────────────────────────
+    // Output (read by input.cpp after compute())
     Vec2 moveStick  = {0, 0};   // normalized −1..1
     Vec2 aimStick   = {0, 0};   // normalized −1..1
     bool fire       = false;

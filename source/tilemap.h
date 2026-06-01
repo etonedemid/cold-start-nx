@@ -1,13 +1,12 @@
 #pragma once
-// ─── tilemap.h ─── Simple tile-based map ────────────────────────────────────
 #include "constants.h"
 #include <SDL2/SDL.h>
 #include <cstdint>
 #include <vector>
 
-// ── Portable PRNG for deterministic map generation across platforms ──
+// Portable PRNG for deterministic map generation across platforms
 // (stdlib rand() produces different sequences on different libc implementations,
-//  e.g. glibc on PC vs newlib on Switch)
+// e.g. glibc on PC vs newlib on Switch)
 namespace MapRng {
     inline uint32_t& state() { static uint32_t s = 1; return s; }
     inline void seed(uint32_t v) { state() = v ? v : 1; }
@@ -55,7 +54,8 @@ struct TileMap {
     int width = MAP_DEFAULT_W;
     int height = MAP_DEFAULT_H;
     std::vector<uint8_t> tiles;
-    std::vector<uint8_t> ceiling; // overlay layer (CeilType)
+    std::vector<uint8_t> ceiling;    // overlay layer (CeilType)
+    std::vector<uint8_t> noCollide;  // 1 = tile has no square collision
 
     void generate(int mapWidth, int mapHeight); // procedural arena
     bool isSolid(int tx, int ty) const;

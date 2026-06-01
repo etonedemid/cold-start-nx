@@ -1,4 +1,3 @@
-// ─── game.cpp ─── Core: init, main loop, config, assets, rumble ──────────────
 #include "game.h"
 #include "update_checker.h"
 #include "discord_rpc.h"
@@ -30,7 +29,7 @@
 
 #include "game_internal.h"
 
-// ── Pitch-varied SFX ─────────────────────────────────────────────────────────
+// Pitch-varied SFX
 // SDL_AudioCVT resamples audio as if it were recorded at a different rate,
 // producing a pitch shift. Each pitched copy lives until its channel finishes.
 static Mix_Chunk* s_pitchPool[64] = {};
@@ -174,9 +173,7 @@ void Game::applyResolutionSettings(bool rebuildTargets) {
     }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Init / Shutdown
-// ═════════════════════════════════════════════════════════════════════════════
+// Init / Shutdown
 
 void Game::configureDedicatedServer(uint16_t port, int maxPlayers,
                                     const std::string& password,
@@ -236,7 +233,7 @@ bool Game::init() {
     // PC: respect SDL_RENDER_DRIVER from environment when provided.
     // Otherwise let SDL auto-select an accelerated backend.
     // FIX: Set scale quality BEFORE renderer creation to ensure nearest-neighbor
-    //       filtering is used for ALL textures including rotated ones.
+    //     filtering is used for ALL textures including rotated ones.
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
     // RENDER_BATCHING is disabled in main() before SDL_Init; do NOT re-enable it here.
     // Batching causes vertex collapse on Linux OpenGL drivers with SDL_RenderCopyExF.
@@ -370,9 +367,7 @@ void Game::playActionMusic() {
     Mix_VolumeMusic(config_.musicVolume);
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  SoftKeyboard - centralized on-screen keyboard for all text input
-// ═════════════════════════════════════════════════════════════════════════════
+// SoftKeyboard - centralized on-screen keyboard for all text input
 void Game::shutdown() {
     shutdownMultiplayer();
     editor_.shutdown();
@@ -398,9 +393,7 @@ void Game::shutdown() {
 #endif
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Controller Rumble
-// ═════════════════════════════════════════════════════════════════════════════
+// Controller Rumble
 
 void Game::rumble(float strength, int durationMs) {
     rumbleForSlot(activeLocalPlayerSlot_, strength, durationMs, 1.0f, 1.0f);
@@ -503,9 +496,7 @@ void Game::updateSwitchRumble() {
 }
 #endif
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Update Checker
-// ═════════════════════════════════════════════════════════════════════════════
+// Update Checker
 
 void Game::checkForUpdates() {
     if (updateChecked_) return;
@@ -532,9 +523,7 @@ bool Game::isNewerVersion(const char* current, const char* latest) {
     return UpdateChecker::isNewerVersion(current, latest);
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Asset Loading
-// ═════════════════════════════════════════════════════════════════════════════
+// Asset Loading
 
 void Game::loadAssets() {
     auto& a = Assets::instance();
@@ -573,12 +562,12 @@ void Game::loadAssets() {
     bruteSprite_   = a.tex("sprites/enemy/heavy.png");
     scoutSprite_   = a.tex("sprites/enemy/scout.png");
     sniperSprite_  = a.tex("sprites/enemy/sniper.png");
-    gunnerSprite_  = a.tex("sprites/enemy/gunner.png");  // falls back to nullptr → uses shooterSprite_
+    gunnerSprite_  = a.tex("sprites/enemy/gunner.png");  // falls back to nullptr -> uses shooterSprite_
     bossBruteSprite_  = a.tex("sprites/enemy/boss_brute.png");
     bossSniperSprite_ = a.tex("sprites/enemy/boss_sniper.png");
     bossGunnerSprite_ = a.tex("sprites/enemy/boss_gunner.png");
     bulletSprite_  = a.tex("sprites/projectiles/bullet-player.png");
-    // Red-tinted copy for enemy bullets – reuse same texture with color mod at draw time
+    // Red-tinted copy for enemy bullets - reuse same texture with color mod at draw time
     enemyBulletSprite_ = bulletSprite_;
     shieldSprite_  = a.tex("sprites/effects/shield.png");
     mainmenuBg_   = a.tex("sprites/ui/mainmenu.png");
@@ -618,6 +607,7 @@ void Game::loadAssets() {
     sfxClick_        = a.sfx("universfield-computer-mouse-click-352734.mp3");
     sfxBoot_         = a.sfx("freesound_community-bootup-63385.mp3");
     sfxEnemyExplode_ = a.sfx("enemyexplode.mp3");
+    vehicleCarSprite_ = a.loadRelTex("sprites/vehicles/car/test.png");
     bgMusicTracks_.clear();
     bgMusicTrackNames_.clear();
     bgMusicTrackAuthors_.clear();
@@ -640,9 +630,7 @@ void Game::loadAssets() {
     menuMusic_   = a.music("FOTOSHOPPE CO. - Home Screen.mp3");
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Game State Management
-// ══════════════════════════════
+// Game State Management
 
 void Game::startGame() {
     state_ = GameState::Playing;
@@ -664,6 +652,7 @@ void Game::startGame() {
     explosions_.clear();
     debris_.clear();
     blood_.clear(); tileBlood_.clear();
+    vehicles_.clear(); inVehicle_ = false; vehicleIdx_ = -1;
     boxFragments_.clear();
     crates_.clear();
     pickups_.clear();
@@ -671,7 +660,15 @@ void Game::startGame() {
     crateSpawnTimer_ = 0;
     sandboxMode_ = false;
 
+    // Clear all custom-map visual/audio state so nothing leaks into normal games
+    bgImageTex_    = nullptr;
+    topImageTex_   = nullptr;
+    topLayerAlpha_ = 1.0f;
+    for (int _i = 0; _i < 8; _i++) customTileTextures_[_i] = nullptr;
+    customMap_ = CustomMap{};
+
     map_.generate(config_.mapWidth, config_.mapHeight);
+    map_.noCollide.clear();
     invalidateMinimapCache();
 
     player_ = Player{};
@@ -688,9 +685,7 @@ void Game::startGame() {
     playActionMusic();
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Main Loop
-// ═════════════════════════════════════════════════════════════════════════════
+// Main Loop
 
 void Game::run() {
     Uint64 lastTime = SDL_GetPerformanceCounter();
@@ -785,7 +780,7 @@ void Game::run() {
         }
         else if (state_ == GameState::Editor) {
             editor_.update(dt_);
-            // Check if editor wants back → return to main menu and rescan maps
+            // Check if editor wants back -> return to main menu and rescan maps
             if (editor_.wantsBack()) {
                 editor_.clearWantsBack();
                 editor_.setActive(false);
@@ -793,8 +788,8 @@ void Game::run() {
                 state_ = GameState::MainMenu;
                 menuSelection_ = 0;
             }
-            // ── Handle save dialog from editor (runs here, not in update(), because
-            //    update() is only called for gameplay states) ──
+            // Handle save dialog from editor (runs here, not in update(), because
+            // update() is only called for gameplay states)
             if (!modSaveDialog_.isOpen()) {
                 if (editor_.wantsModSave()) {
                     editor_.clearWantsModSave();
@@ -824,6 +819,10 @@ void Game::run() {
                 // so startCustomMap-style texture loading works
                 for (int _i = 0; _i < 8; _i++) customTileTextures_[_i] = nullptr;
                 editor_.getCustomTileTextures(customTileTextures_);
+                // Load full-map layer images (same logic as startCustomMap)
+                bgImageTex_  = customMap_.bgImagePath.empty()  ? nullptr : Assets::instance().loadRelTex(customMap_.bgImagePath);
+                topImageTex_ = customMap_.topImagePath.empty() ? nullptr : Assets::instance().loadRelTex(customMap_.topImagePath);
+                topLayerAlpha_ = 1.0f;
                 // Apply the map's saved game mode for test-play
                 sandboxMode_ = (customMap_.gameMode == 1);
                 // Start playing it
@@ -836,6 +835,8 @@ void Game::run() {
                 map_.height = customMap_.height;
                 map_.tiles  = customMap_.tiles;
                 map_.ceiling = customMap_.ceiling;
+                map_.noCollide = customMap_.tileNoCollide;
+                map_.noCollide.resize(map_.tiles.size(), 0);
 
                 enemies_.clear(); bullets_.clear(); enemyBullets_.clear();
                 bombs_.clear(); explosions_.clear(); debris_.clear();
@@ -881,9 +882,7 @@ void Game::run() {
     }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Input
-// ═════════════════════════════════════════════════════════════════════════════
+// Input
 
 void Game::update() {
     float dt = dt_;
@@ -891,6 +890,20 @@ void Game::update() {
 
     screenFlashTimer_  = std::max(0.0f, screenFlashTimer_ - dt);
     muzzleFlashTimer_  = std::max(0.0f, muzzleFlashTimer_ - dt);
+
+    // Top-layer fade: detect if player is inside any LayerFade trigger
+    if (topImageTex_) {
+        bool inFadeZone = false;
+        for (auto& t : customMap_.triggers) {
+            if (t.type != TriggerType::LayerFade) continue;
+            if (player_.pos.x >= t.x - t.width  * 0.5f && player_.pos.x <= t.x + t.width  * 0.5f &&
+                player_.pos.y >= t.y - t.height * 0.5f && player_.pos.y <= t.y + t.height * 0.5f) {
+                inFadeZone = true; break;
+            }
+        }
+        float target = inFadeZone ? 0.25f : 1.0f;
+        topLayerAlpha_ += (target - topLayerAlpha_) * std::min(1.0f, 6.0f * dt);
+    }
     pickupPopupTimer_  = std::max(0.0f, pickupPopupTimer_ - dt);
     waveAnnounceTimer_ = std::max(0.0f, waveAnnounceTimer_ - dt);
     cratePopupTimer_   = std::max(0.0f, cratePopupTimer_ - dt);
@@ -932,6 +945,7 @@ void Game::update() {
         updateExplosions(dt);
         updateBoxFragments(dt);
         updateBloodDecals(dt);
+        updateVehicles(dt);
         updateSpawning(dt);
         updateCrates(dt);
         updatePickups(dt);
@@ -951,7 +965,16 @@ void Game::update() {
             if (aimInput_.lengthSq() > 0.04f) aimDir = aimInput_.normalized();
             else if (player_.moving && player_.vel.lengthSq() > 1.0f) aimDir = player_.vel.normalized();
             camera_.shakeScale = config_.shakeScale;
-            camera_.update(player_.pos, aimDir, dt);
+            const Uint8* kb = SDL_GetKeyboardState(nullptr);
+            float lookScale = (kb[SDL_SCANCODE_LSHIFT] || kb[SDL_SCANCODE_RSHIFT]) ? 4.0f : 1.0f;
+            Vec2 cameraTarget = player_.pos;
+            if (inVehicle_ && vehicleIdx_ >= 0 && vehicleIdx_ < (int)vehicles_.size()) {
+                auto& veh = vehicles_[vehicleIdx_];
+                Vec2 vehFwd = {cosf(veh.rotation), sinf(veh.rotation)};
+                float spdFrac = fminf(1.0f, veh.vel.length() / 300.0f);
+                cameraTarget = player_.pos + vehFwd * (140.0f * spdFrac);
+            }
+            camera_.update(cameraTarget, aimDir, dt, lookScale);
         }
 
         // Clean up dead entities
@@ -1000,7 +1023,7 @@ void Game::update() {
             openModSaveDialog(ModSaveDialogState::AssetCharacter);
         }
     }
-    // ── When dialog confirmed, execute the actual save ───────────────────────
+    // When dialog confirmed, execute the actual save
     if (modSaveDialog_.confirmed) {
         modSaveDialog_.confirmed = false;
         const std::string& folder = modSaveDialog_.confirmedModFolder;
@@ -1036,9 +1059,7 @@ void Game::update() {
     }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Player Update
-// ═════════════════════════════════════════════════════════════════════════════
+// Player Update
 
 void Game::saveConfig() {
     FILE* f = fopen("config.txt", "w");
@@ -1105,9 +1126,7 @@ void Game::loadConfig() {
     printf("Config loaded from config.txt\n");
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Dev console
-// ═════════════════════════════════════════════════════════════════════════════
+// Dev console
 
 void Game::consoleOut(const char* line) {
     consoleLog_.push_back(line);
@@ -1166,6 +1185,18 @@ void Game::consoleExec(const char* cmd) {
             char msg[64]; snprintf(msg, sizeof(msg), "Spawned %d %s", count, typeName);
             consoleOut(msg);
         }
+    } else if (strcmp(tok, "vehicle") == 0) {
+        if (strcmp(rest, "car") == 0) {
+            Vehicle v;
+            v.pos    = player_.pos + Vec2{120.0f, 0.0f};
+            v.type   = VehicleType::Car;
+            v.sprite = vehicleCarSprite_;
+            if (v.sprite) SDL_QueryTexture(v.sprite, nullptr, nullptr, &v.spriteW, &v.spriteH);
+            vehicles_.push_back(v);
+            consoleOut("Spawned car near player");
+        } else {
+            consoleOut("usage: vehicle car");
+        }
     } else if (strcmp(tok, "give") == 0) {
         auto ciPrefix = [](const char* name, const char* query) {
             while (*query) {
@@ -1221,9 +1252,7 @@ void Game::consoleExec(const char* cmd) {
     }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Saved Servers
-// ═════════════════════════════════════════════════════════════════════════════
+// Saved Servers
 
 void Game::loadSavedServers() {
     savedServers_.clear();
@@ -1271,9 +1300,7 @@ void Game::removeSavedServer(int idx) {
     }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Server Config Presets
-// ═════════════════════════════════════════════════════════════════════════════
+// Server Config Presets
 
 void Game::loadServerPresets() {
     serverPresets_.clear();

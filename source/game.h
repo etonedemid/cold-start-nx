@@ -1,5 +1,4 @@
 #pragma once
-// ─── game.h ─── Main game state machine ─────────────────────────────────────
 #include "vec2.h"
 #include "constants.h"
 #include "entity.h"
@@ -21,6 +20,7 @@
 #include "mod.h"
 #include "network.h"
 #include "ui.h"
+#include "vehicle.h"
 
 #include <SDL2/SDL.h>
 #include <vector>
@@ -53,7 +53,7 @@ enum class GameState {
     PackDead,
     PackLevelWin,    // Between levels in a pack
     PackComplete,    // All levels done
-    // ── Multiplayer ──
+    // Multiplayer
     MultiplayerMenu, // Host/Join/Browse
     HostSetup,       // Configuring game before hosting
     JoinMenu,        // Enter IP to connect
@@ -65,9 +65,9 @@ enum class GameState {
     TeamSelect,      // Team selection screen before team game starts
     MultiplayerSpectator, // Player exhausted all lives - free-roam ghost, no respawn
     WinLoss,             // Win/Loss result screen (shown before Scoreboard)
-    // ── Mod management ──
+    // Mod management
     ModMenu,         // Enable/disable mods
-    // ── Local Co-op (splitscreen, up to 4 players) ──
+    // Local Co-op (splitscreen, up to 4 players)
     LocalCoopLobby,  // players join by pressing a button
     LocalCoopGame,   // active splitscreen game
     LocalCoopPaused, // paused from splitscreen
@@ -121,7 +121,7 @@ struct BoxFragment {
     SDL_Color color;
 };
 
-// ── Per-player slot for local co-op splitscreen ────────────────────────────
+// Per-player slot for local co-op splitscreen
 struct CoopSlot {
     bool   joined       = false;
     // Input device: -1 = keyboard+mouse, >=0 = SDL joystick instance ID
@@ -146,7 +146,7 @@ struct CoopSlot {
     bool  bombLaunchHeld  = false;  // debounce: was ZL held last frame
 };
 
-// ── Mod-save dialog state ────────────────────────────────────────────────────
+// Mod-save dialog state
 struct ModSaveDialogState {
     enum Phase  { Closed, ChooseMod, NameNewMod, ChooseCategory };
     enum Asset  { AssetMap, AssetCharacter };
@@ -165,7 +165,7 @@ struct ModSaveDialogState {
     int         gpCharIdx   = 0;
 
     // Sprite category selection (0=Ground Tile, 1=Wall Tile, 2=Ceiling Tile,
-    //                            3=Character Body, 4=Character Legs)
+    //                          3=Character Body, 4=Character Legs)
     int catIdx = 0;
     static constexpr int CAT_COUNT = 5;
     static constexpr const char* CAT_NAMES[5] = {
@@ -195,7 +195,7 @@ public:
     void shutdown();
 
 private:
-    // ── Core ──
+    // Core
     SDL_Window*   window_   = nullptr;
     SDL_Renderer* renderer_ = nullptr;
     UI::Context   ui_;  // Immediate-mode UI system
@@ -204,7 +204,7 @@ private:
     float gameTime_ = 0;      // seconds since level start
     float dt_ = 0;
 
-    // ── Controller rumble ──
+    // Controller rumble
     SDL_GameController* activeController_ = nullptr;
     void rumble(float strength, int durationMs);
     void rumble(float strength, int durationMs, float lowBandScale, float highBandScale);
@@ -216,12 +216,12 @@ private:
     void updateSwitchRumble();
 #endif
 
-    // ── BIOS intro ──
+    // BIOS intro
     float biosTimer_      = 0;
     int   biosLine_       = 0;
     bool  biosBootPlayed_ = false;
 
-    // ── Music player window (main menu) ──
+    // Music player window (main menu)
     int  musicWinX_        = 0;
     int  musicWinY_        = 0;
     bool musicWinInit_     = false;
@@ -230,10 +230,10 @@ private:
     int  musicWinDragOffY_ = 0;
     bool musicPaused_      = false;
 
-    // ── Log-off confirmation ──
+    // Log-off confirmation
     bool  logOffConfirm_     = false;
 
-    // ── Credits window ───────────────────────────────────────────────────────
+    // Credits window
     bool creditsOpen_      = false;
     int  creditsWinX_      = 0;
     int  creditsWinY_      = 0;
@@ -242,7 +242,7 @@ private:
     int  creditsDragOX_    = 0;
     int  creditsDragOY_    = 0;
 
-    // ── AVA Explorer (fake browser) ──────────────────────────────────────────
+    // AVA Explorer (fake browser)
     bool     browserOpen_      = false;
     bool     browserInit_      = false;
     bool     browserLoading_   = false;
@@ -252,14 +252,14 @@ private:
     bool     browserDragging_  = false;
     int      browserDragOX_    = 0;
     int      browserDragOY_    = 0;
-    int      browserPage_      = 0;   // current page index (0–4)
+    int      browserPage_      = 0;   // current page index (0-4)
     int      browserScrollY_   = 0;
     // navigation history (simple back/forward stack)
     int      browserHist_[32]  = {};
     int      browserHistLen_   = 0;
     int      browserHistPos_   = -1;
     uint32_t browserIconClickT_ = 0;  // last desktop-icon click ms (for double-click)
-    // ── Chat window (lobby) ──
+    // Chat window (lobby)
     int  chatWinX_         = 860;
     int  chatWinY_         = 460;
     bool chatWinInit_      = false;
@@ -269,20 +269,20 @@ private:
     bool chatTyping_       = false;
     char chatInputBuf_[256] = {};
 
-    // ── Login screen ──
+    // Login screen
     std::string loginUsername_;
     std::string loginPassword_;
     int   loginField_  = 0;   // 0 = username, 1 = password
     float loginBlinkT_ = 0;   // cursor blink accumulator
 
-    // ── Update checker ──
+    // Update checker
     bool updateAvailable_ = false;
     bool updateChecked_   = false;
     std::string latestVersion_;
     void checkForUpdates();
     bool isNewerVersion(const char* current, const char* latest);
 
-    // ── Input (mapped to Joy-Con / Pro Controller) ──
+    // Input (mapped to Joy-Con / Pro Controller)
     Vec2 moveInput_  = {0,0};
     Vec2 aimInput_   = {0,0};
     bool fireInput_  = false;
@@ -319,7 +319,7 @@ private:
     std::string dedicatedPassword_;
     std::string dedicatedServerName_ = "DedicatedServer";
 
-    // ── World ──
+    // World
     Player              player_;
     std::vector<Enemy>  enemies_;
     std::vector<Entity> bullets_;       // player bullets
@@ -336,7 +336,13 @@ private:
     Camera              camera_;
     TileMap             map_;
 
-    // ── Spawning (wave system) ──
+    // Vehicles
+    std::vector<Vehicle> vehicles_;
+    SDL_Texture*         vehicleCarSprite_ = nullptr;
+    bool                 inVehicle_  = false;
+    int                  vehicleIdx_ = -1;
+
+    // Spawning (wave system)
     int   waveNumber_     = 0;
     int   waveEnemiesLeft_= 0;     // enemies still to spawn this wave
     float waveSpawnTimer_ = 0;     // delay between individual spawns in a wave
@@ -346,28 +352,28 @@ private:
     int   lastBossWaveNum_= -1;    // wave number of last boss when first beaten (-1 = not yet)
     GameConfig config_{};
 
-    // ── Map Editor ──
+    // Map Editor
     MapEditor editor_;
 
-    // ── Touch / on-screen controls (Android only) ──
+    // Touch / on-screen controls (Android only)
 #ifdef __ANDROID__
     TouchControls touchControls_;
 #endif
 
-    // ── Custom map play ──
+    // Custom map play
     CustomMap customMap_;
     bool      playingCustomMap_ = false;
     bool      testPlayFromEditor_ = false;  // return to editor when done
     bool      customGoalOpen_   = false;  // end goal door is open
     int       customEnemiesTotal_ = 0;    // total enemy spawns in custom map
 
-    // ── Character system ──
+    // Character system
     std::vector<CharacterDef> availableChars_;
     int selectedChar_ = -1;  // -1 = default character
     CharacterDef activeCharDef_;  // Currently active character (for stat application)
     bool hasActiveChar_ = false;  // Whether a custom character is selected
 
-    // ── Character Creator (simplified) ──
+    // Character Creator (simplified)
     struct CharCreatorState {
         std::string name = "NewChar";
         float speed = 520.0f;
@@ -412,30 +418,31 @@ private:
         }
     } charCreator_;
 
-    // ── Local Co-op ──
+    // Local Co-op
     CoopSlot coopSlots_[4];
     int      coopPlayerCount_ = 0;
     bool     coopIsPvp_       = false; // true = local PvP, false = co-op vs enemies
     int      coopMapMode_     = 0;     // 0=generated, 1=map file, 2=pack
 
-    // ── Play Mode Menu ──
+    // Play Mode Menu
     int playModeSelection_ = 0;   // 0=Generated,1=Map,2=Pack,3-8=sliders,9=Back
     GameState prevMenuState_ = GameState::MainMenu; // for back nav in MapSelect/PackSelect
 
-    // ── Map file browser ──
+    // Map file browser
     std::vector<std::string> mapFiles_;
-    int mapSelectIdx_ = 0;
+    int mapSelectIdx_  = 0;
+    int mapSelectMode_ = 0; // 0=Arena, 1=Sandbox
 
     bool sandboxMode_    = false; // no enemies/crates when true
 
-    // ── Map Pack system ──
+    // Map Pack system
     std::vector<MapPack> availablePacks_;
     int packSelectIdx_ = 0;
     MapPack currentPack_;           // Currently playing pack
     bool playingPack_ = false;      // In pack campaign mode
     CharacterDef packCharDef_;      // Character loaded from pack
 
-    // ── Dev console ──
+    // Dev console
     bool consoleOpen_  = false;
     bool godMode_      = false;
     char consoleBuf_[256] = {};
@@ -445,7 +452,7 @@ private:
     void consoleExec(const char* cmd);
     void consoleOut(const char* line);
 
-    // ── Visual Polish ──
+    // Visual Polish
     float waveAnnounceTimer_ = 0;  // countdown for wave banner display
     int   waveAnnounceNum_   = 0;  // which wave to show
     float lowHpTint_         = 0;  // 0..1, smoothed low-HP red overlay intensity
@@ -460,7 +467,7 @@ private:
     float screenFlashTimer_  = 0;  // brief white flash (e.g. explosion)
     float screenFlashR_ = 255, screenFlashG_ = 255, screenFlashB_ = 255;
 
-    // ── Sprites ──
+    // Sprites
     std::vector<SDL_Texture*> playerSprites_;
     std::vector<SDL_Texture*> playerDeathSprites_;
     std::vector<SDL_Texture*> legSprites_;
@@ -508,7 +515,12 @@ private:
     // Custom tile textures loaded from map-embedded paths (TILE_CUSTOM_0..7)
     SDL_Texture* customTileTextures_[8] = {nullptr};
 
-    // ── SFX ──
+    // Full-map layer images (from custom map bgImagePath / topImagePath)
+    SDL_Texture* bgImageTex_   = nullptr;
+    SDL_Texture* topImageTex_  = nullptr;
+    float        topLayerAlpha_ = 1.0f; // smoothly fades when player inside LayerFade trigger
+
+    // SFX
     Mix_Chunk* sfxShoot_        = nullptr;
     Mix_Chunk* sfxEnemyShoot_   = nullptr;
     Mix_Chunk* sfxEnemyExplode_ = nullptr;
@@ -541,7 +553,7 @@ private:
     int  pauseMusicWinDragOffX_   = 0;
     int  pauseMusicWinDragOffY_   = 0;
 
-    // ── Methods ──
+    // Methods
     void loadAssets();
     void startGame();
     void handleInput();
@@ -552,12 +564,15 @@ private:
 
     // Update sub-systems
     void updatePlayer(float dt);
+    void updateVehicles(float dt);
+    void renderVehicles();
     void updateEnemies(float dt);
     void updateBullets(float dt);
     void updateBombs(float dt);
     void updateExplosions(float dt);
     void updateSpawning(float dt);
     void resolveCollisions();
+    void pushOutCollisionZones(Vec2& pos, float radius); // push pos out of all CollisionZone triggers
 
     // Enemy AI helpers
     void enemyWander(Enemy& e, float dt);
@@ -595,7 +610,7 @@ private:
     // Start map-specific music (resolves trackPath relative to folder, falls back to bgMusic_)
     void playMapMusic(const std::string& folder, const std::string& trackPath);
 
-    // ── Local Co-op ──
+    // Local Co-op
     void renderLocalCoopLobby();
     void startLocalCoopGame();
     void updateLocalCoopPlayers(float dt);
@@ -634,8 +649,8 @@ private:
     bool wallCollision(Vec2 pos, float halfSize) const;
     void slideResolve(Vec2& pos, Vec2& vel, float halfSize);
 
-    // ── New systems ──
-    void startCustomMap(const std::string& path);
+    // New systems
+    void startCustomMap(const std::string& path, int modeOverride = -1); // -1=use map default, 0=Arena, 1=Sandbox
     void startCustomMapMultiplayer(const std::string& path);
     void updateCustomMapGoal();
     void scanMapFiles();
@@ -654,7 +669,7 @@ private:
     void loadCharacterIntoCreator(const std::string& folderPath); // load folder into creator
     void testCharacter();  // quick-test with current character in sandbox
 
-    // ── Mod-save overlay dialog ──
+    // Mod-save overlay dialog
     ModSaveDialogState modSaveDialog_;
     bool charCreatorWantsModSave_ = false;
     void openModSaveDialog(ModSaveDialogState::Asset asset);
@@ -674,7 +689,7 @@ private:
     void startPackLevel();
     void advancePackLevel();
 
-    // ── Pickup / Crate system ──
+    // Pickup / Crate system
     void updateCrates(float dt);
     void updatePickups(float dt);
     void spawnCrate(Vec2 pos);
@@ -685,7 +700,7 @@ private:
     float crateSpawnTimer_  = 0;
     float cratePopupTimer_  = 0;  // countdown for "SUPPLY DROP" popup
 
-    // ── Multiplayer ──
+    // Multiplayer
     GameModeRules currentRules_;            // active gamemode rules
     float netStateSendTimer_ = 0;           // rate-limit state sends
     float enemySendTimer_    = 0;           // rate-limit enemy state sends (host only)
@@ -709,7 +724,7 @@ private:
     int         menuNavStickPrev_= 0;        // previous analog-stick nav direction (-1/0/+1)
     int         hostSetupScrollY_= 0;        // scroll offset (px) for HOST OPTIONS rows
 
-    // ── Unified onscreen keyboard (movable window, QWERTY layout) ──
+    // Unified onscreen keyboard (movable window, QWERTY layout)
     struct SoftKeyboard {
         bool  active  = false;
         std::string* target = nullptr;
@@ -767,7 +782,7 @@ private:
     int  modMenuTab_       = 0;  // 0=Mods 1=Characters 2=Maps 3=Playlists
     bool lobbyReady_ = false;
 
-    // ── Lobby settings (host-controlled) ──
+    // Lobby settings (host-controlled)
     LobbySettings lobbySettings_;           // synced from host to clients
     int  lobbySettingsSel_   = 0;           // which settings row is selected (host)
     int  lobbySettingsScrollY_ = 0;         // scroll offset (px) for lobby settings panel
@@ -775,26 +790,26 @@ private:
     int  lobbyGamemodeIdx_   = 0;           // index into GameModeRegistry for lobby
     int  lobbyMapIdx_        = 0;           // 0=random, 1+=custom maps
 
-    // ── Team selection ──
+    // Team selection
     int8_t localTeam_        = -1;          // local player's chosen team (-1=none)
     int    teamSelectCursor_ = 0;           // cursor for team selection screen
     bool   teamLocked_       = false;       // player locked in team choice
 
-    // ── Lives system ──
+    // Lives system
     int    localLives_       = -1;          // -1=infinite, >=0=remaining lives (individual)
     int    sharedLives_      = -1;          // -1=infinite, >=0=remaining (shared pool, host only)
     bool   spectatorMode_    = false;       // ran out of lives, spectating as ghost
 
-    // ── Admin menu (host-only overlay during gameplay) ──
+    // Admin menu (host-only overlay during gameplay)
     bool   adminMenuOpen_    = false;
     int    adminMenuSel_     = 0;           // selected player index
     int    adminMenuAction_  = 0;           // 0=kick, 1=respawn, 2=team-, 3=team+
 
-    // ── Multiplayer pause sub-state ──
+    // Multiplayer pause sub-state
     int    pauseMenuSub_     = 0;           // 0=main list, 1=team-pick inline
     int    pauseTeamCursor_  = 0;           // cursor when picking team from pause
 
-    // ── Saved servers ──
+    // Saved servers
     struct SavedServer {
         std::string name;    // display name
         std::string address; // IP address
@@ -806,7 +821,7 @@ private:
     std::string serverNameBuf_;
     int serverNameCharIdx_ = 0;
 
-    // ── Server config presets ──
+    // Server config presets
     struct ServerPreset {
         std::string name;
         std::string gamemodeId;
@@ -841,7 +856,7 @@ private:
     void renderMultiplayerPause();
     void renderMultiplayerDeath();
     void renderMultiplayerSplitscreen();
-    // ── Match result ──
+    // Match result
     enum class MatchEndReason : uint8_t {
         Unknown      = 0,
         WavesCleared = 1, // PVE: all target waves cleared
@@ -895,10 +910,10 @@ private:
     void removeServerPreset(int idx);
     void applyServerPreset(int idx);
 
-    // ── IP utility ──
+    // IP utility
     std::string getLocalIP();
 
-    // ── Mod system ──
+    // Mod system
     void initMods();
     void reloadModdedContent();
     void applyModOverrides();

@@ -1,4 +1,4 @@
-# ─── MinGW-w64 Cross-compilation Toolchain (Linux → Windows x86_64) ──────────
+# ─── MinGW-w64 Cross-compilation Toolchain (Linux -> Windows x86_64) ──────────
 #
 # Usage:
 #   cmake -B build-win -DCMAKE_TOOLCHAIN_FILE=toolchain-windows.cmake

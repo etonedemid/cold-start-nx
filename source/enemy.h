@@ -1,5 +1,4 @@
 #pragma once
-// ─── enemy.h ─── Enemy types ───────────────────────────────────────────────
 #include "vec2.h"
 #include "constants.h"
 #include <SDL2/SDL.h>

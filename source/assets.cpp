@@ -1,4 +1,3 @@
-// ─── assets.cpp ─── Asset management implementation ─────────────────────────
 #include "assets.h"
 #include "mod.h"
 #include <cstdio>

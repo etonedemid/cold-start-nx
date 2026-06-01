@@ -1,5 +1,4 @@
 #pragma once
-// ─── camera.h ─── Camera state ─────────────────────────────────────────────
 #include "vec2.h"
 #include "constants.h"
 
@@ -15,7 +14,7 @@ struct Camera {
     int   viewW      = SCREEN_W;  // viewport width  (change for splitscreen)
     int   viewH      = SCREEN_H;  // viewport height (change for splitscreen)
 
-    void update(Vec2 target, Vec2 aimDir, float dt);
+    void update(Vec2 target, Vec2 aimDir, float dt, float lookScale = 1.0f);
     void addShake(float amount);
     Vec2 worldToScreen(Vec2 world) const;
     Vec2 screenToWorld(Vec2 screen) const;

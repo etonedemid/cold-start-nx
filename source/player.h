@@ -1,5 +1,4 @@
 #pragma once
-// ─── player.h ─── Player state ─────────────────────────────────────────────
 #include "vec2.h"
 #include "constants.h"
 #include <SDL2/SDL.h>
@@ -16,7 +15,8 @@ struct Player {
     int   maxHp      = PLAYER_MAX_HP;
     bool  invulnerable  = false;
     float invulnTimer   = 0;
-    float invulnDuration = PLAYER_INVULN_TIME; // settable per-gamemode (PvP: 0.01f)
+    float invulnDuration = PLAYER_INVULN_TIME;
+    float bodyContactCooldown = 0.0f; // prevents per-frame spam from body overlap
 
     // Gun
     int   ammo       = GUN_MAX_AMMO;
@@ -55,7 +55,7 @@ struct Player {
     // Melee (axe swing)
     bool  isMeleeSwinging  = false;  // axe swing in progress
     bool  meleeHit         = false;  // damage already applied this swing
-    bool  meleeSwingReverse = false; // true = next swing plays frames 9→3 (returning)
+    bool  meleeSwingReverse = false; // true = next swing plays frames 9->3 (returning)
     bool  hadMeleeSwing    = false;  // hold melee idle pose after first swing
     bool  meleeBloodlustProc = false;
     float meleeTimer       = 0.0f;

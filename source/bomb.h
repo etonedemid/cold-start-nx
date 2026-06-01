@@ -1,5 +1,4 @@
 #pragma once
-// ─── bomb.h ─── Bomb entity ────────────────────────────────────────────────
 #include "vec2.h"
 #include "constants.h"
 
