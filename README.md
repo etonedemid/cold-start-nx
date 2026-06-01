@@ -1,7 +1,7 @@
 
 <img width="848" height="204" alt="banner" src="https://github.com/user-attachments/assets/2a0af91e-a15e-462f-aa99-d2869a311675" />
 
-# COLD START  `v1.8.0`
+# COLD START  `v2.1.0`
 
 This project falls under gnu public general license EXCEPT for music, consult authors before distributing this/using in your projects.
 
