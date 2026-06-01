@@ -1,4 +1,3 @@
-// ─── mapformat.cpp ─── .csm file I/O ────────────────────────────────────────
 #include "mapformat.h"
 #include <cstdio>
 #include <cstring>
@@ -37,6 +36,13 @@ bool CustomMap::saveToFile(const std::string& path) const {
     fwrite(tiles.data(), 1, tiles.size(), f);
     fwrite(ceiling.data(), 1, ceiling.size(), f);
 
+    // Tile rotations (v2): same size as tiles, 0-3 per tile
+    {
+        std::vector<uint8_t> rots = tileRotations;
+        rots.resize(tiles.size(), 0);
+        fwrite(rots.data(), 1, rots.size(), f);
+    }
+
     uint16_t trigCount = (uint16_t)triggers.size();
     fwrite(&trigCount, sizeof(uint16_t), 1, f);
     if (trigCount > 0)
@@ -64,9 +70,36 @@ bool CustomMap::saveToFile(const std::string& path) const {
         if (mlen > 0) fwrite(musicPath.c_str(), 1, mlen, f);
     }
 
+    // Free-placed props (v2)
+    {
+        uint16_t propCount = (uint16_t)props.size();
+        fwrite(&propCount, sizeof(uint16_t), 1, f);
+        if (propCount > 0)
+            fwrite(props.data(), sizeof(PropSpawn), propCount, f);
+    }
+
+    // Layer image paths (v2): bgImagePath + topImagePath
+    auto writeStr = [&](const std::string& s) {
+        uint16_t len = (uint16_t)std::min(s.size(), (size_t)511);
+        fwrite(&len, sizeof(uint16_t), 1, f);
+        if (len > 0) fwrite(s.c_str(), 1, len, f);
+    };
+    writeStr(bgImagePath);
+    writeStr(topImagePath);
+
+    // Per-tile no-collision flags (optional, appended last for backward compat)
+    {
+        std::vector<uint8_t> nc = tileNoCollide;
+        nc.resize(tiles.size(), 0);
+        uint8_t hasNC = 0;
+        for (uint8_t v : nc) if (v) { hasNC = 1; break; }
+        fwrite(&hasNC, 1, 1, f);
+        if (hasNC) fwrite(nc.data(), 1, nc.size(), f);
+    }
+
     fclose(f);
-    printf("Saved map: %s (%dx%d, %d triggers, %d spawns)\n",
-        path.c_str(), width, height, (int)triggers.size(), (int)enemySpawns.size());
+    printf("Saved map: %s (%dx%d, %d triggers, %d spawns, %d props)\n",
+        path.c_str(), width, height, (int)triggers.size(), (int)enemySpawns.size(), (int)props.size());
     return true;
 }
 
@@ -115,6 +148,12 @@ bool CustomMap::loadFromFile(const std::string& path) {
     if (fread(tiles.data(), 1, area, f) != (size_t)area) { fclose(f); return false; }
     if (fread(ceiling.data(), 1, area, f) != (size_t)area) { fclose(f); return false; }
 
+    // Tile rotations (v2) - present if version >= 2
+    tileRotations.assign(area, 0);
+    if (hdr.version >= 2) {
+        if (fread(tileRotations.data(), 1, area, f) != (size_t)area) { fclose(f); return false; }
+    }
+
     uint16_t trigCount = 0;
     if (fread(&trigCount, sizeof(uint16_t), 1, f) != 1) { fclose(f); return false; }
     if (trigCount > 10000) { printf("CSM: excessive trigger count %d\n", trigCount); fclose(f); return false; }
@@ -157,9 +196,43 @@ bool CustomMap::loadFromFile(const std::string& path) {
         }
     }
 
+    // Free-placed props (v2)
+    props.clear();
+    if (hdr.version >= 2) {
+        uint16_t propCount = 0;
+        if (fread(&propCount, sizeof(uint16_t), 1, f) == 1 && propCount <= 10000) {
+            props.resize(propCount);
+            if (propCount > 0 && fread(props.data(), sizeof(PropSpawn), propCount, f) != propCount)
+                props.clear();
+        }
+    }
+
+    // Layer image paths (v2)
+    bgImagePath.clear(); topImagePath.clear();
+    if (hdr.version >= 2) {
+        auto readStr = [&](std::string& s) {
+            uint16_t len = 0;
+            if (fread(&len, sizeof(uint16_t), 1, f) == 1 && len > 0 && len < 512) {
+                char buf[513] = {};
+                if (fread(buf, 1, len, f) == (size_t)len) s = buf;
+            }
+        };
+        readStr(bgImagePath);
+        readStr(topImagePath);
+    }
+
+    // Per-tile no-collision flags (optional trailing block)
+    tileNoCollide.assign(width * height, 0);
+    {
+        uint8_t hasNC = 0;
+        if (fread(&hasNC, 1, 1, f) == 1 && hasNC) {
+            fread(tileNoCollide.data(), 1, tileNoCollide.size(), f);
+        }
+    }
+
     fclose(f);
-    printf("Loaded map: %s (%dx%d, %d triggers, %d spawns)\n",
-        name.c_str(), width, height, (int)triggers.size(), (int)enemySpawns.size());
+    printf("Loaded map: %s (%dx%d, %d triggers, %d spawns, %d props)\n",
+        name.c_str(), width, height, (int)triggers.size(), (int)enemySpawns.size(), (int)props.size());
     return true;
 }
 

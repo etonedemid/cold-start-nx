@@ -1,8 +1,8 @@
 # Maintainer: etonedemid <etonedemid@proton.me>
 pkgname=cold-start
-pkgver=1.7.0
+pkgver=2.1.0
 pkgrel=1
-pkgdesc="Top-down twin-stick shooter with wave-based combat — Nintendo Switch homebrew, also playable on PC"
+pkgdesc="Top-down twin-stick shooter with wave-based combat - Nintendo Switch homebrew, also playable on PC"
 arch=('x86_64')
 url="https://github.com/etonedemid/cold-start-nx"
 license=('MIT')
@@ -26,7 +26,7 @@ package() {
     # Binary
     install -Dm755 build/cold_start "$pkgdir/opt/cold-start/cold_start"
 
-    # Assets (romfs — loaded relative to working directory)
+    # Assets (romfs - loaded relative to working directory)
     cp -r "cold-start-nx-$pkgver/romfs" "$pkgdir/opt/cold-start/romfs"
 
     # Default config
@@ -50,7 +50,7 @@ EOF
     install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/cold-start.desktop" << 'DESKTOP'
 [Desktop Entry]
 Name=Cold Start
-Comment=Top-down twin-stick shooter — wave survival
+Comment=Top-down twin-stick shooter - wave survival
 Exec=/usr/bin/cold-start
 Icon=cold-start
 Terminal=false

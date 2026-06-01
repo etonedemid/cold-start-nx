@@ -1,10 +1,9 @@
-// ─── touchcontrols.cpp ─── On-screen virtual gamepad ────────────────────────
 #include "touchcontrols.h"
 #include "constants.h"
 #include <cmath>
 #include <algorithm>
 
-// ── Geometry helpers ──────────────────────────────────────────────────────────
+// Geometry helpers
 
 static void fillCircle(SDL_Renderer* r, int cx, int cy, int rad) {
     for (int dy = -rad; dy <= rad; dy++) {
@@ -25,7 +24,7 @@ static void drawCircleOutline(SDL_Renderer* r, int cx, int cy, int rad, int thic
     }
 }
 
-// ── TouchControls ─────────────────────────────────────────────────────────────
+// TouchControls
 
 void TouchControls::compute() {
     moveStick = {0, 0};
@@ -140,7 +139,7 @@ bool TouchControls::handleEvent(const SDL_Event& e, float uiScale) {
             fingers_[slot].ox = std::clamp(lx, SCREEN_W * 0.50f, SCREEN_W * 0.90f);
             fingers_[slot].oy = std::clamp(ly, SCREEN_H * 0.35f, SCREEN_H - 40.f);
         } else if (z == ZONE_LEFT && leftSlot_ >= 0 && rightSlot_ < 0) {
-            // Second finger in left zone → treat as right stick
+            // Second finger in left zone -> treat as right stick
             fingers_[slot].zone = ZONE_RIGHT;
             rightSlot_ = slot;
             fingers_[slot].ox = std::clamp(lx, SCREEN_W * 0.50f, SCREEN_W * 0.90f);
@@ -169,7 +168,7 @@ bool TouchControls::handleEvent(const SDL_Event& e, float uiScale) {
     return false;
 }
 
-// ── Rendering ─────────────────────────────────────────────────────────────────
+// Rendering
 
 void TouchControls::render(SDL_Renderer* r, float uiScale) const {
     lastScale_ = uiScale;
@@ -177,7 +176,7 @@ void TouchControls::render(SDL_Renderer* r, float uiScale) const {
 
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
 
-    // ── Toggle button (always visible, green = on, amber = off) ──────────────
+    // Toggle button (always visible, green = on, amber = off)
     {
         auto b = btnToggle(us);
         int cx = (int)b.x, cy = (int)b.y, cr = (int)b.r;
@@ -203,7 +202,7 @@ void TouchControls::render(SDL_Renderer* r, float uiScale) const {
         return;
     }
 
-    // ── Floating joysticks ──────────────────────────────────────────────────
+    // Floating joysticks
     auto drawStick = [&](int slot, float maxR, float knobR) {
         if (slot < 0) return;
         const auto& f = fingers_[slot];
@@ -236,7 +235,7 @@ void TouchControls::render(SDL_Renderer* r, float uiScale) const {
     if (leftSlot_  < 0) drawIdleStick(180.f*us, 570.f*us, 75.f*us);
     if (rightSlot_ < 0) drawIdleStick(850.f*us, 570.f*us, 65.f*us);
 
-    // ── Action buttons ──────────────────────────────────────────────────────
+    // Action buttons
     // Labels adapt to context: in gameplay they fire actions; in menus they
     // act as gamepad face buttons (FIRE=A/Confirm, BOMB=B/Back, MELEE=Tab).
     struct { BtnPos pos; bool pressed; SDL_Color c; const char* lbl; } btns[] = {

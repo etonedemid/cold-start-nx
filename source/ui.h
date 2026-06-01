@@ -1,6 +1,5 @@
 #pragma once
-// ─── ui.h ─── Immediate-mode UI system with text caching, mouse/touch,
-//              and automatic input glyph support ─────────────────────────────
+//            and automatic input glyph support
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 #include <string>
@@ -10,7 +9,7 @@
 
 namespace UI {
 
-// ─── Color Palette ──────────────────────────────────────────────────────────
+// Color Palette
 namespace Color {
     constexpr SDL_Color Cyan        = {0, 255, 228, 255};
     constexpr SDL_Color White       = {255, 255, 255, 255};
@@ -30,7 +29,7 @@ namespace Color {
     constexpr SDL_Color Transparent = {0, 0, 0, 0};
 }
 
-// ─── Windows 98 Palette ─────────────────────────────────────────────────────
+// Windows 98 Palette
 namespace W98 {
     constexpr SDL_Color Silver      = {192, 192, 192, 255};
     constexpr SDL_Color Light       = {223, 223, 223, 255};
@@ -44,7 +43,7 @@ namespace W98 {
     constexpr int       TitleH      = 22;
 }
 
-// ─── Text Cache ─────────────────────────────────────────────────────────────
+// Text Cache
 // Caches rendered text as white SDL_Textures.  Color is applied per-draw via
 // SDL_SetTextureColorMod / AlphaMod, so the same cached texture can be reused
 // across multiple colors without re-rasterizing.
@@ -86,11 +85,11 @@ private:
     static constexpr size_t MAX_ENTRIES = 512;
 };
 
-// ─── Input Glyphs ───────────────────────────────────────────────────────────
+// Input Glyphs
 enum class Action { Confirm, Back, Left, Right, Navigate, Pause, Tab, Bomb };
 
 // Returns a short label for the action based on the current input device.
-// Examples: gamepad → "A",  keyboard → "Enter"
+// Examples: gamepad -> "A",  keyboard -> "Enter"
 const char* glyphLabel(Action action, bool gamepad);
 
 // Builds a full hint bar string like "[A] Select    [D-Pad] Navigate    [B] Back"
@@ -98,7 +97,7 @@ const char* glyphLabel(Action action, bool gamepad);
 struct HintPair { Action action; const char* desc; };
 std::string buildHintBar(const HintPair* pairs, int count, bool gamepad);
 
-// ─── Context ────────────────────────────────────────────────────────────────
+// Context
 // Holds per-frame UI state.  One instance lives inside Game.
 struct Context {
     SDL_Renderer* renderer  = nullptr;
@@ -140,7 +139,7 @@ struct Context {
     void endFrame();
     void shutdown();
 
-    // ── Drawing Helpers ─────────────────────────────────────────────────────
+    // Drawing Helpers
 
     // Cached text rendering (fast)
     void drawText(const char* text, int x, int y, int size, SDL_Color color);
@@ -164,7 +163,7 @@ struct Context {
     void drawSeparator(int cx, int y, int halfWidth,
                        SDL_Color color = {0, 180, 160, 60});
 
-    // ── Interactive Elements ────────────────────────────────────────────────
+    // Interactive Elements
 
     // Menu item with automatic hit-test, hover animation, selection indicator.
     // Returns true if the item was activated (click or confirmInput).
@@ -182,7 +181,7 @@ struct Context {
     // Hint bar at bottom of screen with automatic glyphs
     void drawHintBar(const HintPair* pairs, int count, int y = SCREEN_H - 36);
 
-    // ── Win98-style drawing ─────────────────────────────────────────────────
+    // Win98-style drawing
 
     // Teal desktop fill
     void drawDesktop();
@@ -203,7 +202,7 @@ struct Context {
     // Silver status bar strip at the given y-coord
     void drawWin98StatusBar(int y, const char* text = nullptr);
 
-    // ── Touch helpers ───────────────────────────────────────────────────────
+    // Touch helpers
     bool pointInRect(int px, int py, int rx, int ry, int rw, int rh) const;
 };
 

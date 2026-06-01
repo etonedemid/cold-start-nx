@@ -1,19 +1,18 @@
-// ─── pickup.cpp ─── Upgrade crate & pickup implementation ───────────────────
 #include "pickup.h"
 #include <cstdlib>
 #include <cmath>
 #include <algorithm>
 
-// ── Upgrade info table ──
+// Upgrade info table
 static const UpgradeInfo s_upgradeTable[] = {
     // name              description                              color                 cursed  quality
     { "Speed Up",        "+10% movement speed",                  {100, 200, 255, 255}, false,  UpgradeQuality::Common   },  // SpeedUp
     { "Damage Up",       "+50% damage, stronger axe hits",       {255, 100, 100, 255}, false,  UpgradeQuality::Uncommon },  // DamageUp
     { "Fire Rate Up",    "+15% fire rate, faster axe reset",     {255, 200, 50,  255}, false,  UpgradeQuality::Common   },  // FireRateUp
     { "Ammo Up",         "+5 max ammo",                          {200, 200, 200, 255}, false,  UpgradeQuality::Common   },  // AmmoUp
-    { "Health Up",       "+1 max HP, full heal",                 {255, 80,  80,  255}, false,  UpgradeQuality::Common   },  // HealthUp
+    { "Health Up",       "+10 max HP, full heal",                {255, 80,  80,  255}, false,  UpgradeQuality::Common   },  // HealthUp
     { "Quick Reload",    "30% faster reload",                    {80,  200, 80,  255}, false,  UpgradeQuality::Common   },  // ReloadUp
-    { "Blindness",       "5s invulnerability",                   {100, 150, 255, 255}, false,  UpgradeQuality::Uncommon },  // Blindness
+    { "Blindness",       "vision stream malfunction",                   {100, 150, 255, 255}, false,  UpgradeQuality::Uncommon },  // Blindness
     { "Bomb",            "+3 bombs",                             {255, 180, 50,  255}, false,  UpgradeQuality::Common   },  // BombPickup
     { "Magnet",          "Bullets home slightly",                {200, 100, 255, 255}, false,  UpgradeQuality::Rare     },  // Magnet
     { "Ricochet",        "Bullets bounce off walls",             {150, 255, 150, 255}, false,  UpgradeQuality::Rare     },  // Ricochet
@@ -21,7 +20,7 @@ static const UpgradeInfo s_upgradeTable[] = {
     { "Overclock",       "+20% fire rate, faster axe reset",    {100, 255, 255, 255}, false,  UpgradeQuality::Uncommon },  // Overclock
     { "Heavy Rounds",    "+65% damage, heavier axe hits",        {210, 180, 140, 255}, false,  UpgradeQuality::Rare     },  // HeavyRounds
     { "Bomb Core",       "+1 bomb, bombs charge faster",         {255, 140, 60, 255},  false,  UpgradeQuality::Rare     },  // BombCore
-    { "Juggernaut",      "+2 max HP, slower, wider axe",         {120, 220, 140, 255}, false,  UpgradeQuality::Rare     },  // Juggernaut
+    { "Juggernaut",      "+20 max HP, slower, wider axe",        {120, 220, 140, 255}, false,  UpgradeQuality::Rare     },  // Juggernaut
     { "Stun Rounds",     "Hits briefly stun, axe pulse stuns",   {140, 180, 255, 255}, false,  UpgradeQuality::Uncommon },  // StunRounds
     { "Scavenger",       "Kills refund 1 ammo",                  {255, 240, 120, 255}, false,  UpgradeQuality::Uncommon },  // Scavenger
     { "Explosive Tips",  "Bullets pop in a small blast",         {255, 170, 80, 255},  false,  UpgradeQuality::Rare     },  // ExplosiveTips
@@ -31,13 +30,13 @@ static const UpgradeInfo s_upgradeTable[] = {
     { "Bloodlust",       "Melee kills empower next swing",       {255, 70,  90,  255}, false,  UpgradeQuality::Rare     },  // Bloodlust
     { "Shock Edge",      "Melee hit emits a stun pulse",         {100, 255, 255, 255}, false,  UpgradeQuality::Rare     },  // ShockEdge
     { "Auto Reloader",   "Reload triggers automatically",{100, 220, 180, 255}, false, UpgradeQuality::Uncommon },  // AutoReloader
-    { "Vampire",         "Killing an enemy restores 1 HP",       {220, 50,  50,  255}, false,  UpgradeQuality::Rare     },  // Vampire
-    { "Last Stand",      "At 1 HP: +100% dmg and +30% speed",   {255, 80, 255, 255},  false,  UpgradeQuality::Epic     },  // LastStand
+    { "Vampire",         "Killing an enemy restores 10 HP",      {220, 50,  50,  255}, false,  UpgradeQuality::Rare     },  // Vampire
+    { "Last Stand",      "Below 10 HP: +100% dmg, +30% speed", {255, 80, 255, 255},  false,  UpgradeQuality::Epic     },  // LastStand
     { "Quick Parry",     "-1s parry cooldown",                   {80,  200, 255, 255}, false,  UpgradeQuality::Uncommon },  // QuickParry
     { "Parry Surge",     "Parry deals 2x damage, harder knockback", {50, 255, 180, 255}, false, UpgradeQuality::Rare    },  // ParrySurge
     { "Reactive Parry",  "Parry window lasts twice as long",     {120, 255, 220, 255}, false,  UpgradeQuality::Rare     },  // ReactiveParry
     { "Slow Down",       "-15% movement speed",                  {150, 50,  50,  255}, true,   UpgradeQuality::Cursed   },  // SlowDown
-    { "Glass Cannon",    "+50% damage, -2 HP",                   {255, 50,  255, 255}, true,   UpgradeQuality::Cursed   },  // GlassCannon
+    { "Glass Cannon",    "+50% damage, -20 HP",                  {255, 50,  255, 255}, true,   UpgradeQuality::Cursed   },  // GlassCannon
 };
 
 const UpgradeInfo& getUpgradeInfo(UpgradeType type) {
@@ -46,7 +45,7 @@ const UpgradeInfo& getUpgradeInfo(UpgradeType type) {
     return s_upgradeTable[idx];
 }
 
-// ── Crate ──
+// Crate
 void PickupCrate::takeDamage(float dmg) {
     hp -= dmg;
     if (hp <= 0 && alive) {
@@ -55,7 +54,7 @@ void PickupCrate::takeDamage(float dmg) {
     }
 }
 
-// ── Player upgrades ──
+// Player upgrades
 void PlayerUpgrades::apply(UpgradeType type) {
     switch (type) {
     case UpgradeType::SpeedUp:      speedBonus += 52.0f; break;
@@ -96,7 +95,7 @@ void PlayerUpgrades::apply(UpgradeType type) {
     }
 }
 
-// ── Random upgrade roll ──
+// Random upgrade roll
 UpgradeType rollRandomUpgrade() {
     // Step 1: roll a quality tier
     // Common=50%, Uncommon=30%, Rare=15%, Epic=4%, Cursed=1%
@@ -128,7 +127,7 @@ UpgradeType rollRandomUpgrade(const PlayerUpgrades& upg, int wave) {
     return rollRandomUpgrade();
 }
 
-// ── Procedural pixel-art crate drawing ──
+// Procedural pixel-art crate drawing
 void drawCratePixelArt(SDL_Renderer* r, int cx, int cy, int size, float bob, bool glow) {
     int half = size / 2;
     int bobY = (int)(sinf(bob * 2.5f) * 3.0f);
@@ -191,7 +190,7 @@ void drawCratePixelArt(SDL_Renderer* r, int cx, int cy, int size, float bob, boo
     }
 }
 
-// ── Procedural pixel-art pickup drawing ──
+// Procedural pixel-art pickup drawing
 void drawPickupPixelArt(SDL_Renderer* r, int cx, int cy, int size, UpgradeType type, float bob, float flash) {
     const UpgradeInfo& info = getUpgradeInfo(type);
     int half = size / 2;

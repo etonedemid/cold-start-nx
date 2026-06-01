@@ -1,11 +1,10 @@
-// ─── camera.cpp ─── Camera follow + screenshake ─────────────────────────────
 #include "camera.h"
 #include <cstdlib>
 
 static float randf() { return (float)rand() / RAND_MAX * 2.0f - 1.0f; }
 
-void Camera::update(Vec2 target, Vec2 aimDir, float dt) {
-    Vec2 desired = target + aimDir * CAM_OFFSET;
+void Camera::update(Vec2 target, Vec2 aimDir, float dt, float lookScale) {
+    Vec2 desired = target + aimDir * (CAM_OFFSET * lookScale);
     desired.x -= viewW / 2.0f;
     desired.y -= viewH / 2.0f;
 

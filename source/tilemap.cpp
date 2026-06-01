@@ -1,4 +1,3 @@
-// ─── tilemap.cpp ─── Procedural arena generation ────────────────────────────
 #include "tilemap.h"
 #include "vec2.h"
 #include <cstdlib>
@@ -174,7 +173,7 @@ void TileMap::generate(int mapWidth, int mapHeight) {
         }
     }
 
-    // ── Buildings (multi-room conjoined structures) on large maps ──
+    // Buildings (multi-room conjoined structures) on large maps
     if (mapArea > 2000) {
         int maxBuildings = 1 + mapArea / 2000;
         for (int bi = 0; bi < maxBuildings; bi++) {
@@ -356,6 +355,9 @@ void TileMap::generate(int mapWidth, int mapHeight) {
 
 bool TileMap::isSolid(int tx, int ty) const {
     if (!isInBounds(tx, ty)) return true;
+    int idx = ty * width + tx;
+    if (!noCollide.empty() && (size_t)idx < noCollide.size() && noCollide[idx])
+        return false;
     uint8_t t = get(tx, ty);
     return t == TILE_WALL || t == TILE_GLASS || t == TILE_DESK || t == TILE_BOX;
 }

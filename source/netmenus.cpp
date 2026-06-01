@@ -1,9 +1,8 @@
-// ─── netmenus.cpp ─── Multiplayer menu rendering (Win98 Messenger aesthetic)
 #include "game.h"
 #include "game_internal.h"
 #include <algorithm>
 
-// ─── Shared toolbar/icon helpers (used across all four screens) ───────────────
+// Shared toolbar/icon helpers (used across all four screens)
 
 static void drawServerIcon(SDL_Renderer* r, int ix, int iy, SDL_Color c) {
     SDL_SetRenderDrawColor(r, c.r, c.g, c.b, 255);
@@ -20,12 +19,10 @@ static void drawPersonIcon(SDL_Renderer* r, int ix, int iy, SDL_Color c) {
     SDL_Rect body={ix+1,iy+7,12, 7}; SDL_RenderFillRect(r,&body);
 }
 
-// ─── Toolbar drawing macro ────────────────────────────────────────────────────
+// Toolbar drawing macro
 // Each screen defines its own tbBtn/tbSep lambdas capturing renderer_/ui_/etc.
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Multiplayer Menu
-// ═════════════════════════════════════════════════════════════════════════════
+// Multiplayer Menu
 
 void Game::renderMultiplayerMenu() {
     ui_.drawDesktop();
@@ -34,7 +31,7 @@ void Game::renderMultiplayerMenu() {
     const int TH = UI::W98::TitleH;
     ui_.drawWin98Window(WX, WY, WW, WH, "Multiplayer");
 
-    // ── Toolbar band ──────────────────────────────────────────────────────────
+    // Toolbar band
     const int TB_Y=WY+TH, TB_H=44, TBY=TB_Y+4;
     const int TBW=76, TBH=36;
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
@@ -94,7 +91,7 @@ void Game::renderMultiplayerMenu() {
     if (tbBtn(2,"Back",      tbX, TBW-10, icBack, {110,70,0,255}))
         { multiMenuSelection_=2; menuSelection_=2; confirmInput_=true; }
 
-    // ── Content: Saved Servers list ───────────────────────────────────────────
+    // Content: Saved Servers list
     const int STRIP_H=22, HDR_H=20;
     const int CONT_Y=TB_Y+TB_H;
     const int LIST_H=WH-TH-TB_H-HDR_H-STRIP_H-6;  // -6 keeps bevel inside window border
@@ -144,7 +141,7 @@ void Game::renderMultiplayerMenu() {
         }
     }
 
-    // ── Bottom strip (Discord notice) ─────────────────────────────────────────
+    // Bottom strip (Discord notice)
     const int STRIP_Y=WY+WH-STRIP_H-2;
     SDL_SetRenderDrawColor(renderer_, 212,208,200,255);
     SDL_Rect strip={WX,STRIP_Y,WW,STRIP_H}; SDL_RenderFillRect(renderer_,&strip);
@@ -160,7 +157,7 @@ void Game::renderMultiplayerMenu() {
             SDL_OpenURL("https://discord.gg/dv28MgtaNn");
     }
 
-    // ── Status bar ────────────────────────────────────────────────────────────
+    // Status bar
     char uname[160]; snprintf(uname,sizeof(uname),"%s  (Online)",config_.username.c_str());
     // Green online dot
     SDL_SetRenderDrawColor(renderer_, 0,180,0,255);
@@ -168,9 +165,7 @@ void Game::renderMultiplayerMenu() {
     ui_.drawWin98StatusBar(SCREEN_H-26, uname);
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Host Setup
-// ═════════════════════════════════════════════════════════════════════════════
+// Host Setup
 
 void Game::renderHostSetup() {
     ui_.drawDesktop();
@@ -179,7 +174,7 @@ void Game::renderHostSetup() {
     const int TH=UI::W98::TitleH;
     ui_.drawWin98Window(WX, WY, WW, WH, "Host a Session");
 
-    // ── Toolbar band ──────────────────────────────────────────────────────────
+    // Toolbar band
     const int TB_Y=WY+TH, TB_H=44, TBY=TB_Y+4;
     const int TBH=36;
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
@@ -224,13 +219,13 @@ void Game::renderHostSetup() {
     if (tbBtn(13,"Back",tbX,76,{110,70,0,255}))
         { hostSetupSelection_=13; menuSelection_=13; confirmInput_=true; }
 
-    // ── Content area ──────────────────────────────────────────────────────────
+    // Content area
     const int CONT_Y=TB_Y+TB_H;
     const int CONT_H=WH-TH-TB_H-2;
     const int leftW=264, leftX=WX+10;
     const int rightX=WX+leftW+20, rightW=WW-leftW-34;
 
-    // ── Left: Session card ────────────────────────────────────────────────────
+    // Left: Session card
     // Navy header bar
     SDL_SetRenderDrawColor(renderer_, 0,0,128,255);
     SDL_Rect cHdr={leftX,CONT_Y+8,leftW-4,18}; SDL_RenderFillRect(renderer_,&cHdr);
@@ -289,7 +284,7 @@ void Game::renderHostSetup() {
         drawText(obj,leftX+5,sY,13,UI::W98::Black);
     }
 
-    // ── Right: Options panel ──────────────────────────────────────────────────
+    // Right: Options panel
     // Navy header bar
     SDL_SetRenderDrawColor(renderer_, 0,0,128,255);
     SDL_Rect oHdr={rightX,CONT_Y+8,rightW,18}; SDL_RenderFillRect(renderer_,&oHdr);
@@ -425,9 +420,7 @@ void Game::renderHostSetup() {
     ui_.drawWin98StatusBar(SCREEN_H-26,"Navigate with arrows/stick  |  Enter: Edit/Apply  |  Esc: Cancel");
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Join Menu
-// ═════════════════════════════════════════════════════════════════════════════
+// Join Menu
 
 void Game::renderJoinMenu() {
     ui_.drawDesktop();
@@ -441,7 +434,7 @@ void Game::renderJoinMenu() {
     const int winX=(SCREEN_W-winW)/2, winY=(SCREEN_H-winH)/2;
     ui_.drawWin98Window(winX, winY, winW, winH, "Join a Game");
 
-    // ── Toolbar ──────────────────────────────────────────────────────────────
+    // Toolbar
     const int TB_Y=winY+TH, TBY=TB_Y+4;
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
     SDL_SetRenderDrawColor(renderer_, 212,208,200,255);
@@ -484,7 +477,7 @@ void Game::renderJoinMenu() {
     tbX+=TBW_BTN+10; tbSep(tbX); tbX+=12;
     if (tbBtn(6,"Back",tbX,{110,70,0,255}))    { joinMenuSelection_=6; menuSelection_=6; confirmInput_=true; }
 
-    // ── Fields ────────────────────────────────────────────────────────────────
+    // Fields
     const int fieldW=winW-padX*2, fieldX=winX+padX;
     auto& net=NetworkManager::instance();
     int statusY=winY+TH+TB_H+10;
@@ -541,9 +534,7 @@ void Game::renderJoinMenu() {
     }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Lobby
-// ═════════════════════════════════════════════════════════════════════════════
+// Lobby
 
 void Game::renderLobby() {
     ui_.drawDesktop();
@@ -556,7 +547,7 @@ void Game::renderLobby() {
     SDL_Texture* icPlayerUser = Assets::instance().loadRelTex("sprites/ui/chat_user.png");
     SDL_Texture* icPlayerHost = Assets::instance().loadRelTex("sprites/ui/chat_host.png");
 
-    // ── Connecting overlay ────────────────────────────────────────────────────
+    // Connecting overlay
     if (!net.isHost()&&net.state()==NetState::Connecting) {
         const int cW=400, cH=160;
         const int cX=(SCREEN_W-cW)/2, cY=(SCREEN_H-cH)/2;
@@ -586,7 +577,7 @@ void Game::renderLobby() {
     char winTitle[128]; snprintf(winTitle,sizeof(winTitle),"Lobby \xe2\x80\x94 %s",hostName.c_str());
     ui_.drawWin98Window(WX,WY,WW,WH,winTitle);
 
-    // ── Toolbar band ──────────────────────────────────────────────────────────
+    // Toolbar band
     const int TB_Y=WY+TH, TB_H=44, TBY=TB_Y+4;
     const int TBH_B=36, TBW_B=90;
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
@@ -640,7 +631,7 @@ void Game::renderLobby() {
     tbX+=TBW_B+10; tbSep(tbX); tbX+=12;
     if (tbBtn(51,"Leave",tbX,TBW_B-10,{140,0,0,255})) backInput_=true;
 
-    // ── Address bar (like "To: channel/session info") ─────────────────────────
+    // Address bar (like "To: channel/session info")
     const int ADDR_Y=TB_Y+TB_H, ADDR_H=24;
     SDL_SetRenderDrawColor(renderer_, 212,208,200,255);
     SDL_Rect addrBg={WX,ADDR_Y,WW,ADDR_H}; SDL_RenderFillRect(renderer_,&addrBg);
@@ -663,11 +654,11 @@ void Game::renderLobby() {
     SDL_SetRenderDrawColor(renderer_, 128,128,128,255);
     SDL_RenderDrawLine(renderer_, WX,ADDR_Y+ADDR_H-1,WX+WW-1,ADDR_Y+ADDR_H-1);
 
-    // ── Content area ──────────────────────────────────────────────────────────
+    // Content area
     const int CONT_Y=ADDR_Y+ADDR_H, CONT_H=WH-TH-TB_H-ADDR_H-40;
     const int halfW=WW/2-16, settX=WX+12, playX=WX+WW/2+4;
 
-    // ── Settings panel (left) ─────────────────────────────────────────────────
+    // Settings panel (left)
     // Navy header
     SDL_SetRenderDrawColor(renderer_, 0,0,128,255);
     SDL_Rect sHdr={settX,CONT_Y+4,halfW,18}; SDL_RenderFillRect(renderer_,&sHdr);
@@ -846,7 +837,7 @@ void Game::renderLobby() {
         }
     }
 
-    // ── Players panel (right) - ICQ-style friends list ────────────────────────
+    // Players panel (right) - ICQ-style friends list
     bool isHostInKickMode=canManage&&(lobbyKickCursor_>=0);
 
     // Navy header
@@ -936,7 +927,7 @@ void Game::renderLobby() {
                 }
                 if (subLabel.empty()) subLabel="local-"+std::to_string(s+1);
             } else { subLabel="local-"+std::to_string(s+1); }
-            drawText(("  → "+subLabel).c_str(), playX+36, plY, 11, UI::W98::Shadow);
+            drawText(("  -> "+subLabel).c_str(), playX+36, plY, 11, UI::W98::Shadow);
             plY+=16;
         }
     }
@@ -945,7 +936,7 @@ void Game::renderLobby() {
     SDL_SetRenderDrawColor(renderer_, 128,128,128,255);
     SDL_RenderDrawLine(renderer_, playX+4, CONT_Y+24+panelH-2, playX+halfW-4, CONT_Y+24+panelH-2);
 
-    // ── Status bar only (toolbar buttons replace bottom action buttons) ──────────
+    // Status bar only (toolbar buttons replace bottom action buttons)
     if (canManage) {
         if (!allReady&&players.size()>1)
             ui_.drawWin98StatusBar(SCREEN_H-26,"Waiting for all players to ready up...");
@@ -956,7 +947,7 @@ void Game::renderLobby() {
             lobbyReady_?"You are ready. Click Unready in the toolbar to cancel.":"Click Ready Up in the toolbar when happy with the setup.");
     }
 
-    // ── Floating chat window ──────────────────────────────────────────────────
+    // Floating chat window
     {
         const int chatW=400, chatH=280;
         if (!chatWinInit_) { chatWinInit_=true; chatWinX_=860; chatWinY_=430; }
@@ -1156,7 +1147,7 @@ void Game::renderMultiplayerPause() {
     const char* winTitle = spectatorMode_ ? "Spectating" : "Paused";
     ui_.drawWin98Window(winX, winY, winW, winH, winTitle);
 
-    // ── Team-pick sub-state ────────────────────────────────────────────
+    // Team-pick sub-state
     if (pauseMenuSub_ == 1) {
         int tc = currentRules_.teamCount; if (tc < 2) tc = 2;
         int boxW = (winW - padX * 2 - (tc - 1) * btnGap) / tc;
@@ -1172,7 +1163,7 @@ void Game::renderMultiplayerPause() {
         return;
     }
 
-    // ── Normal menu items ──────────────────────────────────────────────
+    // Normal menu items
     int bx = winX + padX;
     int by = winY + UI::W98::TitleH + 14;
     for (int i = 0; i < itemCount; i++) {
@@ -1563,7 +1554,7 @@ void Game::renderRemotePlayers() {
             if (isGhost) SDL_SetTextureAlphaMod(bodyTex, 255);
         }
 
-        // ── Render this client's sub-players (splitscreen partners) ──
+        // Render this client's sub-players (splitscreen partners)
         static const SDL_Color subTints[3] = {
             {255, 220, 140, 255}, {140, 255, 180, 255}, {255, 160, 200, 255}
         };
@@ -1590,9 +1581,7 @@ void Game::renderRemotePlayers() {
     }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Team Selection Screen
-// ═════════════════════════════════════════════════════════════════════════════
+// Team Selection Screen
 
 void Game::renderTeamSelect() {
     SDL_SetRenderDrawColor(renderer_, 6, 8, 16, 255);
@@ -1728,9 +1717,7 @@ void Game::renderTeamSelect() {
     drawTextCentered(progBuf, SCREEN_H - 50, 13, {80, 80, 90, 255});
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Mod Menu
-// ═════════════════════════════════════════════════════════════════════════════
+// Mod Menu
 
 void Game::renderModMenu() {
     ui_.drawDesktop();
@@ -1757,7 +1744,7 @@ void Game::renderModMenu() {
     int cx = winX + pad;
     int cy = winY + UI::W98::TitleH + 10;
 
-    // ── Tab row ──
+    // Tab row
     const int tabW = 170, tabH = 26, tabGap = 2;
     for (int t = 0; t < 4; t++) {
         bool active = (t == modMenuTab_);
@@ -1769,7 +1756,7 @@ void Game::renderModMenu() {
     }
     cy += tabH + 6;
 
-    // ── Content area (sunken list box) ──
+    // Content area (sunken list box)
     const int contentH = winH - UI::W98::TitleH - 10 - tabH - 6 - 50;
     ui_.drawWin98Bevel(cx, cy, winW - 2*pad, contentH, false);
 
@@ -1787,7 +1774,7 @@ void Game::renderModMenu() {
     SDL_RenderSetClipRect(renderer_, &clip);
 
     if (modMenuTab_ == 0) {
-        // ════ Mods tab ════
+        // Mods tab
         const auto& mods = mm.mods();
         if (mods.empty()) {
             SDL_RenderSetClipRect(renderer_, nullptr);
@@ -1849,7 +1836,7 @@ void Game::renderModMenu() {
             }
         }
     } else {
-        // ════ Content tabs (Characters / Maps / Playlists) ════
+        // Content tabs (Characters / Maps / Playlists)
         std::vector<std::string> paths;
         const char* emptyMsg  = "No content";
         const char* emptyHint = "Enable mods with content in the Mods tab";
@@ -1908,7 +1895,7 @@ void Game::renderModMenu() {
 
     SDL_RenderSetClipRect(renderer_, nullptr);
 
-    // ── Bottom buttons ──
+    // Bottom buttons
     const int btnY = winY + winH - 42;
     auto& modsList = mm.mods();
 

@@ -1,4 +1,3 @@
-// ─── gamemode.cpp ─── Gamemode system implementation ────────────────────────
 #include "gamemode.h"
 
 GameModeRules createArenaRules() {

@@ -1,46 +1,44 @@
 #pragma once
-// ─── mod.h ─── Modding system (SRB2-style extensibility) ────────────────────
 // Mod folder layout:
-//   mods/
-//     mymod/
-//       mod.cfg              ← mod manifest (INI format)
-//       scripts/             ← game scripts (future Lua/custom)
-//       characters/          ← .cschar files and sprite folders
-//       maps/                ← .csm map files
-//       packs/               ← .cspack campaign files
-//       sprites/             ← override or new sprites
-//       sounds/              ← override or new sounds
-//       gamemodes/           ← custom gamemode definitions
-//       items/               ← custom item/upgrade definitions
+// mods/
+//   mymod/
+//     mod.cfg              ← mod manifest (INI format)
+//     scripts/             ← game scripts (future Lua/custom)
+//     characters/          ← .cschar files and sprite folders
+//     maps/                ← .csm map files
+//     packs/               ← .cspack campaign files
+//     sprites/             ← override or new sprites
+//     sounds/              ← override or new sounds
+//     gamemodes/           ← custom gamemode definitions
+//     items/               ← custom item/upgrade definitions
 //
 // mod.cfg format:
-//   [mod]
-//   id=mymod                          ← unique identifier
-//   name=My Cool Mod
-//   author=SomePlayer
-//   version=1.0
-//   description=Adds cool stuff
-//   game_version=1                    ← minimum game version
+// [mod]
+// id=mymod                          ← unique identifier
+// name=My Cool Mod
+// author=SomePlayer
+// version=1.0
+// description=Adds cool stuff
+// game_version=1                    ← minimum game version
 //
-//   [content]
-//   characters=true                   ← scan characters/ subfolder
-//   maps=true                         ← scan maps/ subfolder
-//   packs=true                        ← scan packs/ subfolder
-//   sprites=true                      ← override sprites
-//   sounds=true                       ← override sounds
-//   gamemodes=true                    ← register custom gamemodes
-//   items=true                        ← register custom items
+// [content]
+// characters=true                   ← scan characters/ subfolder
+// maps=true                         ← scan maps/ subfolder
+// packs=true                        ← scan packs/ subfolder
+// sprites=true                      ← override sprites
+// sounds=true                       ← override sounds
+// gamemodes=true                    ← register custom gamemodes
+// items=true                        ← register custom items
 //
-//   [overrides]
-//   ; override base game values
-//   player_speed=600
-//   enemy_hp=5
-//   gravity=0
+// [overrides]
+// ; override base game values
+// player_speed=600
+// enemy_hp=5
+// gravity=0
 //
-//   [dependencies]
-//   ; required mods
-//   dep1=othermod
-// ─────────────────────────────────────────────────────────────────────────────
+// [dependencies]
+// ; required mods
+// dep1=othermod
 
 #include <string>
 #include <vector>
@@ -51,7 +49,7 @@
 #include "mappack.h"
 #include "gamemode.h"
 
-// ── Content flags ──
+// Content flags
 struct ModContent {
     bool characters  = false;
     bool maps        = false;
@@ -62,7 +60,7 @@ struct ModContent {
     bool items       = false;
 };
 
-// ── Value overrides ──
+// Value overrides
 struct ModOverrides {
     std::unordered_map<std::string, std::string> values;
 
@@ -75,7 +73,7 @@ struct ModOverrides {
     int   getInt(const std::string& key, int def = 0) const;
 };
 
-// ── Item definition (mod-added upgrades) ──
+// Item definition (mod-added upgrades)
 struct ModItemDef {
     std::string id;            // unique item ID e.g. "mymod_laser"
     std::string name;
@@ -87,7 +85,7 @@ struct ModItemDef {
     std::unordered_map<std::string, std::string> params;
 };
 
-// ── Single mod instance ──
+// Single mod instance
 struct Mod {
     std::string id;
     std::string name;
@@ -108,7 +106,7 @@ struct Mod {
     std::vector<ModItemDef>  items;
     std::vector<GameModeEntry> gamemodes;
 
-    // Sprite/sound override mappings (original → mod path)
+    // Sprite/sound override mappings (original -> mod path)
     std::unordered_map<std::string, std::string> spriteOverrides;
     std::unordered_map<std::string, std::string> soundOverrides;
 
@@ -118,7 +116,7 @@ struct Mod {
     bool loadFromFolder(const std::string& path);
 };
 
-// ── Mod Manager - scans, loads, manages all mods ──
+// Mod Manager - scans, loads, manages all mods
 class ModManager {
 public:
     static ModManager& instance();

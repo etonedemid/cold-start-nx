@@ -1,5 +1,4 @@
 #pragma once
-// ─── pickup.h ─── Upgrade crate & pickup system (TBOI-style) ────────────────
 #include "constants.h"
 #include "vec2.h"
 #include <SDL2/SDL.h>
@@ -7,7 +6,7 @@
 #include <string>
 #include <vector>
 
-// ── Upgrade quality / rarity tier ──
+// Upgrade quality / rarity tier
 enum class UpgradeQuality : uint8_t {
     Common,
     Uncommon,
@@ -16,7 +15,7 @@ enum class UpgradeQuality : uint8_t {
     Cursed,
 };
 
-// ── Upgrade categories ──
+// Upgrade categories
 enum class UpgradeType : uint8_t {
     // Stat upgrades
     SpeedUp,        // +movement speed
@@ -68,7 +67,7 @@ struct UpgradeInfo {
 // Global upgrade registry
 const UpgradeInfo& getUpgradeInfo(UpgradeType type);
 
-// ── Crate entity ──
+// Crate entity
 struct PickupCrate {
     Vec2  pos;
     bool  alive        = true;
@@ -83,7 +82,7 @@ struct PickupCrate {
     void  takeDamage(float dmg);
 };
 
-// ── Floating pickup (after crate breaks) ──
+// Floating pickup (after crate breaks)
 struct Pickup {
     Vec2  pos;
     bool  alive        = true;
@@ -95,7 +94,7 @@ struct Pickup {
     UpgradeType type   = UpgradeType::SpeedUp;
 };
 
-// ── Active player upgrades tracking ──
+// Active player upgrades tracking
 struct PlayerUpgrades {
     float speedBonus      = 0;     // added to base speed
     float damageMulti     = 1.0f;  // bullet damage multiplier
@@ -132,13 +131,13 @@ struct PlayerUpgrades {
     void apply(UpgradeType type);
 };
 
-// ── Crate sprite drawing (procedural pixel art) ──
+// Crate sprite drawing (procedural pixel art)
 // These draw crate/pickup sprites directly via SDL primitives
 // so no external PNG is needed - but mods can override with textures.
 void drawCratePixelArt(SDL_Renderer* r, int cx, int cy, int size, float bob, bool glow);
 void drawPickupPixelArt(SDL_Renderer* r, int cx, int cy, int size, UpgradeType type, float bob, float flash);
 
-// ── Crate spawn logic ──
+// Crate spawn logic
 UpgradeType rollRandomUpgrade();
 // Wave-aware version: for waves ≤ 25, filters out boolean upgrades already owned so
 // early-game offers feel varied. After wave 25, all duplicates are allowed.

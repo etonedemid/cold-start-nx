@@ -1,5 +1,4 @@
 #pragma once
-// ─── editor.h ─── Map Editor for COLD START ─────────────────────────────────
 #include "tilemap.h"
 #include "mapformat.h"
 #include "camera.h"
@@ -11,15 +10,18 @@
 #include <vector>
 #include <deque>
 
-// ── Undo/redo snapshot (full map state) ──
+// Undo/redo snapshot (full map state)
 struct UndoState {
     std::vector<uint8_t>  tiles;
     std::vector<uint8_t>  ceiling;
+    std::vector<uint8_t>  tileRotations;
+    std::vector<uint8_t>  tileNoCollide;
     std::vector<MapTrigger>  triggers;
     std::vector<EnemySpawn>  enemySpawns;
+    std::vector<PropSpawn>   props;
 };
 
-// ── Editor tile palette entry (loaded from tiles/ subfolders) ──
+// Editor tile palette entry (loaded from tiles/ subfolders)
 struct EditorTile {
     std::string name;         // display name
     std::string path;         // file path to PNG
@@ -28,7 +30,7 @@ struct EditorTile {
     std::string category;     // "ground", "walls", "ceiling", etc.
 };
 
-// ── Editor tool mode ──
+// Editor tool mode
 enum class EditorTool : uint8_t {
     Tile     = 0,  // paint tiles
     Trigger  = 1,  // place triggers (start, end, effect)
@@ -38,7 +40,7 @@ enum class EditorTool : uint8_t {
     Rect     = 5,  // fill / outline rectangle
 };
 
-// ── Entity spawn subtypes (used in EnemySpawn::enemyType) ──
+// Entity spawn subtypes (used in EnemySpawn::enemyType)
 static constexpr uint8_t ENTITY_MELEE        = 0;
 static constexpr uint8_t ENTITY_SHOOTER      = 1;
 static constexpr uint8_t ENTITY_CRATE        = 2;
@@ -49,14 +51,14 @@ static constexpr uint8_t ENTITY_SNIPER       = 6;
 static constexpr uint8_t ENTITY_GUNNER       = 7;
 static constexpr uint8_t ENTITY_TYPE_COUNT   = 8;
 
-// ── Trigger placement ghost ──
+// Trigger placement ghost
 struct TriggerGhost {
     TriggerType type = TriggerType::LevelStart;
     GoalCondition condition = GoalCondition::DefeatAll;
     uint8_t param = 0;
 };
 
-// ── Palette filter tab ──
+// Palette filter tab
 enum class PaletteTab : uint8_t {
     All      = 0,
     Ground   = 1,
@@ -66,7 +68,7 @@ enum class PaletteTab : uint8_t {
     TAB_COUNT= 5,
 };
 
-// ── Editor config screen (shown before entering editor) ──
+// Editor config screen (shown before entering editor)
 struct EditorConfig {
     enum class Action : uint8_t { NewMap, LoadMap };
     Action action = Action::NewMap;
@@ -122,7 +124,7 @@ public:
 
     std::string savePath() const { return savePath_; }
 
-    // Mod-save handshake ── game.cpp queries this, confirms with performModSave()
+    // Mod-save handshake: game.cpp queries this, confirms with performModSave()
     bool wantsModSave() const   { return wantsModSave_; }
     void clearWantsModSave()    { wantsModSave_ = false; }
     std::string pendingMapName() const { return map_.name; }
@@ -207,18 +209,24 @@ private:
     bool undoPushedForStroke_ = false;
 
     // Brush
-    int  brushSize_   = 1;     // 1..9, tiles painted per side
-    bool rectFilled_  = true;  // Rect tool: filled vs outline
-    int  rectStartTX_ = -1;   // Rect start tile X
-    int  rectStartTY_ = -1;   // Rect start tile Y
+    int  brushSize_      = 1;     // 1..9, tiles painted per side
+    bool rectFilled_     = true;  // Rect tool: filled vs outline
+    int  rectStartTX_    = -1;    // Rect start tile X
+    int  rectStartTY_    = -1;    // Rect start tile Y
+    float trigDragStartX_ = 0.0f; // Trigger drag start (world coords, no snap)
+    float trigDragStartY_ = 0.0f;
+    bool  trigDragging_   = false;
+    bool randomRotation_ = false; // randomise tile rotation on brush/rect paint
+    bool noCollision_    = false; // place tiles without square tile collision
 
     // Input state
     bool mouseDown_  = false;
     bool rightDown_  = false;
     int  mouseX_     = 0;
     int  mouseY_     = 0;
-    bool showGrid_   = true;
-    bool showUI_     = true;
+    bool showGrid_      = true;
+    bool showUI_        = true;
+    bool showTopLayer_  = true;  // toggle top image layer visibility in editor
 
     // Gamepad virtual cursor
     float cursorX_ = 640.0f;     // virtual cursor X
@@ -256,6 +264,7 @@ private:
     void eraseTile(int tx, int ty);
     void eraseTriggerAt(float wx, float wy);
     void eraseEnemyAt(float wx, float wy);
+    void erasePropAt(float wx, float wy);
     void placeTrigger(float wx, float wy);
     void placeEnemy(float wx, float wy);
     int  triggerAt(float wx, float wy) const;

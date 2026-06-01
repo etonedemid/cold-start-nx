@@ -1,23 +1,21 @@
 #pragma once
-// ─── network.h ─── Multiplayer networking (ENet-based) ──────────────────────
 // Architecture:
-//   - Host/server: one player hosts, others join
-//   - Client: connects to host by IP:port
-//   - UDP via ENet for low-latency game state
-//   - Reliable channel for chat/file sync, unreliable for game state
+// - Host/server: one player hosts, others join
+// - Client: connects to host by IP:port
+// - UDP via ENet for low-latency game state
+// - Reliable channel for chat/file sync, unreliable for game state
 //
 // Packet types:
-//   - CONNECT / DISCONNECT / KICK
-//   - PLAYER_STATE (position, rotation, health, etc.)
-//   - BULLET_SPAWN / BULLET_HIT
-//   - ENEMY_STATE (host-authoritative)
-//   - BOMB_SPAWN / EXPLOSION
-//   - CRATE_SPAWN / PICKUP
-//   - CHAT_MESSAGE
-//   - FILE_SYNC_REQUEST / FILE_SYNC_DATA / FILE_SYNC_ACK
-//   - GAMEMODE_INFO / GAME_START / GAME_END
-//   - MAP_CHANGE / SCOREBOARD
-// ─────────────────────────────────────────────────────────────────────────────
+// - CONNECT / DISCONNECT / KICK
+// - PLAYER_STATE (position, rotation, health, etc.)
+// - BULLET_SPAWN / BULLET_HIT
+// - ENEMY_STATE (host-authoritative)
+// - BOMB_SPAWN / EXPLOSION
+// - CRATE_SPAWN / PICKUP
+// - CHAT_MESSAGE
+// - FILE_SYNC_REQUEST / FILE_SYNC_DATA / FILE_SYNC_ACK
+// - GAMEMODE_INFO / GAME_START / GAME_END
+// - MAP_CHANGE / SCOREBOARD
 
 #include "vec2.h"
 #include "gamemode.h"
@@ -32,7 +30,7 @@ typedef struct _ENetHost ENetHost;
 typedef struct _ENetPeer ENetPeer;
 typedef struct _ENetEvent ENetEvent;
 
-// ── Packet types ──
+// Packet types
 enum class NetPacketType : uint8_t {
     // Connection
     Connect         = 0x01,
@@ -87,26 +85,26 @@ enum class NetPacketType : uint8_t {
     AdminRespawn    = 0x56,  // host forces player respawn
     AdminTeamMove   = 0x57,  // host moves a player to a different team
     LivesUpdate     = 0x58,  // sync remaining lives for a player
-    HitRequest      = 0x59,  // client→host: "bullet X hit me for Y damage" (PvP validation)
-    PlayerHpSync    = 0x5A,  // host→all: authoritative HP update for a player
+    HitRequest      = 0x59,  // client->host: "bullet X hit me for Y damage" (PvP validation)
+    PlayerHpSync    = 0x5A,  // host->all: authoritative HP update for a player
     SubPlayerState  = 0x5B,  // local splitscreen sub-player positions (unreliable, frequent)
     LobbyHostTransfer = 0x5C, // lobby-host transfer request (host player -> server)
     LobbyHostChanged  = 0x5D, // server -> all: current lobby host id
     LobbyStartRequest = 0x5E, // lobby host -> server: request game start
-    MeleeHitRequest = 0x5F,  // client→host: attacker hit target with melee
+    MeleeHitRequest = 0x5F,  // client->host: attacker hit target with melee
     CharacterSync   = 0x60,  // reliable chunked sync of selected character bundle
-    SubPlayerDied   = 0x61,  // host→all: authoritative death of a local splitscreen sub-player
-    SubPlayerHpSync = 0x62,  // host→all: authoritative HP update of a local splitscreen sub-player
+    SubPlayerDied   = 0x61,  // host->all: authoritative death of a local splitscreen sub-player
+    SubPlayerHpSync = 0x62,  // host->all: authoritative HP update of a local splitscreen sub-player
 };
 
-// ── Network channels ──
+// Network channels
 enum NetChannel : uint8_t {
     NET_CHAN_RELIABLE   = 0,  // game events, file sync, chat
     NET_CHAN_UNRELIABLE = 1,  // game state updates (position etc.)
     NET_CHAN_COUNT      = 2,
 };
 
-// ── Sub-player info (splitscreen additional players on a single client) ──
+// Sub-player info (splitscreen additional players on a single client)
 struct SubPlayerInfo {
     Vec2  pos;
     float rotation = 0;
@@ -124,7 +122,7 @@ struct SubPlayerInfo {
     uint32_t lastUpdateTick = 0;
 };
 
-// ── Player info on network ──
+// Player info on network
 struct NetPlayer {
     uint8_t     id = 0;
     std::string username = "Player";
@@ -162,7 +160,7 @@ struct NetPlayer {
     std::vector<SubPlayerInfo> subPlayers;
 };
 
-// ── File transfer state ──
+// File transfer state
 struct FileTransfer {
     std::string filename;
     std::vector<uint8_t> data;
@@ -187,7 +185,7 @@ struct ModTransfer {
     uint32_t received = 0;
 };
 
-// ── Network session state ──
+// Network session state
 enum class NetState : uint8_t {
     Offline,        // not in any session
     Hosting,        // running as host
@@ -198,7 +196,7 @@ enum class NetState : uint8_t {
     Syncing,        // transferring files
 };
 
-// ── Lobby info ──
+// Lobby info
 struct LobbyInfo {
     std::string hostName;
     std::string mapName;
@@ -210,14 +208,14 @@ struct LobbyInfo {
     bool        inProgress = false;
 };
 
-// ── Chat message ──
+// Chat message
 struct ChatMsg {
     std::string sender;
     std::string text;
     float       timestamp = 0;
 };
 
-// ── Main network manager ──
+// Main network manager
 class NetworkManager {
 public:
     static NetworkManager& instance();
@@ -296,9 +294,9 @@ public:
     void sendPlayerRespawn(uint8_t playerId, Vec2 pos);
     void sendEnemyKilled(uint32_t enemyIdx, uint8_t killerId);
     // PvP host-authoritative hit validation
-    void sendHitRequest(uint32_t bulletNetId, int damage, uint8_t ownerId, uint8_t targetSlot = 0); // client→host
-    void sendMeleeHitRequest(uint8_t targetId, int damage, uint8_t targetSlot = 0);                  // client→host
-    void sendPlayerHpSync(uint8_t playerId, int hp, int maxHp, uint8_t killerId); // host→all
+    void sendHitRequest(uint32_t bulletNetId, int damage, uint8_t ownerId, uint8_t targetSlot = 0); // client->host
+    void sendMeleeHitRequest(uint8_t targetId, int damage, uint8_t targetSlot = 0);                  // client->host
+    void sendPlayerHpSync(uint8_t playerId, int hp, int maxHp, uint8_t killerId); // host->all
     void sendSubPlayerDied(uint8_t ownerId, uint8_t slot, uint8_t killerId);
     void sendSubPlayerHpSync(uint8_t ownerId, uint8_t slot, int hp, int maxHp, uint8_t killerId);
     void sendWaveStart(int waveNum);

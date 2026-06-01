@@ -1,5 +1,4 @@
 #pragma once
-// ─── vec2.h ───  Minimal 2D vector math ────────────────────────────────────
 #include <cmath>
 
 struct Vec2 {

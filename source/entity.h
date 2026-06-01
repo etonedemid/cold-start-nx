@@ -1,11 +1,10 @@
 #pragma once
-// ─── entity.h ─── Base types and entity components ──────────────────────────
 #include "vec2.h"
 #include <SDL2/SDL.h>
 #include <cstdint>
 #include <vector>
 
-// ── Tags for collision filtering ──
+// Tags for collision filtering
 enum Tag : uint8_t {
     TAG_NONE        = 0,
     TAG_PLAYER      = 1,
@@ -17,7 +16,7 @@ enum Tag : uint8_t {
     TAG_WALL        = 7,
 };
 
-// ── Generic entity used by bullets, debris, explosions ──
+// Generic entity used by bullets, debris, explosions
 struct Entity {
     Vec2  pos;
     Vec2  vel;
@@ -52,13 +51,13 @@ struct Entity {
     }
 };
 
-// ── Simple AABB overlap ──
+// Simple AABB overlap
 inline bool overlaps(const SDL_FRect& a, const SDL_FRect& b) {
     return a.x < b.x + b.w && a.x + a.w > b.x &&
            a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
-// ── Circle overlap ──
+// Circle overlap
 inline bool circleOverlap(Vec2 a, float ra, Vec2 b, float rb) {
     return Vec2::dist(a, b) < (ra + rb);
 }

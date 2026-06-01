@@ -1,9 +1,8 @@
 #pragma once
-// ─── constants.h ─── Game tuning constants ──────────────────────────────────
 #include "vec2.h"
 
-// ── Version ──
-constexpr const char* GAME_VERSION = "2.0.0";
+// Version
+constexpr const char* GAME_VERSION = "2.1.0";
 
 // Screen (window resolution - runtime configurable)
 inline int SCREEN_W = 1280;
@@ -24,8 +23,8 @@ constexpr float WORLD_H       = MAP_DEFAULT_H * TILE_SIZE;
 constexpr float PLAYER_SPEED        = 520.0f;
 constexpr float PLAYER_BOOSTED_SPEED= 560.0f;
 constexpr float PLAYER_SMOOTHING    = 10.0f;
-constexpr int   PLAYER_MAX_HP       = 10;
-constexpr float PLAYER_INVULN_TIME  = 0.7f;
+constexpr int   PLAYER_MAX_HP       = 100;
+constexpr float PLAYER_INVULN_TIME  = 0.10f; // invuln window after any hit (prevents per-frame damage stacking)
 constexpr float PLAYER_SIZE         = 48.0f;
 constexpr float GUN_OFFSET_RIGHT    = 12.0f; // perpendicular offset to the right of facing
 
@@ -48,55 +47,55 @@ constexpr float SNIPER_BULLET_SPEED_MULTI = 3.0f;
 constexpr float ENEMY_SPEED      = 330.0f;
 constexpr float ENEMY_VISION_DIST= 700.0f;
 constexpr float ENEMY_VISION_ANGLE= 120.0f;
-constexpr float ENEMY_HP         = 3.0f;
+constexpr float ENEMY_HP         = 30.0f;
 constexpr float ENEMY_SIZE       = 48.0f;
 constexpr float ENEMY_DASH_DIST  = 82.0f;   // melee strike trigger range
 constexpr float ENEMY_DASH_FORCE = 160.0f;  // short lunge velocity during strike
 constexpr float ENEMY_DASH_DELAY = 0.38f;   // wind-up duration before strike
 constexpr float ENEMY_DASH_DUR   = 0.18f;   // strike frame duration
 constexpr float ENEMY_DASH_CD    = 1.5f;
-constexpr int   ENEMY_DASH_DMG   = 2;
+constexpr int   ENEMY_DASH_DMG   = 20;
 constexpr float MELEE_INERTIA    = 14.0f; // velocity smoothing factor (higher = more responsive)
 constexpr float SHOOTER_INERTIA  = 8.0f;  // velocity smoothing for shooter enemies
 
 // Shooter enemy
 constexpr float SHOOTER_SPEED       = 210.0f;
 constexpr float SHOOTER_SHOOT_CD    = 1.0f;
-constexpr float SHOOTER_HP          = 3.0f;
+constexpr float SHOOTER_HP          = 30.0f;
 constexpr float SHOOTER_SIZE        = 64.0f;
 constexpr float SHOOTER_RENDER_SCALE= 4.5f;
 
 // Enemy variants
 constexpr float BRUTE_SPEED         = 240.0f;
-constexpr float BRUTE_HP            = 7.0f;
+constexpr float BRUTE_HP            = 70.0f;
 constexpr float BRUTE_SIZE          = 64.0f;
 constexpr float BRUTE_DASH_DIST     = 98.0f;
 constexpr float BRUTE_DASH_FORCE    = 130.0f;
 constexpr float BRUTE_DASH_DELAY    = 0.58f;
 constexpr float BRUTE_DASH_DUR      = 0.24f;
 constexpr float BRUTE_DASH_CD       = 2.0f;
-constexpr int   BRUTE_DASH_DMG      = 3;
+constexpr int   BRUTE_DASH_DMG      = 30;
 constexpr float BRUTE_RENDER_SCALE  = 4.2f;
 
 constexpr float SCOUT_SPEED         = 450.0f;
-constexpr float SCOUT_HP            = 2.0f;
+constexpr float SCOUT_HP            = 20.0f;
 constexpr float SCOUT_SIZE          = 40.0f;
 constexpr float SCOUT_DASH_DIST     = 68.0f;
 constexpr float SCOUT_DASH_FORCE    = 220.0f;
 constexpr float SCOUT_DASH_DELAY    = 0.16f;
 constexpr float SCOUT_DASH_DUR      = 0.14f;
 constexpr float SCOUT_DASH_CD       = 0.72f;
-constexpr int   SCOUT_DASH_DMG      = 1;
+constexpr int   SCOUT_DASH_DMG      = 10;
 constexpr float SCOUT_RENDER_SCALE  = 2.6f;
 
 constexpr float SNIPER_SPEED        = 165.0f;
-constexpr float SNIPER_HP           = 3.0f;
+constexpr float SNIPER_HP           = 30.0f;
 constexpr float SNIPER_SIZE         = 60.0f;
 constexpr float SNIPER_SHOOT_CD     = 1.65f;
 constexpr float SNIPER_RENDER_SCALE = 4.8f;
 
 constexpr float GUNNER_SPEED        = 233.0f;
-constexpr float GUNNER_HP           = 4.0f;
+constexpr float GUNNER_HP           = 40.0f;
 constexpr float GUNNER_SIZE         = 62.0f;
 constexpr float GUNNER_SHOOT_CD     = 1.25f;
 constexpr float GUNNER_BURST_GAP    = 0.11f;
@@ -104,7 +103,7 @@ constexpr float GUNNER_RENDER_SCALE = 4.6f;
 
 // Boss enemies - spawned at waves 25, 35, 45
 constexpr int   BOSS_WAVES[]         = {25, 35, 45};
-constexpr float BOSS_BRUTE_HP        = 750.0f;
+constexpr float BOSS_BRUTE_HP        = 7500.0f;
 constexpr float BOSS_BRUTE_SPEED     = 420.0f;
 constexpr float BOSS_BRUTE_SIZE      = 80.0f;
 constexpr float BOSS_BRUTE_DASH_DIST = 115.0f;
@@ -112,17 +111,17 @@ constexpr float BOSS_BRUTE_DASH_FORCE= 190.0f;
 constexpr float BOSS_BRUTE_DASH_DELAY= 0.38f;
 constexpr float BOSS_BRUTE_DASH_DUR  = 0.28f;
 constexpr float BOSS_BRUTE_DASH_CD   = 0.90f;
-constexpr int   BOSS_BRUTE_DASH_DMG  = 5;
+constexpr int   BOSS_BRUTE_DASH_DMG  = 50;
 constexpr float BOSS_BRUTE_SCALE     = 6.5f;
 
-constexpr float BOSS_SNIPER_HP       = 750.0f;
+constexpr float BOSS_SNIPER_HP       = 7500.0f;
 constexpr float BOSS_SNIPER_SPEED    = 150.0f;
 constexpr float BOSS_SNIPER_SIZE     = 80.0f;
 constexpr float BOSS_SNIPER_SHOOT_CD = 0.75f;
 constexpr float BOSS_SNIPER_SCALE    = 7.0f;
 constexpr float BOSS_SNIPER_PANIC_RANGE = 210.0f; // sprint away if player closer than this
 
-constexpr float BOSS_GUNNER_HP       = 750.0f;
+constexpr float BOSS_GUNNER_HP       = 7500.0f;
 constexpr float BOSS_GUNNER_SPEED    = 210.0f;
 constexpr float BOSS_GUNNER_SIZE     = 76.0f;
 constexpr float BOSS_GUNNER_SHOOT_CD = 0.75f;
@@ -154,7 +153,7 @@ constexpr float BOMB_ORBIT_SPEED  = 80.0f;
 constexpr float BOMB_DASH_SPEED   = 1000.0f;
 constexpr float BOMB_SIZE         = 32.0f;
 constexpr float EXPLOSION_RADIUS  = 200.0f;
-constexpr float EXPLOSION_DAMAGE  = 10.0f;
+constexpr float EXPLOSION_DAMAGE  = 100.0f;
 constexpr float EXPLOSION_DURATION= 1.1f;
 constexpr int   KILLS_PER_BOMB    = 5;
 constexpr int   MAX_BOMBS         = 100;
@@ -164,15 +163,15 @@ constexpr float PARRY_WINDOW   = 0.25f;
 constexpr float PARRY_COOLDOWN = 5.0f;
 constexpr float PARRY_DASH_SPEED    = 1050.0f;  // Match scout dash force
 constexpr float PARRY_DASH_DURATION = 0.15f;    // Match scout dash duration
-constexpr float PARRY_DMG            = 4.0f;
-constexpr int   PARRY_REFLECT_DAMAGE = 3;        // damage of a player-reflected bullet
+constexpr float PARRY_DMG            = 40.0f;
+constexpr int   PARRY_REFLECT_DAMAGE = 30;       // damage of a player-reflected bullet
 
 // Melee (player axe swing)
 constexpr float MELEE_DURATION      = 0.30f;  // swing animation duration
 constexpr float MELEE_COOLDOWN_TIME = 0.45f;  // cooldown before next swing
 constexpr float MELEE_RANGE         = 70.0f;  // reach from player centre
 constexpr float MELEE_ARC           = 1.65f;  // half-arc in radians (~95 deg)
-constexpr int   MELEE_PLAYER_DAMAGE = 3;      // damage to players (PvP / co-op)
+constexpr int   MELEE_PLAYER_DAMAGE = 30;     // damage to players (PvP / co-op)
 constexpr int   MELEE_ANIM_FIRST    = 3;      // first body frame (sprite 0004)
 constexpr int   MELEE_ANIM_LAST     = 9;      // last  body frame (sprite 0010)
 
