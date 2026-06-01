@@ -124,33 +124,7 @@ inline bool isCrateSpawnType(uint8_t type) {
     return type == ENTITY_CRATE || type == ENTITY_UPGRADE_CRATE;
 }
 
-struct ResolutionPreset { int w, h; const char* label; };
-
-constexpr ResolutionPreset kResolutionPresets[] = {
-    {1280,  720,  "1280x720"},
-    {1600,  900,  "1600x900"},
-    {1920, 1080,  "1920x1080"},
-    {2560, 1440,  "2560x1440"},
-};
-
-inline int findResolutionPresetIndex(int w, int h) {
-    for (int i = 0; i < (int)(sizeof(kResolutionPresets)/sizeof(kResolutionPresets[0])); ++i)
-        if (kResolutionPresets[i].w == w && kResolutionPresets[i].h == h) return i;
-    int bestIdx = 0, bestScore = 1 << 30;
-    for (int i = 0; i < (int)(sizeof(kResolutionPresets)/sizeof(kResolutionPresets[0])); ++i) {
-        int score = std::abs(kResolutionPresets[i].w - w) + std::abs(kResolutionPresets[i].h - h);
-        if (score < bestScore) { bestScore = score; bestIdx = i; }
-    }
-    return bestIdx;
-}
-
-inline void clampResolutionConfig(GameConfig& config) {
-    int idx = findResolutionPresetIndex(config.windowWidth, config.windowHeight);
-    config.windowWidth  = kResolutionPresets[idx].w;
-    config.windowHeight = kResolutionPresets[idx].h;
-}
-
-constexpr int CONFIG_RESOLUTION_INDEX        = 6;
+constexpr int CONFIG_RESOLUTION_INDEX        = -1; // removed — window is now freely resizable
 constexpr int CONFIG_SHADER_CRT_INDEX        = 7;
 constexpr int CONFIG_SHADER_CHROMATIC_INDEX  = 8;
 constexpr int CONFIG_SHADER_SCANLINES_INDEX  = 9;

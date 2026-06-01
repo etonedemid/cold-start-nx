@@ -77,8 +77,6 @@ enum class GameState {
 struct GameConfig {
     int mapWidth = 32;
     int mapHeight = 32;
-    int windowWidth = 1280;
-    int windowHeight = 720;
     int playerMaxHp = PLAYER_MAX_HP;
     float spawnRateScale = 1.0f;
     float enemyHpScale = 1.0f;
@@ -677,6 +675,7 @@ private:
     void renderModSaveDialog();
     static std::string modBuildFolder(const std::string& modId, const std::string& displayName);
     void applyResolutionSettings(bool rebuildTargets = true);
+    void updateAspectMode();
     bool rebuildScreenTextures();
     void saveConfig();
     void loadConfig();
