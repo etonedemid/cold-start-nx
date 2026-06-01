@@ -1,4 +1,3 @@
-// ─── ui.cpp ─── Immediate-mode UI implementation ────────────────────────────
 #include "ui.h"
 #include "assets.h"
 #include <cstring>
@@ -105,9 +104,7 @@ void TextCache::clear() {
     cache_.clear();
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Input Glyphs
-// ═════════════════════════════════════════════════════════════════════════════
+// Input Glyphs
 
 const char* glyphLabel(Action action, bool gamepad) {
 #ifdef __SWITCH__
@@ -162,9 +159,7 @@ std::string buildHintBar(const HintPair* pairs, int count, bool gamepad) {
     return result;
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Context
-// ═════════════════════════════════════════════════════════════════════════════
+// Context
 
 void Context::init(SDL_Renderer* r) {
     renderer = r;
@@ -219,7 +214,7 @@ void Context::shutdown() {
     textCache.clear();
 }
 
-// ─── Drawing Helpers ────────────────────────────────────────────────────────
+// Drawing Helpers
 
 void Context::drawText(const char* text, int x, int y, int size, SDL_Color color) {
     const auto& e = textCache.get(text, size);
@@ -326,7 +321,7 @@ void Context::drawSeparator(int cx, int y, int halfWidth, SDL_Color color) {
     SDL_RenderFillRect(renderer, &sep);
 }
 
-// ─── Interactive Elements ───────────────────────────────────────────────────
+// Interactive Elements
 
 static float smoothstep(float t) {
     t = std::max(0.f, std::min(1.f, t));
@@ -486,9 +481,7 @@ bool Context::pointInRect(int px, int py, int rx, int ry, int rw, int rh) const 
     return px >= rx && px < rx + rw && py >= ry && py < ry + rh;
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Win98 Drawing Primitives
-// ═════════════════════════════════════════════════════════════════════════════
+// Win98 Drawing Primitives
 
 void Context::drawDesktop() {
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);

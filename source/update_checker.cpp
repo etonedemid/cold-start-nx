@@ -1,4 +1,3 @@
-// ─── update_checker.cpp ─── Version update checker ──────────────────────────
 #include "update_checker.h"
 #include <cstring>
 #include <cstdio>

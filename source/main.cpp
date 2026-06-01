@@ -1,4 +1,3 @@
-// ─── main.cpp ─── Entry point for COLD START ────────────────────────────────
 #include "game.h"
 #include <algorithm>
 #include <cstdio>

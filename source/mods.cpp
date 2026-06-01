@@ -1,10 +1,7 @@
-// ─── mods.cpp ─── Mod loading and content overrides
 #include "game.h"
 #include "game_internal.h"
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Mod System Integration
-// ═════════════════════════════════════════════════════════════════════════════
+// Mod System Integration
 
 void Game::initMods() {
     auto& mm = ModManager::instance();

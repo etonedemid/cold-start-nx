@@ -1,4 +1,3 @@
-﻿// ─── render.cpp ─── World/UI rendering
 #include "game.h"
 #include "game_internal.h"
 
@@ -112,13 +111,13 @@ void Game::render() {
         }
 
         // Player legs
-        if (!player_.dead && !legSprites_.empty()) {
+        if (!player_.dead && !legSprites_.empty() && !inVehicle_) {
             int idx = player_.legAnimFrame % (int)legSprites_.size();
             renderSprite(legSprites_[idx], player_.pos, player_.legRotation + M_PI/2, 1.5f);
         }
 
         // Player body
-        if (!player_.dead) {
+        if (!player_.dead && !inVehicle_) {
             if (!playerSprites_.empty()) {
                 int idx = player_.animFrame % (int)playerSprites_.size();
                 Vec2 bodyPos = player_.pos + Vec2::fromAngle(player_.rotation) * 6.0f;
@@ -217,7 +216,8 @@ void Game::render() {
         }
         SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
 
-        // Crates & Pickups
+        // Crates, Pickups & Vehicles
+        renderVehicles();
         renderCrates();
         renderPickups();
         renderRemotePlayers();
@@ -301,11 +301,11 @@ void Game::render() {
             }
         }
         // Player rendering (same as Playing)
-        if (!player_.dead && !legSprites_.empty()) {
+        if (!player_.dead && !legSprites_.empty() && !inVehicle_) {
             int idx = player_.legAnimFrame % (int)legSprites_.size();
             renderSprite(legSprites_[idx], player_.pos, player_.legRotation + (float)M_PI/2, 1.5f);
         }
-        if (!player_.dead) {
+        if (!player_.dead && !inVehicle_) {
             if (!playerSprites_.empty()) {
                 int idx = player_.animFrame % (int)playerSprites_.size();
                 Vec2 bodyPos = player_.pos + Vec2::fromAngle(player_.rotation) * 6.0f;
@@ -319,7 +319,7 @@ void Game::render() {
                     renderSprite(playerSprites_[idx], bodyPos, player_.rotation + (float)M_PI/2, 1.5f);
                 }
             }
-        } else if (!playerDeathSprites_.empty()) {
+        } else if (!inVehicle_ && !playerDeathSprites_.empty()) {
             int idx = player_.animFrame % (int)playerDeathSprites_.size();
             renderSprite(playerDeathSprites_[idx], player_.pos, player_.rotation + (float)M_PI/2, 1.5f);
         }
@@ -369,6 +369,7 @@ void Game::render() {
             SDL_RenderFillRect(renderer_, &rr);
         }
         SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+        renderVehicles();
         renderCrates();
         renderPickups();
         renderRemotePlayers();
@@ -509,7 +510,7 @@ void Game::render() {
         renderPackComplete();
         break;
 
-    // ── Multiplayer states ──
+    // Multiplayer states
     case GameState::MultiplayerMenu:
         renderMultiplayerMenu();
         break;
@@ -531,7 +532,7 @@ void Game::render() {
     case GameState::MultiplayerDead:
     case GameState::MultiplayerSpectator:
         if (coopPlayerCount_ > 1) {
-            // ── Splitscreen multiplayer rendering ──
+            // Splitscreen multiplayer rendering
             renderMultiplayerSplitscreen();
         } else {
         // Reuse standard gameplay rendering
@@ -626,6 +627,7 @@ void Game::render() {
                 SDL_SetTextureColorMod(b.sprite, 255, 255, 255);
             }
         }
+        renderVehicles();
         renderCrates();
         renderPickups();
         renderRemotePlayers();
@@ -1142,6 +1144,20 @@ void Game::renderExplosionPixelated(const Explosion& ex) {
 }
 
 void Game::renderMap() {
+    // Full-map background image: place the entire image scaled to the full world
+    // area, positioned so world (0,0) aligns with screen. SDL clips to viewport.
+    // Using float dst (not integer src sub-rect) avoids per-frame pixel jitter.
+    if (bgImageTex_) {
+        float wx = -camera_.pos.x + camera_.shakeOffset.x;
+        float wy = -camera_.pos.y + camera_.shakeOffset.y;
+        SDL_FRect dst = {wx, wy,
+                         (float)(map_.width  * TILE_SIZE),
+                         (float)(map_.height * TILE_SIZE)};
+        SDL_SetTextureBlendMode(bgImageTex_, SDL_BLENDMODE_NONE);
+        SDL_RenderCopyF(renderer_, bgImageTex_, nullptr, &dst);
+        return;
+    }
+
     // Only render visible tiles
     int startX = (int)(camera_.pos.x / TILE_SIZE) - 1;
     int startY = (int)(camera_.pos.y / TILE_SIZE) - 1;
@@ -1159,6 +1175,10 @@ void Game::renderMap() {
         return map_.get(tx, ty) == TILE_GRAVEL;
     };
 
+    // Per-tile rotations from custom map (empty on procedural maps)
+    const auto& tileRots = customMap_.tileRotations;
+    int mapStride = map_.width;
+
     for (int y = startY; y < endY; y++) {
         for (int x = startX; x < endX; x++) {
             uint8_t tile = map_.get(x, y);
@@ -1166,6 +1186,11 @@ void Game::renderMap() {
             SDL_Texture* tex = nullptr;
             double tileAngle = 0.0;
             SDL_RendererFlip tileFlip = SDL_FLIP_NONE;
+
+            // Per-tile editor rotation (overrides hash-based variety for that tile)
+            int tidx = y * mapStride + x;
+            if (!tileRots.empty() && tidx < (int)tileRots.size() && tileRots[tidx] > 0)
+                tileAngle = tileRots[tidx] * 90.0;
 
             // Deterministic hash for per-tile randomization
             unsigned int tileHash = (unsigned int)(x * 73856093u ^ y * 19349663u);
@@ -1265,9 +1290,29 @@ void Game::renderMap() {
             }
         }
     }
+
+    // Draw free-placed props from custom map
+    if (!customMap_.props.empty()) {
+        for (auto& ps : customMap_.props) {
+            // Resolve texture the same way the main tile loop does
+            SDL_Texture* ptex = nullptr;
+            if      (ps.tileType == TILE_DESK) ptex = deskTex_;
+            else if (ps.tileType == TILE_BOX)  ptex = boxTex_;
+            else if (ps.tileType >= TILE_CUSTOM_0 && ps.tileType <= TILE_CUSTOM_7)
+                ptex = customTileTextures_[ps.tileType - TILE_CUSTOM_0];
+            if (!ptex) continue;
+            Vec2 sp = camera_.worldToScreen({ps.x, ps.y});
+            float half = TILE_SIZE * 0.5f;
+            double angle = ps.rotation * 90.0;
+            renderRotatedQuad(renderer_, ptex,
+                sp.x, sp.y, half, half,
+                (float)(angle * M_PI / 180.0), SDL_FLIP_NONE);
+        }
+    }
 }
 
 void Game::renderWallOverlay() {
+    if (bgImageTex_) return; // image-based map: walls are baked into the image
     int startX = (int)(camera_.pos.x / TILE_SIZE) - 1;
     int startY = (int)(camera_.pos.y / TILE_SIZE) - 1;
     int endX   = startX + camera_.viewW / TILE_SIZE + 3;
@@ -1292,17 +1337,17 @@ void Game::renderWallOverlay() {
             Vec2 wp = {(float)(x * TILE_SIZE + TILE_SIZE/2),
                        (float)(y * TILE_SIZE + TILE_SIZE/2)};
             Vec2 sp = camera_.worldToScreen(wp);
-            SDL_Rect dst = {(int)(sp.x - TILE_SIZE/2), (int)(sp.y - TILE_SIZE/2),
-                           TILE_SIZE, TILE_SIZE};
+            SDL_FRect dst = {sp.x - TILE_SIZE * 0.5f, sp.y - TILE_SIZE * 0.5f,
+                             (float)TILE_SIZE, (float)TILE_SIZE};
 
             if (tex) {
                 SDL_SetTextureColorMod(tex, 255, 255, 255);
                 SDL_SetTextureAlphaMod(tex, 255);
                 SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_NONE);
-                SDL_RenderCopy(renderer_, tex, nullptr, &dst);
+                SDL_RenderCopyF(renderer_, tex, nullptr, &dst);
             } else {
                 SDL_SetRenderDrawColor(renderer_, 100, 90, 80, 255);
-                SDL_RenderFillRect(renderer_, &dst);
+                SDL_RenderFillRectF(renderer_, &dst);
             }
         }
     }
@@ -1337,6 +1382,22 @@ void Game::renderDecals() {
 }
 
 void Game::renderRoofOverlay() {
+    // Full-map top-layer image (building rooftops etc., rendered above entities)
+    if (topImageTex_) {
+        float wx = -camera_.pos.x + camera_.shakeOffset.x;
+        float wy = -camera_.pos.y + camera_.shakeOffset.y;
+        SDL_FRect dst = {wx, wy,
+                         (float)(map_.width  * TILE_SIZE),
+                         (float)(map_.height * TILE_SIZE)};
+        SDL_SetTextureBlendMode(topImageTex_, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureAlphaMod(topImageTex_, (Uint8)(topLayerAlpha_ * 255.0f));
+        SDL_RenderCopyF(renderer_, topImageTex_, nullptr, &dst);
+        SDL_SetTextureAlphaMod(topImageTex_, 255);
+        return;
+    }
+    // If a background image is in use, ceiling tiles are already handled visually
+    if (bgImageTex_) return;
+
     // Draw transparent glass ceiling tiles over rooms (rendered after entities)
     if (map_.ceiling.size() != (size_t)(map_.width * map_.height)) return; // safety: ceiling not sized
     int startX = (int)(camera_.pos.x / TILE_SIZE) - 1;
@@ -1356,17 +1417,16 @@ void Game::renderRoofOverlay() {
             Vec2 wp = {(float)(x * TILE_SIZE + TILE_SIZE/2),
                        (float)(y * TILE_SIZE + TILE_SIZE/2)};
             Vec2 sp = camera_.worldToScreen(wp);
-            SDL_Rect dst = {(int)(sp.x - TILE_SIZE/2), (int)(sp.y - TILE_SIZE/2),
-                           TILE_SIZE, TILE_SIZE};
+            SDL_FRect dst = {sp.x - TILE_SIZE * 0.5f, sp.y - TILE_SIZE * 0.5f,
+                             (float)TILE_SIZE, (float)TILE_SIZE};
 
             if (glassTileTex_) {
                 SDL_SetTextureAlphaMod(glassTileTex_, 100);
-                SDL_RenderCopy(renderer_, glassTileTex_, nullptr, &dst);
+                SDL_RenderCopyF(renderer_, glassTileTex_, nullptr, &dst);
                 SDL_SetTextureAlphaMod(glassTileTex_, 255);
             } else {
-                // Fallback: semi-transparent blue tint
                 SDL_SetRenderDrawColor(renderer_, 140, 180, 220, 35);
-                SDL_RenderFillRect(renderer_, &dst);
+                SDL_RenderFillRectF(renderer_, &dst);
             }
         }
     }
@@ -1374,7 +1434,7 @@ void Game::renderRoofOverlay() {
 
 void Game::renderShadingPass() {
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-    // ── Wall shadow / ambient occlusion pass ──
+    // Wall shadow / ambient occlusion pass
     // For each visible tile adjacent to a wall, darken it slightly
     int startX = (int)(camera_.pos.x / TILE_SIZE) - 1;
     int startY = (int)(camera_.pos.y / TILE_SIZE) - 1;
@@ -1407,14 +1467,14 @@ void Game::renderShadingPass() {
                 Vec2 sp = camera_.worldToScreen(wp);
                 int alpha = std::min(adj * 12, 60);
                 SDL_SetRenderDrawColor(renderer_, 0, 0, 0, (Uint8)alpha);
-                SDL_Rect dst = {(int)(sp.x - TILE_SIZE/2), (int)(sp.y - TILE_SIZE/2),
-                               TILE_SIZE, TILE_SIZE};
-                SDL_RenderFillRect(renderer_, &dst);
+                SDL_FRect dst = {sp.x - TILE_SIZE * 0.5f, sp.y - TILE_SIZE * 0.5f,
+                                 (float)TILE_SIZE, (float)TILE_SIZE};
+                SDL_RenderFillRectF(renderer_, &dst);
             }
         }
     }
 
-    // ── Vignette overlay (proper radial) ──
+    // Vignette overlay (proper radial)
     if (vignetteTex_) {
         // Use camera view dimensions so the vignette fills the viewport correctly
         // even when SDL_RenderSetScale is active during splitscreen.
@@ -1422,7 +1482,7 @@ void Game::renderShadingPass() {
         SDL_RenderCopy(renderer_, vignetteTex_, nullptr, &full);
     }
 
-    // ── Low-HP red tint ──
+    // Low-HP red tint
     if (lowHpTint_ > 0.001f) {
         // Pulse alpha when critically low (hp <= 20%), steady when moderate
         float hpRatio = (player_.maxHp > 0) ? (float)player_.hp / player_.maxHp : 1.0f;
@@ -1444,7 +1504,7 @@ void Game::invalidateMinimapCache() {
 }
 
 void Game::renderMinimap() {
-    // ── Minimap ─ bottom-right corner ────────────────────────────────────────
+    // Minimap - bottom-right corner
     const int MMAP_MAX_PX = 160;  // maximum rendered dimension in pixels
     const int MMAP_MARGIN = 10;   // screen-edge margin
     const int MMAP_INNER  = 4;    // inner padding between border and tiles
@@ -1580,7 +1640,7 @@ void Game::renderMinimap() {
         SDL_RenderFillRect(renderer_, &r);
     };
 
-    // Upgrade crates (yellow diamonds – just squares for simplicity)
+    // Upgrade crates (yellow diamonds - just squares for simplicity)
     for (auto& c : crates_) {
         if (!c.alive) continue;
         drawBlip(c.pos.x, c.pos.y, 2, {255, 220, 40, 230});
@@ -1637,7 +1697,7 @@ void Game::renderMinimap() {
 }
 
 void Game::renderUI() {
-    // ── Win98 STATUS panel (top-left) ─────────────────────────────────────────
+    // Win98 STATUS panel (top-left)
     {
         const int panW = 210, panH = 124;
         const int panX = 8,   panY = 8;
@@ -1654,7 +1714,7 @@ void Game::renderUI() {
             int hpMax = std::max(1, player_.maxHp);
             int hpNow = std::max(0, player_.hp);
             int fillW = (iW - 2) * hpNow / hpMax;
-            SDL_Color hpC = (player_.hp <= 1)        ? SDL_Color{200, 40,  40,  255} :
+            SDL_Color hpC = (player_.hp <= 10)       ? SDL_Color{200, 40,  40,  255} :
                             (player_.hp * 3 < hpMax) ? SDL_Color{200, 130, 30,  255} :
                                                        SDL_Color{30,  140, 60,  255};
             SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
@@ -1720,7 +1780,7 @@ void Game::renderUI() {
         }
     }
 
-    // ── Win98 GAME panel (top-right) - timer + FPS ────────────────────────────
+    // Win98 GAME panel (top-right) - timer + FPS
     {
         const int panW = 180, panH = 90;
         const int panX = SCREEN_W - panW - 8, panY = 8;
@@ -1773,7 +1833,7 @@ void Game::renderUI() {
         SDL_RenderFillRect(renderer_, &fd);
     }
 
-    // ── System announcements - Win98-style bars sliding in from top ───────────
+    // System announcements - Win98-style bars sliding in from top
     // Helper: compute slide+fade alpha for a timer in [0, maxT]
     // Slides in over 0.25s, holds, slides out over 0.25s.
     auto annoAlpha = [](float t, float maxT) -> float {
@@ -1919,7 +1979,7 @@ void Game::renderUI() {
         ui_.drawText(bodyTxt, notifX + (notifW - bw) / 2, bodyY, 11, bodyCol);
     }
 
-    // ── Boss HP bar - Win98-style panel at bottom-center ─────────────────────
+    // Boss HP bar - Win98-style panel at bottom-center
     if (bossWaveActive_) {
         const Enemy* boss = nullptr;
         for (auto& be : enemies_) {
@@ -2008,7 +2068,7 @@ void Game::renderUI() {
 
 }
 
-// ─── BIOS Intro ─────────────────────────────────────────────────────────────
+// BIOS Intro
 
 struct BiosEntry { float t; const char* text; };
 static const BiosEntry kBiosLines[] = {
@@ -2090,7 +2150,7 @@ void Game::renderBiosIntro() {
     }
 }
 
-// ─── Login Screen ────────────────────────────────────────────────────────────
+// Login Screen
 
 void Game::renderLoginScreen() {
     loginBlinkT_ += dt_;
@@ -2172,13 +2232,13 @@ void Game::renderLoginScreen() {
         "Tab: switch field    Enter: OK    Esc: Cancel");
 }
 
-// ─── Main Menu ───────────────────────────────────────────────────────────────
+// Main Menu
 
 void Game::renderMainMenu() {
     // Win98 desktop background
     ui_.drawDesktop();
 
-    // ── AVA Explorer desktop icon (drawn on desktop, under all windows) ───────
+    // AVA Explorer desktop icon (drawn on desktop, under all windows)
     {
         SDL_Texture* bic = Assets::instance().loadRelTex("sprites/ui/browser_icon.png");
         const int icSz = 32, icX = 18, icY = 18;
@@ -2331,7 +2391,7 @@ void Game::renderMainMenu() {
     ui_.drawText(config_.username.c_str(), ipX + 6, iy, 12, UI::W98::Black);
     iy += 20;
 
-    // ── News 
+    // News
     ui_.drawWin98Bevel(ipX + 4, iy, ipW - 8, 2, false);
     iy += 7;
     ui_.drawText("News", ipX + 6, iy, 10, UI::W98::Shadow);
@@ -2454,7 +2514,7 @@ void Game::renderMainMenu() {
         iy += clipH + 4;
     }
 
-    // ── Weather widget ────────────────────────────────────────────────────────
+    // Weather widget
     ui_.drawWin98Bevel(ipX + 4, iy, ipW - 8, 2, false);
     iy += 7;
     ui_.drawText("Weather", ipX + 6, iy, 10, UI::W98::Shadow);
@@ -2516,7 +2576,7 @@ void Game::renderMainMenu() {
     }
 #endif
 
-    // ── Music Player Window ──────────────────────────────────────────────────
+    // Music Player Window
     const int mpW = 268, mpH = 148;
     if (!musicWinInit_) {
         musicWinInit_ = true;
@@ -2582,7 +2642,7 @@ void Game::renderMainMenu() {
         saveConfig();
     }
 
-    // ── AVA Explorer window ───────────────────────────────────────────────────
+    // AVA Explorer window
     if (browserOpen_) {
         const int BW = 720, BH = 560;
         const int TOOLBAR_H = 28;
@@ -2612,7 +2672,7 @@ void Game::renderMainMenu() {
         struct PageMeta { const char* url; const char* title; };
         static const PageMeta kPages[] = {
             { "start.ava",           "AVA Home - Welcome Portal"        },
-            { "news.ava",            "AVA NetNews - Today's Feed"        },
+            { "news.AVA:CORP",            "AVA NetNews - Today's Feed"        },
             { "corp.ava:online",     "AVA Corporation - Official"        },
             { "search.ava",          "SearchNet - The AVA Search Engine" },
             { "sector7.dark:relay4", "// SIGNAL RECOVERED //"            },
@@ -2636,7 +2696,7 @@ void Game::renderMainMenu() {
             int cx = browserWinX_;
             int cy = browserWinY_ + UI::W98::TitleH;
 
-            // ── Toolbar ──────────────────────────────────────────────────────
+            // Toolbar
             SDL_SetRenderDrawColor(renderer_, 212, 208, 200, 255);
             SDL_Rect tbBg = {cx, cy, BW, TOOLBAR_H};
             SDL_RenderFillRect(renderer_, &tbBg);
@@ -2694,7 +2754,7 @@ void Game::renderMainMenu() {
 
             cy += TOOLBAR_H;
 
-            // ── Content area ─────────────────────────────────────────────────
+            // Content area
             SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
             SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 255);
             SDL_Rect caBg = {cx + 2, cy, BW - 4, CONTENT_H};
@@ -2720,6 +2780,7 @@ void Game::renderMainMenu() {
                     browserHistPos_++; browserHistLen_ = browserHistPos_ + 1;
                     browserHist_[browserHistPos_] = dest;
                 }
+                if (sfxClick_) playSFX(sfxClick_, config_.sfxVolume);
             };
             auto linkBtn = [&](int id, const char* label, int x, int y, int w, int dest) {
                 if (ui_.win98Button(id, label, x, y, w, 18, false)) navTo(dest);
@@ -2760,7 +2821,7 @@ void Game::renderMainMenu() {
                 char dotBuf[8]; snprintf(dotBuf, sizeof(dotBuf), "%.*s", dots, "...");
                 ui_.drawText(dotBuf, midX + 54, midY, 12, UI::W98::Shadow);
             } else switch (pg) {
-            // ─────────────────────────────────────── PAGE 0: AVA Home ────────
+            // PAGE 0: AVA Home
             case 0: {
                 // banner
                 SDL_SetRenderDrawColor(renderer_, 0, 0, 128, 255);
@@ -2803,7 +2864,7 @@ void Game::renderMainMenu() {
                 }
                 break;
             }
-            // ─────────────────────────────────────── PAGE 1: NetNews ─────────
+            // PAGE 1: NetNews
             case 1: {
                 SDL_SetRenderDrawColor(renderer_, 0, 0, 128, 255);
                 SDL_Rect banner = {cx + 2, cy, BW - 4, 36};
@@ -2837,7 +2898,7 @@ void Game::renderMainMenu() {
                 }
                 break;
             }
-            // ─────────────────────────────────────── PAGE 2: AVA Corp ────────
+            // PAGE 2: AVA Corp
             case 2: {
                 SDL_SetRenderDrawColor(renderer_, 20, 20, 60, 255);
                 SDL_Rect banner = {cx + 2, cy, BW - 4, 52};
@@ -2872,7 +2933,7 @@ void Game::renderMainMenu() {
                     cx + 12, py, 9, UI::W98::Shadow);
                 break;
             }
-            // ─────────────────────────────────────── PAGE 3: SearchNet ───────
+            // PAGE 3: SearchNet
             case 3: {
                 py = cy + 30;
                 // Logo
@@ -2904,7 +2965,7 @@ void Game::renderMainMenu() {
                 }
                 break;
             }
-            // ─────────────────────────────────────── PAGE 4: Underground ─────
+            // PAGE 4: Underground
             case 4: {
                 int glitch = (int)(sinf(SDL_GetTicks() * 0.031f) * 3);
                 SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
@@ -2945,7 +3006,7 @@ void Game::renderMainMenu() {
                 }
                 break;
             }
-            // ─────────────────────────────────────── PAGE 5: proj.bliss ──────
+            // PAGE 5: proj.bliss
             case 5: {
                 // header bar - calm government green
                 SDL_SetRenderDrawColor(renderer_, 30, 100, 50, 255);
@@ -3005,7 +3066,7 @@ void Game::renderMainMenu() {
 
             SDL_RenderSetClipRect(renderer_, prevClip.w > 0 ? &prevClip : nullptr);
 
-            // ── Status bar ───────────────────────────────────────────────────
+            // Status bar
             int sbY = browserWinY_ + BH - STATUS_H;
             SDL_SetRenderDrawColor(renderer_, 212, 208, 200, 255);
             SDL_Rect sbBg = {cx + 2, sbY, BW - 4, STATUS_H};
@@ -3017,7 +3078,7 @@ void Game::renderMainMenu() {
         }
     }
 
-    // ── Credits window ────────────────────────────────────────────────────────
+    // Credits window
     if (creditsOpen_) {
         const int CW = 420, CH = 380;
         if (!creditsInit_) {
@@ -3108,7 +3169,7 @@ void Game::renderMainMenu() {
         }
     }
 
-    // ── Log-off confirmation dialog (modal overlay) ──────────────────────────
+    // Log-off confirmation dialog (modal overlay)
     if (logOffConfirm_) {
         ui_.drawDarkOverlay(160);
         const int dlgW = 320, dlgH = 116;
@@ -3163,7 +3224,7 @@ void Game::renderPlayModeMenu() {
     int bx = winX + padX;
     int by = winY + padTY;
 
-    // ── Mode buttons (0-2) ──
+    // Mode buttons (0-2)
     const char* modeLabels[] = {"Generated Map", "Custom Map", "Map Pack"};
     for (int i = 0; i < 3; i++) {
         bool sel = (playModeSelection_ == i);
@@ -3174,14 +3235,14 @@ void Game::renderPlayModeMenu() {
         by += btnH + gap;
     }
 
-    // ── Settings group separator ──
+    // Settings group separator
     by += 4;
     ui_.drawWin98Bevel(bx, by, winW - padX*2, 2, false);
     by += 4;
     ui_.drawText("Settings", bx, by, 12, UI::W98::Shadow);
     by += 16;
 
-    // ── Slider rows (3-8) ──
+    // Slider rows (3-8)
     char valBuf[64];
     struct PMRow { const char* label; int idx; };
     PMRow rows[] = {
@@ -3241,7 +3302,7 @@ void Game::renderPlayModeMenu() {
         by += rowH + gap;
     }
 
-    // ── Back button (9) ──
+    // Back button (9)
     by += 4;
     bool backSel = (playModeSelection_ == 9);
     if (ui_.win98Button(9, "Cancel", bx, by, 80, btnH, backSel)) {
@@ -3298,7 +3359,7 @@ void Game::renderConfigMenu() {
 
     char valBuf[64];
 
-    // ── Slider rows ──────────────────────────────────────────────────────────
+    // Slider rows
     struct SliderRow { const char* label; int idx; };
     SliderRow srows[] = {
         {"Music Volume:", 4}, {"SFX Volume:", 5},
@@ -3361,11 +3422,11 @@ void Game::renderConfigMenu() {
         y += rowH + rowGap;
     }
 
-    // ── Separator ────────────────────────────────────────────────────────────
+    // Separator
     ui_.drawWin98Bevel(lx, y, winW-padX*2, 2, false);
     y += 8;
 
-    // ── Toggle rows ──────────────────────────────────────────────────────────
+    // Toggle rows
     struct TogRow { const char* label; int idx; bool* val; };
     TogRow toggleRows[] = {
         {"CRT Filter",        CONFIG_SHADER_CRT_INDEX,        &config_.shaderCRT},
@@ -3389,7 +3450,7 @@ void Game::renderConfigMenu() {
         y += rowH + rowGap;
     }
 
-    // ── Screen Shake slider ───────────────────────────────────────────────────
+    // Screen Shake slider
     {
         bool sel = (configSelection_ == CONFIG_SHAKE_INDEX);
         ui_.drawText("Screen Shake:", lx, y+(rowH-12)/2, 12, UI::W98::Black);
@@ -3404,7 +3465,7 @@ void Game::renderConfigMenu() {
         y += rowH + rowGap;
     }
 
-    // ── UI Scale slider ───────────────────────────────────────────────────────
+    // UI Scale slider
     {
         bool sel = (configSelection_ == CONFIG_UI_SCALE_INDEX);
         ui_.drawText("UI Scale:", lx, y+(rowH-12)/2, 12, UI::W98::Black);
@@ -3421,7 +3482,7 @@ void Game::renderConfigMenu() {
         y += rowH + rowGap;
     }
 
-    // ── Back button ───────────────────────────────────────────────────────────
+    // Back button
     {
         bool sel = (configSelection_ == CONFIG_BACK_INDEX);
         if (ui_.win98Button(CONFIG_BACK_INDEX, "OK", lx, y, 70, 26, sel)) {
@@ -3530,7 +3591,7 @@ void Game::renderPauseMenu() {
     if (ui_.hoveredItem == 3 && !usingGamepad_) menuSelection_ = 3;
 #endif
 
-    // ── Music Player window (movable) ─────────────────────────────────────────
+    // Music Player window (movable)
     {
         const int mpW = 232, mpH = 106;
         const int tbH = UI::W98::TitleH;
@@ -3597,8 +3658,8 @@ void Game::renderPauseMenu() {
         const int bW1 = 62, bW2 = 62, bW3 = miW - bW1 - bW2 - 8;
         const int bH  = 22;
 
-        // ── Prev Button ──────────────────────────────────────────────────────────
-// ── Prev Button ──────────────────────────────────────────────────────────
+        // Prev Button
+// Prev Button
         // Static variable retains its value across frames
         static Uint32 lastMusicSkipTime = 0; 
         Uint32 currentTime = SDL_GetTicks();
@@ -3618,7 +3679,7 @@ void Game::renderPauseMenu() {
             }
         }
 
-        // ── Next Button ──────────────────────────────────────────────────────────
+        // Next Button
         if (ui_.win98Button(201, "Next", mcx + bW1 + 4, mcy, bW2, bH, false)) {
             if (!bgMusicTracks_.empty() && (currentTime - lastMusicSkipTime > 250)) {
                 int n    = (int)bgMusicTracks_.size();
@@ -3708,11 +3769,9 @@ bool Game::wallCollision(Vec2 pos, float halfSize) const {
     return map_.worldCollides(pos.x, pos.y, halfSize);
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Custom Map Play
-// ═════════════════════════════════════════════════════════════════════════════
+// Custom Map Play
 
-void Game::startCustomMap(const std::string& path) {
+void Game::startCustomMap(const std::string& path, int modeOverride) {
     if (!customMap_.loadFromFile(path)) {
         printf("Failed to load custom map: %s\n", path.c_str());
         return;
@@ -3725,6 +3784,28 @@ void Game::startCustomMap(const std::string& path) {
             customTileTextures_[i] = Assets::instance().tex(customMap_.customTilePaths[i]);
     }
 
+    // Auto-detect layer images from map filename when not stored in CSM
+    {
+        std::string base = path;
+        size_t sl = base.find_last_of("/\\");
+        if (sl != std::string::npos) base = base.substr(sl + 1);
+        size_t dot = base.rfind('.');
+        if (dot != std::string::npos) base = base.substr(0, dot);
+        if (customMap_.bgImagePath.empty()) {
+            std::string cand = "sprites/" + base + ".png";
+            if (Assets::instance().loadRelTex(cand)) customMap_.bgImagePath = cand;
+        }
+        if (customMap_.topImagePath.empty()) {
+            std::string cand = "sprites/" + base + "top.png";
+            if (Assets::instance().loadRelTex(cand)) customMap_.topImagePath = cand;
+        }
+    }
+
+    // Load full-map layer images
+    bgImageTex_   = customMap_.bgImagePath.empty()  ? nullptr : Assets::instance().loadRelTex(customMap_.bgImagePath);
+    topImageTex_  = customMap_.topImagePath.empty() ? nullptr : Assets::instance().loadRelTex(customMap_.topImagePath);
+    topLayerAlpha_ = 1.0f;
+
     state_ = GameState::PlayingCustom;
     playingCustomMap_ = true;
     customGoalOpen_ = false;
@@ -3735,6 +3816,8 @@ void Game::startCustomMap(const std::string& path) {
     map_.height = customMap_.height;
     map_.tiles  = customMap_.tiles;
     map_.ceiling = customMap_.ceiling;
+    map_.noCollide = customMap_.tileNoCollide;
+    map_.noCollide.resize(map_.tiles.size(), 0);
     invalidateMinimapCache();
 
     // Reset entities
@@ -3751,8 +3834,10 @@ void Game::startCustomMap(const std::string& path) {
     upgrades_.reset();
     crateSpawnTimer_ = 0;
 
-    // Apply sandbox mode from the map's saved game mode
-    sandboxMode_ = (customMap_.gameMode == 1);
+    // Apply game mode: explicit override from launcher takes priority over map's stored value
+    sandboxMode_ = (modeOverride >= 0) ? (modeOverride == 1) : (customMap_.gameMode == 1);
+    lobbySettings_.isPvp     = false; // custom map is always PvE
+    lobbySettings_.pvpEnabled = false;
 
     // Reset wave state
     waveNumber_ = 0;
@@ -3835,6 +3920,26 @@ void Game::startCustomMapMultiplayer(const std::string& path) {
         if (!customMap_.customTilePaths[i].empty())
             customTileTextures_[i] = Assets::instance().tex(customMap_.customTilePaths[i]);
     }
+    // Auto-detect layer images from map filename when not stored in CSM
+    {
+        std::string base = path;
+        size_t sl = base.find_last_of("/\\");
+        if (sl != std::string::npos) base = base.substr(sl + 1);
+        size_t dot = base.rfind('.');
+        if (dot != std::string::npos) base = base.substr(0, dot);
+        if (customMap_.bgImagePath.empty()) {
+            std::string cand = "sprites/" + base + ".png";
+            if (Assets::instance().loadRelTex(cand)) customMap_.bgImagePath = cand;
+        }
+        if (customMap_.topImagePath.empty()) {
+            std::string cand = "sprites/" + base + "top.png";
+            if (Assets::instance().loadRelTex(cand)) customMap_.topImagePath = cand;
+        }
+    }
+
+    bgImageTex_   = customMap_.bgImagePath.empty()  ? nullptr : Assets::instance().loadRelTex(customMap_.bgImagePath);
+    topImageTex_  = customMap_.topImagePath.empty() ? nullptr : Assets::instance().loadRelTex(customMap_.topImagePath);
+    topLayerAlpha_ = 1.0f;
 
     playingCustomMap_ = true;
     customGoalOpen_ = false;
@@ -3845,6 +3950,8 @@ void Game::startCustomMapMultiplayer(const std::string& path) {
     map_.height = customMap_.height;
     map_.tiles  = customMap_.tiles;
     map_.ceiling = customMap_.ceiling;
+    map_.noCollide = customMap_.tileNoCollide;
+    map_.noCollide.resize(map_.tiles.size(), 0);
     invalidateMinimapCache();
 
     // Reset entities

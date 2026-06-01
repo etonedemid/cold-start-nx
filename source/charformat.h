@@ -1,25 +1,23 @@
 #pragma once
-// ─── charformat.h ─── Character system (easy folder-based characters) ───────
 //
 // HOW TO MAKE A CHARACTER:
-//   1. Create a folder: characters/MyChar/
-//   2. Drop in your PNG sprites:
-//        body-0001.png, body-0002.png, ...   (body/aim animation)
-//        legs-0001.png, legs-0002.png, ...   (leg walk animation)
-//        death-1.png, death-2.png, ...       (death animation)
-//        detail.png                          (optional, for select screen)
-//   3. That's it! Frame counts are auto-detected from files present.
+// 1. Create a folder: characters/MyChar/
+// 2. Drop in your PNG sprites:
+//      body-0001.png, body-0002.png, ...   (body/aim animation)
+//      legs-0001.png, legs-0002.png, ...   (leg walk animation)
+//      death-1.png, death-2.png, ...       (death animation)
+//      detail.png                          (optional, for select screen)
+// 3. That's it! Frame counts are auto-detected from files present.
 //
-//   OPTIONAL: Add a character.cfg for stat overrides:
-//      name=My Guy
-//      speed=520
-//      hp=10
-//      ammo=10
-//      fire_rate=10
-//      reload_time=1.0
+// OPTIONAL: Add a character.cfg for stat overrides:
+//    name=My Guy
+//    speed=520
+//    hp=10
+//    ammo=10
+//    fire_rate=10
+//    reload_time=1.0
 //
-//   The .cschar format is still supported for backwards compatibility.
-// ─────────────────────────────────────────────────────────────────────────────
+// The .cschar format is still supported for backwards compatibility.
 #include <SDL2/SDL.h>
 #include <string>
 #include <vector>

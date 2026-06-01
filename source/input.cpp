@@ -1,10 +1,9 @@
-// ─── input.cpp ─── Input handling and unified onscreen keyboard
 #include "game.h"
 #include "game_internal.h"
 #include <ctime>
 #include <cstring>
 
-// ── Key layout ────────────────────────────────────────────────────────────────
+// Key layout
 // act: 0=insert ch, 1=backspace, 2=enter/OK, 3=shift, 4=space, 5=cancel
 struct KDef { char ch, chSh; int w, act; };
 
@@ -32,7 +31,7 @@ static const KDef KROWS[5][14] = {
 // Number of logical keys (nav positions) per row
 static const int KROW_NCOLS[5] = {13, 13, 14, 12, 3};
 
-// ── OSK open / close ──────────────────────────────────────────────────────────
+// OSK open / close
 
 void Game::SoftKeyboard::open(std::string* tgt, int max,
                               std::function<void(bool)> done) {
@@ -57,7 +56,7 @@ void Game::SoftKeyboard::close(bool confirmed) {
     if (cb) cb(confirmed);
 }
 
-// ── Gamepad D-pad repeat ──────────────────────────────────────────────────────
+// Gamepad D-pad repeat
 
 void Game::updateSoftKBRepeat() {
     auto& kb = softKB_;
@@ -80,7 +79,7 @@ void Game::updateSoftKBRepeat() {
     kb.repeatAt = SDL_GetTicks() + 80;
 }
 
-// ── Event handling ────────────────────────────────────────────────────────────
+// Event handling
 
 bool Game::handleSoftKBEvent(SDL_Event& e) {
     auto& kb = softKB_;
@@ -138,7 +137,7 @@ bool Game::handleSoftKBEvent(SDL_Event& e) {
         return false;
     };
 
-    // ── Physical keyboard ──
+    // Physical keyboard
     if (e.type == SDL_TEXTINPUT) {
         for (const char* p = e.text.text; *p; p++) {
             if (*p >= ' ' && *p <= '~' && *p != '\n')
@@ -166,7 +165,7 @@ bool Game::handleSoftKBEvent(SDL_Event& e) {
         return true;
     }
 
-    // ── Mouse ──
+    // Mouse
     if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
         int x, y; logPt(e.button.x, e.button.y, x, y);
         return hitTest(x, y);
@@ -182,7 +181,7 @@ bool Game::handleSoftKBEvent(SDL_Event& e) {
         return false;  // don't consume release
     }
 
-    // ── Touch ──
+    // Touch
     if (e.type == SDL_FINGERDOWN) {
         int x = (int)(e.tfinger.x * SCREEN_W);
         int y = (int)(e.tfinger.y * SCREEN_H);
@@ -190,7 +189,7 @@ bool Game::handleSoftKBEvent(SDL_Event& e) {
         return true;
     }
 
-    // ── Gamepad ──
+    // Gamepad
     if (e.type == SDL_CONTROLLERBUTTONDOWN) {
         Uint8 btn = remapButton(e.cbutton.button);
         int& row = kb.gpRow;
@@ -241,7 +240,7 @@ bool Game::handleSoftKBEvent(SDL_Event& e) {
     return false;
 }
 
-// ── Rendering ─────────────────────────────────────────────────────────────────
+// Rendering
 
 void Game::renderSoftKB() {
 #ifndef __SWITCH__
@@ -270,13 +269,13 @@ void Game::renderSoftKB() {
     int cx = kb.winX + PAD;
     int cy = kb.winY + TH + PAD;
 
-    // ── Text preview ──
+    // Text preview
     bool blink = (SDL_GetTicks() / 500) % 2 == 0;
     std::string preview = *kb.target + (blink ? "|" : " ");
     ui_.drawWin98TextField(cx, cy, CONTENT_W, PREVIEW_H, preview.c_str(), true);
     cy += PREVIEW_H + 4;
 
-    // ── Keys ──
+    // Keys
     kb.hits.clear();
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
 
@@ -349,7 +348,7 @@ void Game::renderSoftKB() {
         cy += CH;
     }
 
-    // ── Gamepad hint bar ──
+    // Gamepad hint bar
     UI::HintPair hints[] = {
         {UI::Action::Navigate, "Navigate"},
         {UI::Action::Confirm,  "Press"},
@@ -526,7 +525,7 @@ void Game::handleInput() {
             }
         }
 
-        // ── Lobby chat text input ──
+        // Lobby chat text input
         if (e.type == SDL_TEXTINPUT && chatTyping_ && state_ == GameState::Lobby) {
             size_t cur = strlen(chatInputBuf_);
             size_t len = strlen(e.text.text);
@@ -547,7 +546,7 @@ void Game::handleInput() {
         if (e.type == SDL_CONTROLLERBUTTONDOWN) {
             Uint8 btn = remapButton(e.cbutton.button);
             lastGamepadInputId_ = e.cbutton.which;
-            // ── Local join/leave handling in lobby screens ──
+            // Local join/leave handling in lobby screens
             if (state_ == GameState::LocalCoopLobby || state_ == GameState::Lobby) {
                 bool isMultiplayerLobby = (state_ == GameState::Lobby);
                 SDL_JoystickID iid = e.cbutton.which;
@@ -791,7 +790,7 @@ void Game::handleInput() {
         }
     }
 
-    // ── D-pad hold-repeat for menu navigation ──
+    // D-pad hold-repeat for menu navigation
     {
         Uint32 now = SDL_GetTicks();
         if (menuNavHeldBtn_ >= 0 && now >= menuNavRepeatAt_) {
@@ -908,7 +907,7 @@ void Game::handleInput() {
         bombLaunchHeld_ = zlDown;
     }
 
-    // ── Analog-stick menu navigation (non-gameplay states) ──
+    // Analog-stick menu navigation (non-gameplay states)
     {
         bool inGameplay = (state_ == GameState::Playing  || state_ == GameState::Paused ||
             state_ == GameState::Dead            || state_ == GameState::LocalCoopGame  ||
@@ -977,7 +976,7 @@ void Game::handleInput() {
         if (!gc) bombLaunchHeld_ = rmbDown;  // only track RMB hold when no gamepad (ZL tracks its own)
     }
 
-    // ── Touch (virtual gamepad) - full emulation across all states ──────────
+    // Touch (virtual gamepad) - full emulation across all states
 #ifdef __ANDROID__
     if (touchControls_.anyActive) {
         usingGamepad_ = true;
@@ -1090,7 +1089,7 @@ void Game::handleInput() {
         }
     }
     else if (state_ == GameState::MainMenu) {
-        // ── Log-off confirmation dialog intercept ──
+        // Log-off confirmation dialog intercept
         // Must run before the clamp so menuSelection_ 90/91 aren't wiped.
         if (logOffConfirm_) {
             if (confirmInput_) {
@@ -1469,9 +1468,13 @@ void Game::handleInput() {
     }
     else if (state_ == GameState::MapSelect) {
         int maxIdx = std::max(0, (int)mapFiles_.size() - 1);
-        if (menuSelection_ < 0) menuSelection_ = 0;
-        if (menuSelection_ > maxIdx + 1) menuSelection_ = maxIdx + 1; // +1 for BACK
-        mapSelectIdx_ = menuSelection_;
+        if (mapSelectIdx_ < 0) mapSelectIdx_ = 0;
+        if (mapSelectIdx_ > maxIdx) mapSelectIdx_ = maxIdx;
+        // Keep menuSelection_ in sync for keyboard up/down navigation
+        if (menuSelection_ >= 0 && menuSelection_ <= maxIdx)
+            mapSelectIdx_ = menuSelection_;
+        else
+            menuSelection_ = mapSelectIdx_;
         if (backInput_) {
             if (prevMenuState_ == GameState::PlayModeMenu) {
                 state_ = GameState::PlayModeMenu; playModeSelection_ = 1; menuSelection_ = 1;
@@ -1480,8 +1483,10 @@ void Game::handleInput() {
             }
         }
         if (confirmInput_) {
-            if (mapSelectIdx_ <= maxIdx && !mapFiles_.empty()) {
-                startCustomMap(mapFiles_[mapSelectIdx_]);
+            // Back button sets menuSelection_ to mapFiles_.size()
+            bool isBack = (menuSelection_ > maxIdx);
+            if (!isBack && !mapFiles_.empty()) {
+                startCustomMap(mapFiles_[mapSelectIdx_], mapSelectMode_);
             } else {
                 if (prevMenuState_ == GameState::PlayModeMenu) {
                     state_ = GameState::PlayModeMenu; playModeSelection_ = 1; menuSelection_ = 1;
@@ -1723,7 +1728,7 @@ void Game::handleInput() {
             menuSelection_ = 0;
         }
     }
-    // ── Map Pack states ──
+    // Map Pack states
     else if (state_ == GameState::PackSelect) {
         int maxIdx = std::max(0, (int)availablePacks_.size() - 1);
         if (menuSelection_ < 0) menuSelection_ = 0;
@@ -1831,7 +1836,7 @@ void Game::handleInput() {
             state_ = GameState::MainMenu;
         }
     }
-    // ── Multiplayer state input handling ──
+    // Multiplayer state input handling
     else if (state_ == GameState::MultiplayerMenu) {
         int totalItems = 3 + (int)savedServers_.size(); // HOST, JOIN, BACK + saved servers
         if (menuSelection_ < 0) menuSelection_ = 0;
@@ -2109,8 +2114,8 @@ void Game::handleInput() {
 
         bool canManageLobby = net.isLobbyHost();
 
-        // ── Chat input - must run before any confirmInput_ check so Enter
-        //    sends the message instead of starting/readying the game.
+        // Chat input - must run before any confirmInput_ check so Enter
+        // sends the message instead of starting/readying the game.
         if (chatTyping_) {
             if (confirmInput_) {
                 std::string msg(chatInputBuf_);
@@ -2162,7 +2167,7 @@ void Game::handleInput() {
             }
         }
 
-        // ── Lobby kick mode (host only: TAB/Y toggles, LEFT/RIGHT selects, A kicks) ─────
+        // Lobby kick mode (host only: TAB/Y toggles, LEFT/RIGHT selects, A kicks)
         if (canManageLobby && tabInput_) {
             lobbyKickCursor_ = (lobbyKickCursor_ < 0) ? 0 : -1;
         }
@@ -2247,9 +2252,9 @@ void Game::handleInput() {
         // Host can adjust lobby settings with UP/DOWN/LEFT/RIGHT
         if (canManageLobby) {
             // Settings row list:
-            //   0=Gamemode, 1=FriendlyFire, 2=Upgrades, 3=Map, 4=MapWidth, 5=MapHeight,
-            //   6=EnemyHP, 7=EnemySpeed, 8=SpawnRate, 9=PlayerHP,
-            //   10=TeamCount, 11=Lives, 12=LivesMode, 13=CrateInterval(PVP)/WaveCount(PVE)
+            // 0=Gamemode, 1=FriendlyFire, 2=Upgrades, 3=Map, 4=MapWidth, 5=MapHeight,
+            // 6=EnemyHP, 7=EnemySpeed, 8=SpawnRate, 9=PlayerHP,
+            // 10=TeamCount, 11=Lives, 12=LivesMode, 13=CrateInterval(PVP)/WaveCount(PVE)
             // Compute effective setting count based on current mode
             int SETTING_COUNT = 13; // base: 0-12 (includes Map selector)
             if (lobbySettings_.livesPerPlayer == 0) SETTING_COUNT = 12; // hide LivesMode
@@ -2360,13 +2365,13 @@ void Game::handleInput() {
                                 lobbySettings_.waveCount = std::max(0, std::min(1000, lobbySettings_.waveCount + dir * (lobbySettings_.waveCount >= 10 ? 10 : 1)));
                             }
                         } else if (lobbySettings_.isPvp) {
-                            // lives==0, isPvp → matchTimeIdx=13
+                            // lives==0, isPvp -> matchTimeIdx=13
                             lobbySettings_.pvpMatchDuration = std::max(0.0f, std::min(3600.0f, lobbySettings_.pvpMatchDuration + dir * 30.0f));
                         }
-                        // else lives==0, !isPvp → presetSaveIdx=13 (no left/right effect)
+                        // else lives==0, !isPvp -> presetSaveIdx=13 (no left/right effect)
                         break;
                     default:
-                        // lives>0, isPvp → matchTimeIdx=14
+                        // lives>0, isPvp -> matchTimeIdx=14
                         if (lobbySettings_.isPvp && lobbySettings_.livesPerPlayer > 0 && lobbySettingsSel_ == 14) {
                             lobbySettings_.pvpMatchDuration = std::max(0.0f, std::min(3600.0f, lobbySettings_.pvpMatchDuration + dir * 30.0f));
                         }
@@ -2395,7 +2400,7 @@ void Game::handleInput() {
         bool hasTeams    = currentRules_.teamCount >= 2;
         bool isHostPlayer = net2.isLobbyHost();
 
-        // ── Admin overlay ──────────────────────────────────────────────
+        // Admin overlay
         if (adminMenuOpen_) {
             const auto& players = net2.players();
             int pCount = (int)players.size();
@@ -2435,7 +2440,7 @@ void Game::handleInput() {
             return;
         }
 
-        // ── Team-pick sub-state ────────────────────────────────────────
+        // Team-pick sub-state
         if (pauseMenuSub_ == 1) {
             int tc = currentRules_.teamCount; if (tc < 2) tc = 2;
             if (leftInput_)  pauseTeamCursor_ = (pauseTeamCursor_ - 1 + tc) % tc;
@@ -2454,14 +2459,14 @@ void Game::handleInput() {
             return;
         }
 
-        // ── Main pause list ────────────────────────────────────────────
-        //  0 = Resume
-        //  1 = Music Volume
-        //  2 = SFX Volume
-        //  3 = Change Team   (if hasTeams)
-        //  next = Admin Menu  (if isHostPlayer)
-        //  next = End Game   (if isHostPlayer)
-        //  last = Disconnect / Back to Lobby
+        // Main pause list
+        // 0 = Resume
+        // 1 = Music Volume
+        // 2 = SFX Volume
+        // 3 = Change Team   (if hasTeams)
+        // next = Admin Menu  (if isHostPlayer)
+        // next = End Game   (if isHostPlayer)
+        // last = Disconnect / Back to Lobby
         int resumeIdx = 0;
         int musicIdx  = 1;
         int sfxIdx    = 2;
@@ -2519,7 +2524,7 @@ void Game::handleInput() {
         if (respawnTimer_ <= 0) respawnTimer_ = currentRules_.respawnTime;
     }
     else if (state_ == GameState::WinLoss) {
-        // Any confirm or back → proceed to full scoreboard
+        // Any confirm or back -> proceed to full scoreboard
         if (confirmInput_ || backInput_) {
             state_ = GameState::Scoreboard;
             menuSelection_ = 0;
@@ -2659,7 +2664,5 @@ void Game::handleInput() {
     backInput_    = false;
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Update
-// ═════════════════════════════════════════════════════════════════════════════
+// Update
 

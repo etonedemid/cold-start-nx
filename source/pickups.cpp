@@ -1,10 +1,7 @@
-// ─── pickups.cpp ─── Crate and pickup logic
 #include "game.h"
 #include "game_internal.h"
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Pickup / Crate Update & Render
-// ═════════════════════════════════════════════════════════════════════════════
+// Pickup / Crate Update & Render
 
 void Game::updateCrates(float dt) {
     // Auto-spawn crates on a timer (every ~20-30 seconds)
@@ -25,16 +22,15 @@ void Game::updateCrates(float dt) {
             else
                 crateSpawnTimer_ = 20.0f + (float)(rand() % 100) / 10.0f; // 20-30s
 
-            // Find a random open position
-            for (int attempts = 0; attempts < 20; attempts++) {
+            // Find a random open position (any non-solid tile)
+            for (int attempts = 0; attempts < 60; attempts++) {
                 int tx = 2 + rand() % (map_.width - 4);
                 int ty = 2 + rand() % (map_.height - 4);
-                if (map_.get(tx, ty) == TILE_GRASS) {
-                    Vec2 pos = {TileMap::toWorld(tx), TileMap::toWorld(ty)};
-                    spawnCrate(pos);
-                    cratePopupTimer_ = 2.5f;  // trigger "SUPPLY DROP" popup
-                    break;
-                }
+                if (map_.isSolid(tx, ty)) continue;
+                Vec2 pos = {TileMap::toWorld(tx), TileMap::toWorld(ty)};
+                spawnCrate(pos);
+                cratePopupTimer_ = 2.5f;
+                break;
             }
         }
     }
@@ -186,7 +182,7 @@ void Game::applyUpgrade(UpgradeType type) {
             player_.ammo = player_.maxAmmo;
             break;
         case UpgradeType::HealthUp:
-            player_.maxHp += 1;
+            player_.maxHp += 10;
             player_.hp = player_.maxHp; // full heal
             break;
         case UpgradeType::ReloadUp:
@@ -210,8 +206,8 @@ void Game::applyUpgrade(UpgradeType type) {
             player_.bombCount = std::min(MAX_BOMBS, player_.bombCount + 1);
             break;
         case UpgradeType::Juggernaut:
-            player_.maxHp += 2;
-            player_.hp = std::min(player_.maxHp, player_.hp + 2);
+            player_.maxHp += 20;
+            player_.hp = std::min(player_.maxHp, player_.hp + 20);
             player_.speed = std::max(180.0f, player_.speed - 35.0f);
             break;
         case UpgradeType::StunRounds:
@@ -234,7 +230,7 @@ void Game::applyUpgrade(UpgradeType type) {
             player_.speed = std::max(200.0f, player_.speed - 60.0f);
             break;
         case UpgradeType::GlassCannon:
-            player_.maxHp = std::max(1, player_.maxHp - 1);
+            player_.maxHp = std::max(10, player_.maxHp - 20);
             player_.hp = std::min(player_.hp, player_.maxHp);
             // But damage goes way up
             break;
@@ -243,6 +239,30 @@ void Game::applyUpgrade(UpgradeType type) {
     }
 
     printf("Upgrade applied: %s\n", getUpgradeInfo(type).name);
+}
+
+void Game::renderVehicles() {
+    static constexpr float HALF_PI = 1.5707963f;
+    for (auto& v : vehicles_) {
+        if (!v.alive || !v.sprite) continue;
+        Vec2 sp = camera_.worldToScreen(v.pos);
+        // Sprite faces up in PNG; rotation=0 = east in game convention, offset by π/2
+        renderSprite(v.sprite, v.pos, v.rotation + HALF_PI, 1.5f);
+
+        // "Press E" prompt when player is nearby
+        if (!inVehicle_ && v.occupantSlot < 0) {
+            float dist = Vec2::dist(player_.pos, v.pos);
+            if (dist < Vehicle::ENTER_RADIUS) {
+                int tx = (int)sp.x - 24;
+                int ty = (int)sp.y - (int)v.size - 18;
+                ui_.drawText("[E] Enter", tx, ty, 11, {220, 220, 80, 255});
+            }
+        } else if (inVehicle_ && vehicleIdx_ >= 0 && &v == &vehicles_[vehicleIdx_]) {
+            int tx = (int)sp.x - 20;
+            int ty = (int)sp.y - (int)v.size - 18;
+            ui_.drawText("[E] Exit", tx, ty, 11, {220, 220, 80, 255});
+        }
+    }
 }
 
 void Game::renderCrates() {
