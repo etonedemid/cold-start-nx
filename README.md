@@ -11,11 +11,12 @@ AI disclosure: code
 
 ## Screenshots
 
-![screenshot 1](https://img.itch.zone/aW1hZ2UvMzczNzA2OS8yNzQ4MDEwOC5wbmc=/original/Fq6lHp.png)
-![screenshot 2](https://img.itch.zone/aW1hZ2UvMzczNzA2OS8yNzQ4MDEzMy5qcGc=/original/lUvkVG.jpg)
-![screenshot 3](https://img.itch.zone/aW1hZ2UvMzczNzA2OS8yNzQ4MDEzNi5qcGc=/original/ZFEjh9.jpg)
-![screenshot 4](Screenshots/20260601_191828.jpg)
-![screenshot 5](Screenshots/20260601_191947.jpg)
+![screenshot 1](Screenshots/image.png)
+![screenshot 2](Screenshots/image%20copy.png)
+![screenshot 3](Screenshots/image%20copy%202.png)
+![screenshot 4](Screenshots/image%20copy%203.png)
+![screenshot 5](Screenshots/20260601_191828.jpg)
+![screenshot 6](Screenshots/20260601_191947.jpg)
 
 ## Highlights
 
