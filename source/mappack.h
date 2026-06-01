@@ -1,26 +1,24 @@
 #pragma once
-// ─── mappack.h ─── .cspack (Cold Start Map Pack) for user campaigns ─────────
 // Text-based INI format describing a "playlist" of maps + included character(s):
 //
-//   [pack]
-//   name=My Campaign
-//   creator=PlayerName
-//   description=A short campaign with 3 levels
-//   version=1
+// [pack]
+// name=My Campaign
+// creator=PlayerName
+// description=A short campaign with 3 levels
+// version=1
 //
-//   [character]
-//   path=characters/hero/hero.cschar
-//   ;; additional characters can be added:
-//   ;; path2=characters/alt/alt.cschar
+// [character]
+// path=characters/hero/hero.cschar
+// ;; additional characters can be added:
+// ;; path2=characters/alt/alt.cschar
 //
-//   [maps]
-//   count=3
-//   map1=maps/level1.csm
-//   map2=maps/level2.csm
-//   map3=maps/level3.csm
+// [maps]
+// count=3
+// map1=maps/level1.csm
+// map2=maps/level2.csm
+// map3=maps/level3.csm
 //
 // Maps are played in order. The player uses the pack's included character(s).
-// ─────────────────────────────────────────────────────────────────────────────
 #include <string>
 #include <vector>
 

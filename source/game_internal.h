@@ -1,5 +1,4 @@
 #pragma once
-// ─── game_internal.h ─── Helpers shared across game_*.cpp translation units ──
 // Included only by game implementation files, not external consumers.
 #include "game.h"
 #include <SDL2/SDL_mixer.h>
@@ -229,8 +228,8 @@ inline float getMeleeArc(const PlayerUpgrades& u) {
 
 inline int getMeleePlayerDamage(const PlayerUpgrades& u) {
     int dmg = MELEE_PLAYER_DAMAGE + u.meleeDamageBonus;
-    dmg += std::max(0, (int)floorf((u.damageMulti - 1.0f) * 2.0f));
-    return std::min(8, std::max(1, dmg));
+    dmg += std::max(0, (int)floorf((u.damageMulti - 1.0f) * 20.0f));
+    return std::min(80, std::max(1, dmg));
 }
 
 inline float getMeleeCooldownTime(const PlayerUpgrades& u) {

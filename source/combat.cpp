@@ -1,6 +1,44 @@
-// ─── combat.cpp ─── Player/enemy combat, AI, bullets, bombs
 #include "game.h"
 #include "game_internal.h"
+#include <cmath>
+#include <algorithm>
+
+// Rotated-rect vs circle pushout - transforms circle into rect's local frame,
+// finds nearest surface point, returns the world-space separation vector.
+static Vec2 collisionZonePushout(Vec2 pos, float radius, Vec2 center, float hw, float hh, float angle) {
+    float ca = cosf(-angle), sa = sinf(-angle);
+    float dx = pos.x - center.x, dy = pos.y - center.y;
+    float lx = dx*ca - dy*sa, ly = dx*sa + dy*ca;
+    float nx = std::max(-hw, std::min(hw, lx));
+    float ny = std::max(-hh, std::min(hh, ly));
+    float distSq = (lx-nx)*(lx-nx) + (ly-ny)*(ly-ny);
+    if (distSq >= radius*radius) return {0.0f, 0.0f};
+    float dist = sqrtf(distSq);
+    float normalX, normalY;
+    if (dist < 0.001f) { // center inside rect - push out along shortest axis
+        float px = hw - fabsf(lx), py = hh - fabsf(ly);
+        if (px < py) { normalX = lx < 0 ? -1.0f :  1.0f; normalY = 0.0f; }
+        else         { normalX = 0.0f; normalY = ly < 0 ? -1.0f : 1.0f; }
+    } else {
+        normalX = (lx - nx) / dist;
+        normalY = (ly - ny) / dist;
+    }
+    float push = radius - dist;
+    float cb = cosf(angle), sb = sinf(angle);
+    return { (normalX*cb - normalY*sb)*push, (normalX*sb + normalY*cb)*push };
+}
+
+void Game::pushOutCollisionZones(Vec2& pos, float radius) {
+    for (auto& t : customMap_.triggers) {
+        if (t.type != TriggerType::CollisionZone) continue;
+        float angle = triggerGetAngle(t);
+        Vec2  center = { t.x, t.y }; // t.x/t.y is the center, not the top-left
+        Vec2  push   = collisionZonePushout(pos, radius, center,
+                                             t.width*0.5f, t.height*0.5f, angle);
+        pos.x += push.x;
+        pos.y += push.y;
+    }
+}
 
 
 void Game::updatePlayer(float dt) {
@@ -62,7 +100,7 @@ void Game::updatePlayer(float dt) {
         return;
     }
 
-    // ── Weapon switch ──
+    // Weapon switch
     constexpr int NUM_WEAPONS = 2;
     if (weaponSwitchDelta_ != 0) {
         p.activeWeapon = ((p.activeWeapon + weaponSwitchDelta_) % NUM_WEAPONS + NUM_WEAPONS) % NUM_WEAPONS;
@@ -73,84 +111,85 @@ void Game::updatePlayer(float dt) {
         }
     }
 
-    // ── Movement ──
-    Vec2 targetVel = {0, 0};
-    p.moving = moveInput_.lengthSq() > 0.01f;
-    if (p.moving) {
-        const float lastStandSpeedMult = (upgrades_.hasLastStand && p.hp <= 1) ? (1.0f + 0.3f * upgrades_.hasLastStand) : 1.0f;
-        targetVel = moveInput_.normalized() * p.speed * moveInput_.length() * lastStandSpeedMult;
-    }
-
-    // Smooth velocity (like Unity's Lerp)
-    p.vel = Vec2::lerp(p.vel, targetVel, dt * PLAYER_SMOOTHING);
-
-    // Parry dash override (matches scout enemy dash)
-    if (p.isParrying && p.parryDashTimer > 0) {
-        p.vel = p.parryDir * PARRY_DASH_SPEED;
-    }
-
-    // Apply velocity
-    Vec2 newPos = p.pos + p.vel * dt;
-
-    // Tile collision (slide) - spectators clip through walls
-    if (!spectatorMode_) {
-        if (!map_.worldCollides(newPos.x, p.pos.y, PLAYER_SIZE * 0.4f))
-            p.pos.x = newPos.x;
-        if (!map_.worldCollides(p.pos.x, newPos.y, PLAYER_SIZE * 0.4f))
-            p.pos.y = newPos.y;
+    // Movement — skip entirely when in a vehicle (vehicle owns position/velocity)
+    if (inVehicle_ && vehicleIdx_ >= 0 && vehicleIdx_ < (int)vehicles_.size()) {
+        auto& veh = vehicles_[vehicleIdx_];
+        p.pos = veh.pos;
+        p.vel = veh.vel;
+        p.moving = false;
     } else {
-        p.pos = newPos; // noclip
-    }
+        Vec2 targetVel = {0, 0};
+        p.moving = moveInput_.lengthSq() > 0.01f;
+        if (p.moving) {
+            const float lastStandSpeedMult = (upgrades_.hasLastStand && p.hp <= 10) ? (1.0f + 0.3f * upgrades_.hasLastStand) : 1.0f;
+            targetVel = moveInput_.normalized() * p.speed * moveInput_.length() * lastStandSpeedMult;
+        }
 
-    // Clamp to world
-    p.pos.x = fmaxf(PLAYER_SIZE, fminf(map_.worldWidth() - PLAYER_SIZE, p.pos.x));
-    p.pos.y = fmaxf(PLAYER_SIZE, fminf(map_.worldHeight() - PLAYER_SIZE, p.pos.y));
+        p.vel = Vec2::lerp(p.vel, targetVel, dt * PLAYER_SMOOTHING);
 
-    // Unstuck: parry dash or knockback can push the player into a wall corner.
-    // If we're embedded, spiral outward until a free cell is found.
-    if (!spectatorMode_ && map_.worldCollides(p.pos.x, p.pos.y, PLAYER_SIZE * 0.4f)) {
-        for (float r = 6.0f; r <= TILE_SIZE * 2.0f; r += 6.0f) {
-            bool freed = false;
-            for (int a = 0; a < 8; a++) {
-                float ang = a * (float)M_PI * 0.25f;
-                float tx = p.pos.x + cosf(ang) * r;
-                float ty = p.pos.y + sinf(ang) * r;
-                if (!map_.worldCollides(tx, ty, PLAYER_SIZE * 0.4f)) {
-                    p.pos = {tx, ty};
-                    p.vel = {0.0f, 0.0f};
-                    freed = true;
-                    break;
+        if (p.isParrying && p.parryDashTimer > 0) {
+            p.vel = p.parryDir * PARRY_DASH_SPEED;
+        }
+
+        Vec2 newPos = p.pos + p.vel * dt;
+
+        if (!spectatorMode_) {
+            if (!map_.worldCollides(newPos.x, p.pos.y, PLAYER_SIZE * 0.4f))
+                p.pos.x = newPos.x;
+            if (!map_.worldCollides(p.pos.x, newPos.y, PLAYER_SIZE * 0.4f))
+                p.pos.y = newPos.y;
+            pushOutCollisionZones(p.pos, PLAYER_SIZE * 0.4f);
+        } else {
+            p.pos = newPos;
+        }
+
+        p.pos.x = fmaxf(PLAYER_SIZE, fminf(map_.worldWidth() - PLAYER_SIZE, p.pos.x));
+        p.pos.y = fmaxf(PLAYER_SIZE, fminf(map_.worldHeight() - PLAYER_SIZE, p.pos.y));
+
+        if (!spectatorMode_ && map_.worldCollides(p.pos.x, p.pos.y, PLAYER_SIZE * 0.4f)) {
+            for (float r = 6.0f; r <= TILE_SIZE * 2.0f; r += 6.0f) {
+                bool freed = false;
+                for (int a = 0; a < 8; a++) {
+                    float ang = a * (float)M_PI * 0.25f;
+                    float tx = p.pos.x + cosf(ang) * r;
+                    float ty = p.pos.y + sinf(ang) * r;
+                    if (!map_.worldCollides(tx, ty, PLAYER_SIZE * 0.4f)) {
+                        p.pos = {tx, ty};
+                        p.vel = {0.0f, 0.0f};
+                        freed = true;
+                        break;
+                    }
                 }
+                if (freed) break;
             }
-            if (freed) break;
         }
     }
 
-    // ── Rotation (aim) ──
+    // Rotation (aim)
     if (aimInput_.lengthSq() > 0.04f) {
         p.rotation = atan2f(aimInput_.y, aimInput_.x);
     } else if (p.moving) {
         p.rotation = atan2f(moveInput_.y, moveInput_.x);
     }
 
-    // ── Leg rotation (movement direction) ──
+    // Leg rotation (movement direction)
     if (p.moving) {
         p.legRotation = atan2f(p.vel.y, p.vel.x);
     }
 
-    // ── Body animation: melee takes priority, then shooting anim ──
+    // Body animation: melee takes priority, then shooting anim
     if (p.isMeleeSwinging) {
-        // Axe swing: sprites 0004–0010 (frames 3–9)
+        // Axe swing: sprites 0004-0010 (frames 3-9)
         float prog = std::min(1.0f, p.meleeTimer / MELEE_DURATION);
         int range  = MELEE_ANIM_LAST - MELEE_ANIM_FIRST;             // 6
         int offset = std::min(range, (int)(prog * (range + 1)));      // 0..6
         p.animFrame = p.meleeSwingReverse
-                      ? (MELEE_ANIM_LAST  - offset)   // reverse: 9→3
-                      : (MELEE_ANIM_FIRST + offset);  // forward: 3→9
+                      ? (MELEE_ANIM_LAST  - offset)   // reverse: 9->3
+                      : (MELEE_ANIM_FIRST + offset);  // forward: 3->9
     } else if (p.hadMeleeSwing) {
         // Hold end-of-swing pose between swings (meleeSwingReverse was toggled
-        // when swing completed, so: next=reverse → last was forward → idle at LAST=9;
-        //                            next=forward → last was reverse → idle at FIRST=3)
+        // when swing completed, so: next=reverse -> last was forward -> idle at LAST=9;
+        //                          next=forward -> last was reverse -> idle at FIRST=3)
         p.animFrame = p.meleeSwingReverse ? MELEE_ANIM_LAST : MELEE_ANIM_FIRST;
     } else if (p.activeWeapon == 1) {
         // Axe equipped but never swung yet - hold the axe-ready pose (sprite 0004)
@@ -182,14 +221,15 @@ void Game::updatePlayer(float dt) {
         p.legAnimFrame = 0;
     }
 
-    // ── Invulnerability ──
+    // Invulnerability (used by Blindness pickup and respawn only)
     if (p.invulnerable) {
         p.invulnTimer -= dt;
         if (p.invulnTimer <= 0) p.invulnerable = false;
     }
-    // ── Shooting ──
+    p.bodyContactCooldown = std::max(0.0f, p.bodyContactCooldown - dt);
+    // Shooting
     p.fireCooldown -= dt;
-    if (!spectatorMode_ && p.activeWeapon == 0 && p.canShoot) {  // gun slot only
+    if (!spectatorMode_ && !inVehicle_ && p.activeWeapon == 0 && p.canShoot) {  // gun slot only
     if (p.reloading) {
         p.reloadTimer -= dt;
         if (p.reloadTimer <= 0) {
@@ -198,7 +238,7 @@ void Game::updatePlayer(float dt) {
         }
     } else if (fireInput_ && p.fireCooldown <= 0 && p.ammo > 0) {
         spawnBullet(p.pos, p.rotation);
-        // Triple shot – two extra bullets per stack at increasing spreads
+        // Triple shot - two extra bullets per stack at increasing spreads
         if (upgrades_.hasTripleShot) {
             const float spread = 0.26f; // ~15 degrees per step
             for (int s = 0; s < upgrades_.hasTripleShot; s++) {
@@ -224,7 +264,7 @@ void Game::updatePlayer(float dt) {
     }
     } // gun slot only (!spectatorMode_ && activeWeapon==0)
 
-    // ── Parry ──
+    // Parry
     if (!spectatorMode_) {
     if (parryInput_ && p.canParry && !p.isParrying) {
         playerParry();
@@ -242,14 +282,56 @@ void Game::updatePlayer(float dt) {
     }
     } // !spectatorMode_
 
-    // ── Melee (axe swing) ──
+    // Melee (axe swing)
     const float meleeRange = getMeleeRange(p, upgrades_);
     const float meleeArc = getMeleeArc(upgrades_);
     const int meleePlayerDamage = getMeleePlayerDamage(upgrades_);
     const float meleeCooldownTime = getMeleeCooldownTime(upgrades_);
     if (p.meleeCooldown > 0) p.meleeCooldown -= dt;
+
+    // E key: enter/exit vehicle takes priority over melee
+    if (meleeInput_ && !spectatorMode_) {
+        if (inVehicle_ && vehicleIdx_ >= 0 && vehicleIdx_ < (int)vehicles_.size()) {
+            auto& ev = vehicles_[vehicleIdx_];
+            ev.occupantSlot = -1;
+            inVehicle_  = false;
+            vehicleIdx_ = -1;
+            meleeInput_ = false;
+            // Eject player to side of car, trying left then right then behind
+            {
+                Vec2 fwd = {cosf(ev.rotation), sinf(ev.rotation)};
+                Vec2 lat = {-fwd.y, fwd.x};
+                float ejectDist = (ev.spriteW > 0 ? ev.spriteW * 0.75f : ev.size) + 28.0f;
+                const Vec2 candidates[] = {
+                    ev.pos + lat *  ejectDist,
+                    ev.pos - lat *  ejectDist,
+                    ev.pos - fwd *  ejectDist,
+                };
+                for (auto& cand : candidates) {
+                    if (!map_.worldCollides(cand.x, cand.y, 16.0f)) {
+                        p.pos = cand;
+                        p.vel = {0.0f, 0.0f};
+                        break;
+                    }
+                }
+            }
+        } else {
+            for (int vi = 0; vi < (int)vehicles_.size(); vi++) {
+                auto& v = vehicles_[vi];
+                if (!v.alive || v.occupantSlot >= 0) continue;
+                if (Vec2::dist(p.pos, v.pos) < Vehicle::ENTER_RADIUS) {
+                    inVehicle_  = true;
+                    vehicleIdx_ = vi;
+                    v.occupantSlot = 0;
+                    meleeInput_ = false;
+                    break;
+                }
+            }
+        }
+    }
+
     if (!spectatorMode_) {
-        // E key while gun is equipped → quick-switch to axe
+        // E key while gun is equipped -> quick-switch to axe
         if (meleeInput_ && p.activeWeapon == 0) {
             p.activeWeapon = 1;
             p.hadMeleeSwing = false;
@@ -561,7 +643,7 @@ void Game::updatePlayer(float dt) {
         }
     }
 
-    // ── Bombs ── spawn one queued bomb per frame so orbit angles spread naturally
+    // Bombs: spawn one queued bomb per frame so orbit angles spread naturally
     if (!spectatorMode_ && p.bombCount > 0) {
         spawnBomb();
         p.bombCount--;
@@ -668,7 +750,7 @@ void Game::updatePlayer(float dt) {
                 launchDir = aimDir;
             }
             toFire->activate(launchDir);
-            // ── Sync bomb launch to other players ──
+            // Sync bomb launch to other players
             auto& net = NetworkManager::instance();
             if (net.isInGame()) {
                 net.sendBombSpawn(toFire->pos, toFire->vel, net.localPlayerId(), toFire->ownerSubSlot);
@@ -694,9 +776,7 @@ void Player::die() {
     animTimer = 0;
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Enemy Update
-// ═════════════════════════════════════════════════════════════════════════════
+// Enemy Update
 
 void Game::updateEnemies(float dt) {
     auto& net = NetworkManager::instance();
@@ -928,6 +1008,8 @@ void Game::updateEnemies(float dt) {
             e.pos.y = newPos.y;
         else
             e.vel.y = 0;
+        // Collision zone triggers
+        pushOutCollisionZones(e.pos, e.size * 0.4f);
 
         // Clamp to world
         e.pos.x = fmaxf(e.size, fminf(map_.worldWidth() - e.size, e.pos.x));
@@ -1087,7 +1169,8 @@ void Game::enemyChase(Enemy& e, float dt) {
             e.vel = Vec2::lerp(e.vel, desired, dt * SHOOTER_INERTIA);
         } else {
             // Orbit / strafe
-            Vec2 perp = Vec2{-toPlayer.normalized().y, toPlayer.normalized().x};
+            Vec2 tn = toPlayer.normalized();
+            Vec2 perp = Vec2{-tn.y, tn.x};
             float sideSign = (sinf(gameTime_ * 0.9f) > 0) ? 1.0f : -1.0f;
             e.vel = Vec2::lerp(e.vel, perp * sideSign * e.speed * 0.5f, dt * 4.0f);
         }
@@ -1108,7 +1191,7 @@ void Game::enemyChase(Enemy& e, float dt) {
         return;
     }
 
-    // Movement: close orbit → boss wide strafe → straight charge
+    // Movement: close orbit -> boss wide strafe -> straight charge
     const float strafeInner = e.dashDistance + e.strafeOrbitOffset;
     const float strafeOuter = e.dashDistance + 100.0f + e.strafeOrbitOffset;
     bool inOrbitBand = e.dashOnCd && dist > strafeInner && dist < strafeOuter;
@@ -1200,46 +1283,45 @@ Vec2 Game::steerToward(Vec2 from, Vec2 to, float spd, float dt) const {
     if (dir.lengthSq() < 4.0f) return {0, 0};
     dir = dir.normalized();
 
-    // Check if direct path is blocked by a wall
-    float lookAhead = TILE_SIZE * 1.5f;
-    Vec2 ahead = from + dir * lookAhead;
-    int tx = TileMap::toTile(ahead.x);
-    int ty = TileMap::toTile(ahead.y);
-
-    if (map_.isSolid(tx, ty)) {
-        // Try 45-degree left and right feelers to find an open direction
-        float baseAngle = atan2f(dir.y, dir.x);
-        // Try increasingly wider angles
-        for (float offset = 0.5f; offset <= 2.5f; offset += 0.5f) {
-            // Try right
-            float aR = baseAngle + offset;
-            Vec2 rDir = {cosf(aR), sinf(aR)};
-            Vec2 rAhead = from + rDir * lookAhead;
-            int rxT = TileMap::toTile(rAhead.x);
-            int ryT = TileMap::toTile(rAhead.y);
-            if (!map_.isSolid(rxT, ryT)) {
-                return rDir * spd;
-            }
-            // Try left
-            float aL = baseAngle - offset;
-            Vec2 lDir = {cosf(aL), sinf(aL)};
-            Vec2 lAhead = from + lDir * lookAhead;
-            int lxT = TileMap::toTile(lAhead.x);
-            int lyT = TileMap::toTile(lAhead.y);
-            if (!map_.isSolid(lxT, lyT)) {
-                return lDir * spd;
-            }
+    // Obstacle check: tile walls + CollisionZone triggers
+    const float probeR = TILE_SIZE * 0.35f;
+    auto isBlocked = [&](Vec2 pt) -> bool {
+        if (map_.isSolid(TileMap::toTile(pt.x), TileMap::toTile(pt.y))) return true;
+        for (const auto& t : customMap_.triggers) {
+            if (t.type != TriggerType::CollisionZone) continue;
+            if (collisionZonePushout(pt, probeR, {t.x, t.y},
+                    t.width*0.5f, t.height*0.5f, triggerGetAngle(t)).lengthSq() > 0.0f)
+                return true;
         }
-        // All feelers blocked: try perpendicular
+        return false;
+    };
+
+    // Two lookahead distances: close catches immediate obstacles, far allows early steering
+    const float close = TILE_SIZE * 0.7f;
+    const float far   = TILE_SIZE * 2.0f;
+    bool closeBlocked = isBlocked(from + dir * close);
+    bool farBlocked   = isBlocked(from + dir * far);
+
+    if (closeBlocked || farBlocked) {
+        float baseAngle  = atan2f(dir.y, dir.x);
+        float lookDist   = closeBlocked ? close : far;
+        // Finer increments (0.25 rad) over wider sweep to find open direction
+        for (float offset = 0.25f; offset <= (float)M_PI; offset += 0.25f) {
+            float aR = baseAngle + offset;
+            if (!isBlocked(from + Vec2{cosf(aR), sinf(aR)} * lookDist))
+                return Vec2{cosf(aR), sinf(aR)} * spd;
+            float aL = baseAngle - offset;
+            if (!isBlocked(from + Vec2{cosf(aL), sinf(aL)} * lookDist))
+                return Vec2{cosf(aL), sinf(aL)} * spd;
+        }
+        // All feelers blocked: slide perpendicular
         return Vec2{-dir.y, dir.x} * spd * 0.5f;
     }
 
     return dir * spd;
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Bullets
-// ═════════════════════════════════════════════════════════════════════════════
+// Bullets
 
 void Game::updateBullets(float dt) {
     const bool bulletSimAuth = !NetworkManager::instance().isOnline() || NetworkManager::instance().isHost() ||
@@ -1337,6 +1419,18 @@ void Game::updateBullets(float dt) {
                 b.alive = false;
             }
         }
+        // CollisionZone trigger
+        if (b.alive) {
+            for (const auto& t : customMap_.triggers) {
+                if (t.type != TriggerType::CollisionZone) continue;
+                if (collisionZonePushout(b.pos, BULLET_SIZE * 0.3f, {t.x, t.y},
+                        t.width * 0.5f, t.height * 0.5f, triggerGetAngle(t)).lengthSq() > 0.0f) {
+                    if (b.explosive) spawnBulletExplosion(b.pos, b.damage, b.ownerId, b.ownerSubSlot, -1, bulletSimAuth);
+                    b.alive = false;
+                    break;
+                }
+            }
+        }
     }
     for (auto& b : enemyBullets_) {
         b.tick(dt);
@@ -1369,6 +1463,17 @@ void Game::updateBullets(float dt) {
             }
             b.alive = false;
         }
+        // CollisionZone trigger
+        if (b.alive) {
+            for (const auto& t : customMap_.triggers) {
+                if (t.type != TriggerType::CollisionZone) continue;
+                if (collisionZonePushout(b.pos, BULLET_SIZE * 0.3f, {t.x, t.y},
+                        t.width * 0.5f, t.height * 0.5f, triggerGetAngle(t)).lengthSq() > 0.0f) {
+                    b.alive = false;
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -1386,8 +1491,8 @@ void Game::spawnBullet(Vec2 pos, float angle) {
     b.lifetime = BULLET_LIFETIME * std::max(1.0f, upgrades_.bulletSpeedMulti * 0.92f);
     b.tag = TAG_BULLET;
     b.sprite = bulletSprite_;
-    b.damage = std::max(1, (int)roundf(upgrades_.damageMulti *
-        (upgrades_.hasLastStand && player_.hp <= 1 ? (1.0f + (float)upgrades_.hasLastStand) : 1.0f)));
+    b.damage = std::max(10, (int)roundf(10.0f * upgrades_.damageMulti *
+        (upgrades_.hasLastStand && player_.hp <= 10 ? (1.0f + (float)upgrades_.hasLastStand) : 1.0f)));
     b.piercing = false;
     b.explosive = upgrades_.hasExplosiveTips;
     b.chainLightning = upgrades_.hasChainLightning;
@@ -1408,12 +1513,12 @@ void Game::spawnBullet(Vec2 pos, float angle) {
 
     bullets_.push_back(b);
 
-    // ── Visual polish: muzzle flash ──
+    // Visual polish: muzzle flash
     muzzleFlashTimer_ = 0.06f;
     muzzleFlashPos_ = b.pos; // store exact bullet spawn point
     camera_.addShake(1.5f);  // subtle recoil shake
 
-    // ── Sync bullet to other players ──
+    // Sync bullet to other players
     if (net.isInGame()) {
         net.sendBulletSpawn(b.pos, angle, net.localPlayerId(), b.netId, b.ownerSubSlot);
     }
@@ -1430,7 +1535,7 @@ void Game::spawnEnemyBullet(Vec2 pos, Vec2 target, float angleOffset, float spee
     b.lifetime = ENEMY_BULLET_LIFETIME;
     b.tag = TAG_ENEMY_BULLET;
     b.sprite = enemyBulletSprite_;
-    b.damage = 1;
+    b.damage = 10;
     enemyBullets_.push_back(b);
 
     // Enemy shoot SFX (quieter)
@@ -1506,9 +1611,7 @@ void Game::spawnBulletExplosion(Vec2 pos, int damage, uint8_t ownerId, uint8_t o
     }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Bombs & Explosions
-// ═════════════════════════════════════════════════════════════════════════════
+// Bombs & Explosions
 
 void Game::updateBombs(float dt) {
     for (auto& b : bombs_) {
@@ -1608,6 +1711,18 @@ end_remote_bomb_homing:
                 } else {
                     spawnExplosion(b.pos, b.ownerId, b.ownerSubSlot);
                     b.alive = false;
+                }
+            }
+            // CollisionZone trigger => explode
+            if (b.alive) {
+                for (const auto& t : customMap_.triggers) {
+                    if (t.type != TriggerType::CollisionZone) continue;
+                    if (collisionZonePushout(b.pos, BOMB_SIZE * 0.3f, {t.x, t.y},
+                            t.width*0.5f, t.height*0.5f, triggerGetAngle(t)).lengthSq() > 0.0f) {
+                        spawnExplosion(b.pos, b.ownerId, b.ownerSubSlot);
+                        b.alive = false;
+                        break;
+                    }
                 }
             }
             // Explode if speed drops too low
@@ -1723,7 +1838,7 @@ void Game::updateExplosions(float dt) {
                 }
                 if (!selfFire && !teamFire && (netEx.isHost() || netEx.isConnectedToDedicated())) {
                     // P2P host or dedicated-server client: process own explosion damage locally
-                    int newHp = std::max(0, player_.hp - 3);
+                    int newHp = std::max(0, player_.hp - 30);
                     player_.hp = newHp;
                     NetPlayer* localNetP = netEx.localPlayer();
                     if (localNetP) localNetP->hp = newHp;
@@ -1821,7 +1936,7 @@ void Game::updateExplosions(float dt) {
                     if (slot.player.dead) continue;
                     if (ex.ownerId == ci && ex.ownerSubSlot == ci) continue;  // can't hurt yourself with your own bomb
                     if (Vec2::dist(ex.pos, slot.player.pos) < ex.radius) {
-                        slot.player.takeDamage(3);  // 3 damage from explosion
+                        slot.player.takeDamage(30);  // 30 damage from explosion
                     }
                 }
             }
@@ -1840,17 +1955,17 @@ void Game::spawnExplosion(Vec2 pos, uint8_t ownerId, uint8_t ownerSlot) {
     playExplosionFeedback(pos, ex.radius * 8.4f, 0.18f, 0.62f, 130, 320, 1.45f, 0.74f,
                           config_.sfxVolume, config_.sfxVolume / 12);
 
-    // ── Sync explosion to other players (guard prevents echo-loop from network callback) ──
+    // Sync explosion to other players (guard prevents echo-loop from network callback)
     auto& net = NetworkManager::instance();
     if (net.isOnline() && !suppressNetExplosion_) {
         net.sendExplosion(pos, ownerId, ownerSlot);
     }
 
-    // ── Visual polish: screen flash on explosion ──
+    // Visual polish: screen flash on explosion
     screenFlashTimer_ = 0.15f;
     screenFlashR_ = 255; screenFlashG_ = 200; screenFlashB_ = 80;
 
-    // ── Spawn fire/debris particles ──
+    // Spawn fire/debris particles
 #ifdef __SWITCH__
     int numSparks = 10 + rand() % 6;
 #else
@@ -1903,7 +2018,7 @@ void Game::spawnExplosion(Vec2 pos, uint8_t ownerId, uint8_t ownerSlot) {
         boxFragments_.erase(boxFragments_.begin(),
                             boxFragments_.begin() + (int)(boxFragments_.size() - MAX_FRAGMENTS));
 
-    // ── Scorch marks on ground ──
+    // Scorch marks on ground
     {
         BloodDecal scorch;
         scorch.pos = pos;
@@ -1938,7 +2053,7 @@ void Game::spawnExplosion(Vec2 pos, uint8_t ownerId, uint8_t ownerSlot) {
                          blood_.begin() + (int)(blood_.size() - MAX_DECALS));
     }
 
-    // ── Destroy boxes caught in explosion radius ──
+    // Destroy boxes caught in explosion radius
     float er = ex.radius;
     int minTx = TileMap::toTile(pos.x - er);
     int maxTx = TileMap::toTile(pos.x + er);
@@ -2061,6 +2176,12 @@ Vec2 Game::pickEnemySpawnPos(bool* foundHidden) {
 
     auto isValidSpawn = [&](Vec2 sp, bool requireHidden) -> bool {
         if (map_.worldCollides(sp.x, sp.y, ENEMY_SIZE * 0.5f)) return false;
+        for (const auto& t : customMap_.triggers) {
+            if (t.type != TriggerType::CollisionZone) continue;
+            if (collisionZonePushout(sp, ENEMY_SIZE * 0.5f, {t.x, t.y},
+                    t.width * 0.5f, t.height * 0.5f, triggerGetAngle(t)).lengthSq() > 0.0f)
+                return false;
+        }
         if (requireHidden && isEnemySpawnVisibleToAnyPlayer(sp)) return false;
         return true;
     };
@@ -2120,7 +2241,7 @@ void Game::spawnBomb() {
     b.pos = player_.pos;
     // Start at a random angle around the player
     b.orbitAngle = (float)(rand() % 360) * M_PI / 180.0f;
-    b.orbitRadius = 55.0f + (float)(rand() % 20);
+    b.orbitRadius = (55.0f + (float)(rand() % 20)) * (inVehicle_ ? 2.0f : 1.0f);
     b.orbitSpeed = 3.0f + (float)(rand() % 100) / 100.0f; // radians/sec
     b.dashSpeed *= upgrades_.bombDashSpeedMulti;
     b.ownerId = net.isInGame() ? net.localPlayerId() : 255;
@@ -2133,9 +2254,7 @@ void Game::spawnBomb() {
     if (net.isInGame()) net.sendBombOrbit(b.ownerId, b.ownerSubSlot);
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Spawning
-// ═════════════════════════════════════════════════════════════════════════════
+// Spawning
 
 void Game::updateSpawning(float dt) {
     // In multiplayer the host is authoritative - clients receive enemy spawns via state packets.
@@ -2168,7 +2287,7 @@ void Game::updateSpawning(float dt) {
         if (waveEnemiesLeft_ <= 0) {
             waveActive_ = false;
 
-            // ── PVE victory check: all enemies dead + reached wave count ──
+            // PVE victory check: all enemies dead + reached wave count
             if (!pvpActive && lobbySettings_.waveCount > 0 &&
                 waveNumber_ >= lobbySettings_.waveCount) {
                 // Check if all enemies are dead
@@ -2207,7 +2326,7 @@ void Game::updateSpawning(float dt) {
                 return;
             }
 
-            // ── Block new wave while a boss is still alive ──
+            // Block new wave while a boss is still alive
             {
                 bool anyBossAlive = false;
                 for (auto& be : enemies_)
@@ -2229,7 +2348,7 @@ void Game::updateSpawning(float dt) {
             // Start new wave
             waveNumber_++;
 
-            // ── Determine if this is a boss wave ──
+            // Determine if this is a boss wave
             EnemyType bossWaveType = EnemyType::BossBrute;
             bool isBossWave = false;
             for (int bw : BOSS_WAVES) {
@@ -2266,20 +2385,20 @@ void Game::updateSpawning(float dt) {
             waveActive_ = true;
             waveSpawnTimer_ = 0;
 
-            // ── Milestone: guaranteed first appearance of elite types ──
+            // Milestone: guaranteed first appearance of elite types
             if (waveNumber_ == MILESTONE_SNIPER_WAVE) {
                 spawnEnemy(pickEnemySpawnPos(), EnemyType::Sniper);
             } else if (waveNumber_ == MILESTONE_GUNNER_WAVE) {
                 spawnEnemy(pickEnemySpawnPos(), EnemyType::Gunner);
             }
 
-            // ── Sync wave start to clients ──
+            // Sync wave start to clients
             if (sendNetEvents) {
                 auto& net = NetworkManager::instance();
                 net.sendWaveStart(waveNumber_);
             }
 
-            // ── Visual polish: wave announcement banner ──
+            // Visual polish: wave announcement banner
             waveAnnounceTimer_ = (waveNumber_ == MILESTONE_SNIPER_WAVE ||
                                    waveNumber_ == MILESTONE_GUNNER_WAVE) ? 3.5f : 2.5f;
             waveAnnounceNum_ = waveNumber_;
@@ -2357,7 +2476,7 @@ void Game::spawnEnemy(Vec2 pos, EnemyType type) {
             e.shootSpread = 0.18f;
             e.renderScale = GUNNER_RENDER_SCALE;
             break;
-        // ── Boss variants ────────────────────────────────────────────────────
+        // Boss variants
         case EnemyType::BossBrute:
             e.hp = BOSS_BRUTE_HP * config_.enemyHpScale;
             e.maxHp = BOSS_BRUTE_HP * config_.enemyHpScale;
@@ -2404,12 +2523,12 @@ void Game::spawnEnemy(Vec2 pos, EnemyType type) {
             e.renderScale = 3.0f;
             break;
     }
+    // Push out of CollisionZone triggers before adding so spawn position is clean
+    pushOutCollisionZones(e.pos, e.size * 0.4f);
     enemies_.push_back(e);
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Collisions
-// ═════════════════════════════════════════════════════════════════════════════
+// Collisions
 
 void Game::resolveCollisions() {
     Player& p = player_;
@@ -2764,28 +2883,31 @@ void Game::resolveCollisions() {
                     }
                 } else {
                     e.vel -= push * 120.0f;
-                    bool hurt = !p.invulnerable;
-                    p.takeDamage(1);
-                    if (hurt && !p.dead) {
-                        camera_.addShake(1.2f);
-                        rumble(0.38f, 100, 1.0f, 0.6f);
-                        if (sfxHurt_)       playSFX(sfxHurt_, config_.sfxVolume / 4);
-                        if (sfxPlayerHurt_) playSFX(sfxPlayerHurt_, config_.sfxVolume / 3);
-                    }
-                    if (hurt && p.dead) {
-                        camera_.addShake(4.0f);
-                        rumble(0.92f, 340, 1.50f, 0.82f);
-                        if (sfxDeath_) playSFX(sfxDeath_, config_.sfxVolume / 5);
-                        auto& net2 = NetworkManager::instance();
-                        if (!net2.isInGame()) spawnPlayerDeathEffect(p.pos);
-                        if (net2.isInGame())  net2.sendPlayerDied(net2.localPlayerId(), 0);
+                    if (p.bodyContactCooldown <= 0.0f) {
+                        bool hurt = !p.invulnerable;
+                        p.takeDamage(10);
+                        p.bodyContactCooldown = 0.3f;
+                        if (hurt && !p.dead) {
+                            camera_.addShake(1.2f);
+                            rumble(0.38f, 100, 1.0f, 0.6f);
+                            if (sfxHurt_)       playSFX(sfxHurt_, config_.sfxVolume / 4);
+                            if (sfxPlayerHurt_) playSFX(sfxPlayerHurt_, config_.sfxVolume / 3);
+                        }
+                        if (hurt && p.dead) {
+                            camera_.addShake(4.0f);
+                            rumble(0.92f, 340, 1.50f, 0.82f);
+                            if (sfxDeath_) playSFX(sfxDeath_, config_.sfxVolume / 5);
+                            auto& net2 = NetworkManager::instance();
+                            if (!net2.isInGame()) spawnPlayerDeathEffect(p.pos);
+                            if (net2.isInGame())  net2.sendPlayerDied(net2.localPlayerId(), 0);
+                        }
                     }
                 }
             }
         }
     }
 
-    // ── Local co-op / MP-splitscreen: damage for extra players (slots 1–3) ──
+    // Local co-op / MP-splitscreen: damage for extra players (slots 1-3)
     bool anyLocalSplitscreen = coopPlayerCount_ > 1 &&
         (state_ == GameState::LocalCoopGame  || state_ == GameState::LocalCoopPaused ||
          state_ == GameState::MultiplayerGame || state_ == GameState::MultiplayerPaused ||
@@ -2795,6 +2917,7 @@ void Game::resolveCollisions() {
             if (!coopSlots_[ci].joined) continue;
             Player& cp = coopSlots_[ci].player;
             if (cp.dead) continue;
+            cp.bodyContactCooldown = std::max(0.0f, cp.bodyContactCooldown - dt_);
             for (auto& b : enemyBullets_) {
                 if (!b.alive) continue;
                 if (cp.invulnerable) continue;
@@ -2855,12 +2978,15 @@ void Game::resolveCollisions() {
                     e.pos  -= push * (pen * 0.4f);
                     cp.pos += push * (pen * 0.6f);
                     e.vel  -= push * 120.0f;
-                    bool hurt = !cp.invulnerable;
-                    cp.takeDamage(1);
-                    if (hurt) {
-                        coopSlots_[ci].camera.addShake(1.2f);
-                        rumbleForSlot(ci, 0.38f, 100, 1.0f, 0.6f);
-                        if (sfxHurt_) playSFX(sfxHurt_, config_.sfxVolume / 4);
+                    if (cp.bodyContactCooldown <= 0.0f) {
+                        bool hurt = !cp.invulnerable;
+                        cp.takeDamage(10);
+                        cp.bodyContactCooldown = 0.3f;
+                        if (hurt) {
+                            coopSlots_[ci].camera.addShake(1.2f);
+                            rumbleForSlot(ci, 0.38f, 100, 1.0f, 0.6f);
+                            if (sfxHurt_) playSFX(sfxHurt_, config_.sfxVolume / 4);
+                        }
                     }
                 }
             }
@@ -2887,9 +3013,9 @@ void Game::resolveCollisions() {
             if (cp.dead) coopSlots_[ci].deaths++;
         }
 
-        // ── PvP bullets vs slot 0 (P1) in offline local coop ──
+        // PvP bullets vs slot 0 (P1) in offline local coop
         // (The ci=1..3 loop above covers sub-players; slot 0 is player_ and
-        //  needs a separate check since it's outside that loop.)
+        // needs a separate check since it's outside that loop.)
         if (!net.isInGame() && currentRules_.pvpEnabled &&
             coopSlots_[0].joined && !player_.dead) {
             bool p1WasAlive = !player_.dead;
@@ -2912,7 +3038,7 @@ void Game::resolveCollisions() {
         }
     }
 
-    // ── PVP: Player bullets vs remote players (when friendlyFire/pvp is enabled) ──
+    // PVP: Player bullets vs remote players (when friendlyFire/pvp is enabled)
     if (net.isInGame() && currentRules_.pvpEnabled) {
         auto& players = net.players();
         bool mpSplitscreenLocal = coopPlayerCount_ > 1 &&
@@ -3233,7 +3359,7 @@ void Game::killEnemy(Enemy& e, bool trackKill) {
         if (upgrades_.hasScavenger && player_.ammo < player_.maxAmmo)
             player_.ammo = std::min(player_.maxAmmo, player_.ammo + upgrades_.hasScavenger);
         if (upgrades_.hasVampire)
-            player_.hp = std::min(player_.maxHp, player_.hp + upgrades_.hasVampire);
+            player_.hp = std::min(player_.maxHp, player_.hp + upgrades_.hasVampire * 10);
         // Kill shaves 1s off parry cooldown
         if (!player_.canParry)
             player_.parryCdTimer = std::max(0.0f, player_.parryCdTimer - 1.0f);
@@ -3442,7 +3568,148 @@ void Game::updateBoxFragments(float dt) {
         [](const BoxFragment& f) { return !f.alive; }), boxFragments_.end());
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Rendering
-// ═════════════════════════════════════════════════════════════════════════════
+// Vehicles
+
+void Game::updateVehicles(float dt) {
+    for (int vi = 0; vi < (int)vehicles_.size(); vi++) {
+        auto& v = vehicles_[vi];
+        if (!v.alive) continue;
+
+        const bool occupied = inVehicle_ && vehicleIdx_ == vi;
+
+        // Input
+        float gasInput   = 0.0f;
+        float steerInput = 0.0f;
+        if (occupied) {
+            gasInput   = -moveInput_.y;
+            steerInput =  moveInput_.x;
+        }
+
+        // Constant-rate steering: heading rotates at a fixed angular velocity.
+        // Velocity alignment via grip (below) creates the actual turning arc.
+        v.rotation += steerInput * Vehicle::STEER_RATE * dt;
+
+        Vec2  fwdDir = {cosf(v.rotation), sinf(v.rotation)};
+        Vec2  latDir = {-fwdDir.y, fwdDir.x};
+        float fwdSpd = fwdDir.dot(v.vel);
+        float speed  = v.vel.length();
+
+        // Thrust / brake / reverse
+        if (gasInput > 0.0f) {
+            if (fwdSpd < Vehicle::MAX_FWD_SPD) {
+                float push = fminf(Vehicle::ACCEL * gasInput * dt,
+                                   Vehicle::MAX_FWD_SPD - fwdSpd);
+                v.vel += fwdDir * push;
+            }
+        } else if (gasInput < 0.0f) {
+            if (fwdSpd > 0.5f) {
+                // Brake while rolling forward
+                float removed = fminf(fwdSpd, Vehicle::BRAKE * (-gasInput) * dt);
+                v.vel -= fwdDir * removed;
+            } else if (fwdSpd > -Vehicle::MAX_REV_SPD) {
+                // Reverse (slower to accelerate than forward)
+                float push = fminf(Vehicle::REV_ACCEL * (-gasInput) * dt,
+                                   Vehicle::MAX_REV_SPD + fwdSpd);
+                v.vel -= fwdDir * push;
+            }
+        }
+
+        // Coast drag — constant decel on total speed
+        speed = v.vel.length();
+        if (speed > 0.0f) {
+            float drag = fminf(speed, Vehicle::COAST_DRAG * dt);
+            v.vel = v.vel * ((speed - drag) / speed);
+        }
+
+        // Lateral grip — bleed lateral velocity each frame (lower GRIP = more drift)
+        fwdDir = {cosf(v.rotation), sinf(v.rotation)};
+        latDir = {-fwdDir.y, fwdDir.x};
+        float latSpd = latDir.dot(v.vel);
+        v.vel -= latDir * (latSpd * fminf(1.0f, Vehicle::GRIP * dt));
+
+        // Move
+        v.pos += v.vel * dt;
+
+        // OBB extents (sprite is rendered at scale 1.5× with facing-up convention)
+        float halfL = (v.spriteH > 0 ? v.spriteH : v.size) * 0.75f;
+        float halfW = (v.spriteW > 0 ? v.spriteW : v.size) * 0.42f;
+        fwdDir = {cosf(v.rotation), sinf(v.rotation)};
+        latDir = {-fwdDir.y, fwdDir.x};
+
+        // Wall tile collision: 8 OBB probe points (4 corners + 4 edge midpoints)
+        {
+            auto pushOut = [&](Vec2 pt) {
+                if (!map_.worldCollides(pt.x, pt.y, 4.0f)) return;
+                Vec2 toCenter = v.pos - pt;
+                float len = toCenter.length();
+                if (len < 0.1f) { v.pos += Vec2{4.0f, 0.0f}; return; }
+                Vec2 pushDir = toCenter * (1.0f / len);
+                float velInto = -(v.vel.dot(pushDir));
+                if (velInto > 0.0f) v.vel += pushDir * velInto;
+                v.pos += pushDir * 6.0f;
+            };
+            for (int pass = 0; pass < 2; pass++) {
+                pushOut(v.pos + fwdDir * halfL + latDir * halfW);
+                pushOut(v.pos + fwdDir * halfL - latDir * halfW);
+                pushOut(v.pos - fwdDir * halfL + latDir * halfW);
+                pushOut(v.pos - fwdDir * halfL - latDir * halfW);
+                pushOut(v.pos + fwdDir * halfL);
+                pushOut(v.pos - fwdDir * halfL);
+                pushOut(v.pos + latDir * halfW);
+                pushOut(v.pos - latDir * halfW);
+            }
+        }
+
+        // Collision zone pushout: probe 4 OBB corners against trigger rects
+        {
+            const Vec2 corners[4] = {
+                v.pos + fwdDir * halfL + latDir * halfW,
+                v.pos + fwdDir * halfL - latDir * halfW,
+                v.pos - fwdDir * halfL + latDir * halfW,
+                v.pos - fwdDir * halfL - latDir * halfW,
+            };
+            for (auto corner : corners) {
+                Vec2 adjusted = corner;
+                pushOutCollisionZones(adjusted, 4.0f);
+                v.pos.x += adjusted.x - corner.x;
+                v.pos.y += adjusted.y - corner.y;
+            }
+        }
+
+        // Map boundary: keep the farthest OBB corner inside the world
+        {
+            float extent = fmaxf(halfL, halfW);
+            v.pos.x = fmaxf(extent, fminf(map_.worldWidth()  - extent, v.pos.x));
+            v.pos.y = fmaxf(extent, fminf(map_.worldHeight() - extent, v.pos.y));
+        }
+
+        // Enemy run-over: OBB test instead of circle
+        speed = v.vel.length();
+        if (speed >= Vehicle::RUNOVER_SPD) {
+            for (auto& e : enemies_) {
+                if (!e.alive) continue;
+                Vec2  delta    = e.pos - v.pos;
+                float alongFwd = fabsf(delta.dot(fwdDir));
+                float alongLat = fabsf(delta.dot(latDir));
+                float margin   = e.size * 0.5f;
+                if (alongFwd < halfL + margin && alongLat < halfW + margin) {
+                    e.hp -= Vehicle::RUNOVER_DMG;
+                    e.damageFlash = 1.0f;
+                    e.vel += v.vel.normalized() * 320.0f;
+                    if (e.hp <= 0) killEnemy(e);
+                }
+            }
+        }
+    }
+
+    // Dead vehicle eviction
+    for (auto& v : vehicles_) {
+        if (!v.alive && v.occupantSlot == 0) {
+            inVehicle_  = false;
+            vehicleIdx_ = -1;
+        }
+    }
+}
+
+// Rendering
 

@@ -1,4 +1,3 @@
-// ─── mod.cpp ─── Mod system implementation ──────────────────────────────────
 #include "mod.h"
 #include <cstdio>
 #include <cstring>
@@ -16,7 +15,7 @@
 #  include <unistd.h>
 #endif
 
-// ── INI parser helper (reusable) ──
+// INI parser helper (reusable)
 static std::unordered_map<std::string, std::unordered_map<std::string, std::string>>
 parseINI(const std::string& path) {
     std::unordered_map<std::string, std::unordered_map<std::string, std::string>> sections;
@@ -90,7 +89,7 @@ static void removeTree(const std::string& path) {
     }
 }
 
-// ── Path safety helpers for mod sync deserialization ──
+// Path safety helpers for mod sync deserialization
 
 // Returns true if `id` is a safe mod identifier (single path component,
 // no directory traversal characters).
@@ -143,7 +142,7 @@ static std::vector<std::string> listFiles(const std::string& dir, const std::str
     return result;
 }
 
-// ── ModOverrides ──
+// ModOverrides
 float ModOverrides::getFloat(const std::string& key, float def) const {
     auto it = values.find(key);
     if (it == values.end()) return def;
@@ -164,7 +163,7 @@ int ModOverrides::getInt(const std::string& key, int def) const {
     return (int)v;
 }
 
-// ── Mod loading ──
+// Mod loading
 bool Mod::loadFromFolder(const std::string& path) {
     folder = path;
     std::string cfgPath = path + "/mod.cfg";
@@ -335,7 +334,7 @@ bool Mod::loadFromFolder(const std::string& path) {
     return true;
 }
 
-// ── Mod Manager ──
+// Mod Manager
 ModManager& ModManager::instance() {
     static ModManager mgr;
     return mgr;
@@ -527,15 +526,15 @@ ModManager::SyncManifest ModManager::buildSyncManifest() const {
     return manifest;
 }
 
-// ── Mod network sync: serialize all enabled mods into a transferable blob ──
+// Mod network sync: serialize all enabled mods into a transferable blob
 // Format:
-//   uint16_t numMods
-//   for each mod:
-//     uint16_t idLen, char[idLen] modId
-//     uint16_t numFiles
-//     for each file:
-//       uint16_t pathLen, char[pathLen] relativePath
-//       uint32_t dataLen, uint8_t[dataLen] fileData
+// uint16_t numMods
+// for each mod:
+//   uint16_t idLen, char[idLen] modId
+//   uint16_t numFiles
+//   for each file:
+//     uint16_t pathLen, char[pathLen] relativePath
+//     uint32_t dataLen, uint8_t[dataLen] fileData
 //
 static constexpr size_t MAX_MOD_SYNC_BYTES = 64u * 1024u * 1024u;
 static constexpr uint16_t MAX_MOD_SYNC_COUNT = 128;

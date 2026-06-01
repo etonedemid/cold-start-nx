@@ -1,4 +1,4 @@
-# build.ps1 — reliable build wrapper for cold_start
+# build.ps1 - reliable build wrapper for cold_start
 # Kills any running instance, then builds. Retries once if the linker
 # loses a race with Windows Defender scanning the output exe.
 
@@ -41,7 +41,7 @@ Write-Host "Building..."
 $exit = Run-Build
 
 if ($exit -ne 0) {
-    Write-Host "Build failed (exit $exit) — waiting 1s for file lock to clear, then retrying..."
+    Write-Host "Build failed (exit $exit) - waiting 1s for file lock to clear, then retrying..."
     Start-Sleep -Seconds 1
     $exit = Run-Build
 }

@@ -1,7 +1,5 @@
-// ─── server_main.cpp ─── Headless dedicated server entry point ───────────────
 // Compiled when SERVER_ONLY=ON. Hosts a game without any SDL/graphics.
 // Usage: cold_start [--port N] [--max-players N] [--password PW] [--name NAME]
-// ─────────────────────────────────────────────────────────────────────────────
 #include "network.h"
 #include "gamemode.h"
 #include <cstdio>

@@ -1,4 +1,3 @@
-// ─── multiplayer.cpp ─── Multiplayer networking, splitscreen, Discord
 #include "game.h"
 #include "game_internal.h"
 #include "discord_rpc.h"
@@ -44,7 +43,7 @@ void Game::renderMultiplayerSplitscreen() {
         player_   = coopSlots_[i].player;
         upgrades_ = coopSlots_[i].upgrades;
 
-        // ── World rendering ──
+        // World rendering
         renderMap();
         renderDecals();
 
@@ -85,7 +84,7 @@ void Game::renderMultiplayerSplitscreen() {
             SDL_RenderFillRect(renderer_, &r);
         }
 
-        // ── Render ALL local co-op players in this viewport ──
+        // Render ALL local co-op players in this viewport
         for (int j = 0; j < 4; j++) {
             if (!coopSlots_[j].joined) continue;
             Player& cp = coopSlots_[j].player;
@@ -109,7 +108,7 @@ void Game::renderMultiplayerSplitscreen() {
             }
         }
 
-        // ── Remote players (other network clients + their sub-players) ──
+        // Remote players (other network clients + their sub-players)
         renderRemotePlayers();
 
         // Bullets (player)
@@ -151,7 +150,7 @@ void Game::renderMultiplayerSplitscreen() {
         renderCrates();
         renderPickups();
 
-        // ── Name tags + HP bars for other local co-op players ──
+        // Name tags + HP bars for other local co-op players
         for (int j = 0; j < 4; j++) {
             if (!coopSlots_[j].joined || j == i) continue;
             Player& op = coopSlots_[j].player;
@@ -178,7 +177,7 @@ void Game::renderMultiplayerSplitscreen() {
         renderRoofOverlay();
         renderShadingPass();
 
-        // ── Crosshair ── must render at zoom scale (worldToScreen coords)
+        // Crosshair: must render at zoom scale (worldToScreen coords)
         {
             Player& cp = coopSlots_[i].player;
             Vec2 aimDir = resolveAimDirection(cp, coopSlots_[i].aimInput);
@@ -186,7 +185,7 @@ void Game::renderMultiplayerSplitscreen() {
             renderAimCrosshair(camera_, cp, aimDir, crosshairDistance, pColors[i]);
         }
 
-        // ── Per-slot HUD (bottom of viewport) ── restore 1:1 scale for UI overlay
+        // Per-slot HUD (bottom of viewport): restore 1:1 scale for UI overlay
         if (n > 1) SDL_RenderSetScale(renderer_, 1.0f, 1.0f);
         {
             Player& cp = coopSlots_[i].player;
@@ -318,7 +317,7 @@ void Game::renderMultiplayerSplitscreen() {
         SDL_RenderDrawLine(renderer_, 0, SCREEN_H/2+1, SCREEN_W, SCREEN_H/2+1);
     }
 
-    // ── Minimap ──
+    // Minimap
     if (n >= 2 && map_.width > 0 && map_.height > 0) {
         const int MMAP_MAX_PX = 140;
         const int MMAP_MARGIN = 6;
@@ -406,9 +405,7 @@ void Game::renderMultiplayerSplitscreen() {
 }
 
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Multiplayer Integration
-// ═════════════════════════════════════════════════════════════════════════════
+// Multiplayer Integration
 
 void Game::initMultiplayer() {
     auto& net = NetworkManager::instance();
@@ -673,13 +670,13 @@ void Game::setupNetworkCallbacks() {
         NetPlayer* victim = net.findPlayer(playerId);
         if (victim) victim->alive = false;
 
-        // ── Death explosion + scorch ──────────────────────────────────────
+        // Death explosion + scorch
         {
             Vec2 dpos = victim ? victim->pos : player_.pos;
             spawnPlayerDeathEffect(dpos);
         }
 
-        // ── Team-colored death burst ──────────────────────────────────────
+        // Team-colored death burst
         if (currentRules_.teamCount >= 2) {
             Vec2 dpos = victim ? victim->pos : player_.pos;
             int  team = victim ? (int)victim->team : (int)localTeam_;
@@ -832,7 +829,7 @@ void Game::setupNetworkCallbacks() {
         }
     };
 
-    // ── PvP host-authoritative damage ──
+    // PvP host-authoritative damage
     // Host validates a bullet-hit reported by a client and applies authoritative damage
     net.onHitRequest = [this](uint32_t bulletNetId, int damage, uint8_t ownerId, uint8_t senderPlayerId, uint8_t targetSlot) -> bool {
         auto& net = NetworkManager::instance();
@@ -1098,7 +1095,7 @@ void Game::setupNetworkCallbacks() {
                 }
                 startCustomMapMultiplayer(tmpPath);
             } else {
-                mapSrand(mapSeed);             // same seed as host → same map
+                mapSrand(mapSeed);             // same seed as host -> same map
                 {
                     bool savedIsPvp = lobbySettings_.isPvp; // startGame() resets this to false
                     startGame();                // generates map, resets player & camera
@@ -1114,7 +1111,7 @@ void Game::setupNetworkCallbacks() {
         menuSelection_ = 0;
         respawnTimer_ = currentRules_.respawnTime;
 
-        // ── Splitscreen: init coopSlots for local sub-players (client side) ──
+        // Splitscreen: init coopSlots for local sub-players (client side)
         {
             int joined = 0;
             for (int i = 0; i < 4; i++) if (coopSlots_[i].joined) joined++;
@@ -1278,7 +1275,7 @@ void Game::setupNetworkCallbacks() {
         printf("Game: Mod sync complete\n");
     };
 
-    // ── Admin / Lives callbacks ─────────────────────────────────────────
+    // Admin / Lives callbacks
     net.onAdminKicked = [this](uint8_t targetId) {
         auto& net2 = NetworkManager::instance();
         if (targetId == net2.localPlayerId()) {
@@ -1383,7 +1380,7 @@ void Game::updateMultiplayer(float dt) {
             state.alive = !player_.dead;
             net.sendPlayerState(state);
 
-            // ── Splitscreen: send sub-player states to other clients ──
+            // Splitscreen: send sub-player states to other clients
             if (coopPlayerCount_ > 1) {
                 SubPlayerInfo subs[3];
                 int subCount = 0;
@@ -1523,7 +1520,7 @@ void Game::updateMultiplayer(float dt) {
             }
         }
 
-        // ── Match timer (visible on all clients; only host acts on expiry) ─────
+        // Match timer (visible on all clients; only host acts on expiry)
         if (lobbySettings_.isPvp) {
             matchElapsed_ += dt;
             if (lobbySettings_.pvpMatchDuration > 0.0f && matchTimer_ > 0.0f) {
@@ -1756,7 +1753,7 @@ void Game::startMultiplayerGame() {
             net.startGame(0, map_.width, map_.height, customMapData);
             respawnTimer_ = currentRules_.respawnTime;
 
-            // ── Splitscreen: init coopSlots for local sub-players (custom map) ──
+            // Splitscreen: init coopSlots for local sub-players (custom map)
             {
                 int joined = 0;
                 for (int i = 0; i < 4; i++) if (coopSlots_[i].joined) joined++;
@@ -1817,7 +1814,7 @@ void Game::startMultiplayerGame() {
     net.startGame(mapSeed, config_.mapWidth, config_.mapHeight);
     respawnTimer_ = currentRules_.respawnTime;
 
-    // ── Splitscreen: initialise coopSlots for local sub-players in MP ──
+    // Splitscreen: initialise coopSlots for local sub-players in MP
     {
         int joined = 0;
         for (int i = 0; i < 4; i++) if (coopSlots_[i].joined) joined++;
@@ -1860,9 +1857,7 @@ void Game::startMultiplayerGame() {
 }
 
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Discord Rich Presence
-// ═════════════════════════════════════════════════════════════════════════════
+// Discord Rich Presence
 
 void Game::updateDiscordPresence() {
     auto& net = NetworkManager::instance();

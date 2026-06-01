@@ -1,4 +1,3 @@
-﻿// ─── content.cpp ─── Maps, characters, config I/O
 #include "game.h"
 #include "game_internal.h"
 
@@ -246,19 +245,20 @@ void Game::syncLocalCharacterSelection(bool force) {
 void Game::renderMapSelectMenu() {
     ui_.drawDesktop();
 
-    const int padX = 14;
-    const int btnH = 26;
+    const int padX   = 14;
+    const int btnH   = 26;
     const int btnGap = 4;
-    const int winW = 500;
-    const int winX = (SCREEN_W - winW) / 2;
-    const int winY = 60;
-    const int winH = SCREEN_H - winY - 60;
+    const int winW   = 500;
+    const int winX   = (SCREEN_W - winW) / 2;
+    const int winY   = 60;
+    const int winH   = SCREEN_H - winY - 60;
     ui_.drawWin98Window(winX, winY, winW, winH, "Select Map");
 
+    // Reserve space for: separator + mode row + play+back row + padding
+    const int bottomH = 6 + btnH + btnGap + btnH + 10;
     int baseY = winY + UI::W98::TitleH + 10;
-    int listH = winH - UI::W98::TitleH - 20 - (btnH + btnGap + 10); // reserve space for BACK
-    int maxVisible = listH / (btnH + btnGap);
-    if (maxVisible < 3) maxVisible = 3;
+    int listH = winH - UI::W98::TitleH - 20 - bottomH;
+    int maxVisible = std::max(3, listH / (btnH + btnGap));
 
     if (mapFiles_.empty()) {
         ui_.drawText("No .csm maps found in maps/ folder",
@@ -266,45 +266,62 @@ void Game::renderMapSelectMenu() {
         ui_.drawText("Use the Editor to create maps!",
                      winX + padX, baseY + 30, 12, UI::W98::Shadow);
     } else {
-        int scrollOff = std::max(0, menuSelection_ - maxVisible + 1);
+        int scrollOff = std::max(0, mapSelectIdx_ - maxVisible + 1);
         for (int i = scrollOff; i < (int)mapFiles_.size() && (i - scrollOff) < maxVisible; i++) {
             int y = baseY + (i - scrollOff) * (btnH + btnGap);
-            bool sel = (menuSelection_ == i);
+            bool sel = (mapSelectIdx_ == i);
             std::string fname = mapFiles_[i];
             size_t slash = fname.find_last_of('/');
             if (slash != std::string::npos) fname = fname.substr(slash + 1);
             int animIdx = i - scrollOff;
-            if (ui_.win98Button(animIdx, fname.c_str(), winX + padX, y, winW - padX * 2, btnH, sel)) {
-                menuSelection_ = i;
-                confirmInput_ = true;
-            }
-            if (ui_.hoveredItem == animIdx && !usingGamepad_) menuSelection_ = i;
+            // Click selects; Play button below launches
+            if (ui_.win98Button(animIdx, fname.c_str(), winX + padX, y, winW - padX * 2, btnH, sel))
+                mapSelectIdx_ = i;
+            if (ui_.hoveredItem == animIdx && !usingGamepad_) mapSelectIdx_ = i;
         }
-        // Scrollbar
         if ((int)mapFiles_.size() > maxVisible) {
             float ratio = (float)maxVisible / mapFiles_.size();
-            float scrollRatio = mapFiles_.size() > 1 ? (float)scrollOff / (mapFiles_.size() - maxVisible) : 0;
+            float scrollRatio = mapFiles_.size() > 1
+                ? (float)scrollOff / (mapFiles_.size() - maxVisible) : 0;
             int trackH = maxVisible * (btnH + btnGap);
-            int barH = std::max(16, (int)(trackH * ratio));
-            int barY = baseY + (int)((trackH - barH) * scrollRatio);
+            int barH   = std::max(16, (int)(trackH * ratio));
+            int barY   = baseY + (int)((trackH - barH) * scrollRatio);
             SDL_SetRenderDrawColor(renderer_, 128, 128, 128, 255);
             SDL_Rect sb = {winX + winW - padX - 4, barY, 4, barH};
             SDL_RenderFillRect(renderer_, &sb);
         }
     }
 
-    // BACK button at the bottom of the window
-    int backIdx = (int)mapFiles_.size();
-    bool backSel = (menuSelection_ == backIdx);
-    int backY = winY + winH - btnH - 10;
-    ui_.drawWin98Bevel(winX + padX, backY - 6, winW - padX * 2, 2, false);
-    if (ui_.win98Button(62, "Back", winX + padX, backY, winW - padX * 2, btnH, backSel)) {
-        menuSelection_ = backIdx;
+    // ── Bottom controls ──
+    const int innerW  = winW - padX * 2;
+    const int halfW   = (innerW - btnGap) / 2;
+    int       botY    = winY + winH - bottomH;
+
+    ui_.drawWin98Bevel(winX + padX, botY - 2, innerW, 2, false);
+    botY += 6;
+
+    // Arena / Sandbox mode toggle
+    if (ui_.win98Button(63, "Arena",   winX + padX,                     botY, halfW, btnH, mapSelectMode_ == 0))
+        mapSelectMode_ = 0;
+    if (ui_.win98Button(64, "Sandbox", winX + padX + halfW + btnGap,    botY, halfW, btnH, mapSelectMode_ == 1))
+        mapSelectMode_ = 1;
+    botY += btnH + btnGap;
+
+    // Play (launches selected map) + Back
+    const int playW = (innerW - btnGap) * 2 / 3;
+    const int backW = innerW - playW - btnGap;
+    bool hasMap = !mapFiles_.empty() && mapSelectIdx_ < (int)mapFiles_.size();
+    if (ui_.win98Button(60, "Play \xbb", winX + padX, botY, playW, btnH, false) && hasMap)
+        confirmInput_ = true;
+    if (ui_.win98Button(62, "Back", winX + padX + playW + btnGap, botY, backW, btnH, false)) {
+        menuSelection_ = (int)mapFiles_.size(); // triggers back in input handler
         confirmInput_ = true;
     }
-    if (ui_.hoveredItem == 62 && !usingGamepad_) menuSelection_ = backIdx;
 
-    ui_.drawWin98StatusBar(SCREEN_H - 26, "Select a map to play");
+    char hint[64];
+    snprintf(hint, sizeof(hint), "Select a map  |  Mode: %s",
+             mapSelectMode_ == 0 ? "Arena" : "Sandbox");
+    ui_.drawWin98StatusBar(SCREEN_H - 26, hint);
 }
 
 void Game::renderMapConfigMenu() {
@@ -472,19 +489,17 @@ void Game::renderCustomWinScreen() {
     ui_.drawWin98StatusBar(SCREEN_H - 26, "Level complete - press Continue");
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Character Creator
-// ═════════════════════════════════════════════════════════════════════════════
+// Character Creator
 
 void Game::renderCharCreator() {
     auto& cc = charCreator_;
     bool modalOpen = modSaveDialog_.isOpen();
     char buf[256];
 
-    // ── Win98 desktop background ──────────────────────────────────────────────
+    // Win98 desktop background
     ui_.drawDesktop();
 
-    // ── Layout constants ──────────────────────────────────────────────────────
+    // Layout constants
     // Left window: "Character Creator" - stats, buttons
     const int leftWinX = 20,  leftWinY = 20;
     const int leftWinW = 440, leftWinH = 660;
@@ -496,7 +511,7 @@ void Game::renderCharCreator() {
     ui_.drawWin98Window(leftWinX,  leftWinY,  leftWinW,  leftWinH,  winTitle);
     ui_.drawWin98Window(rightWinX, rightWinY, rightWinW, rightWinH, "Preview");
 
-    // ── LEFT WINDOW content ───────────────────────────────────────────────────
+    // LEFT WINDOW content
     const int lPad  = 12;
     const int lCX   = leftWinX + lPad;
     const int lRW   = leftWinW - lPad * 2;
@@ -580,7 +595,7 @@ void Game::renderCharCreator() {
         contentY += rowH + rowGap;
     };
 
-    // ── SECTION: NAME ────────────────────────────────────────────────────────
+    // SECTION: NAME
     drawSection("NAME");
     if (cc.textEditing) {
         static float ccBlink = 0.0f;
@@ -594,7 +609,7 @@ void Game::renderCharCreator() {
         drawStatRow(0, "Name", cc.name.c_str(), false);
     }
 
-    // ── SECTION: STATS ───────────────────────────────────────────────────────
+    // SECTION: STATS
     drawSection("STATS");
     snprintf(buf, sizeof(buf), "%.0f", cc.speed);
     drawStatRow(1, "Speed", buf, true);
@@ -631,7 +646,7 @@ void Game::renderCharCreator() {
     }
     contentY += spriteInfoH + 6;
 
-    // ── SECTION: CHARACTERS ──────────────────────────────────────────────────
+    // SECTION: CHARACTERS
     drawSection("CHARACTERS");
     {
         // 2-per-row grid, min 80px wide, 28px tall
@@ -658,7 +673,7 @@ void Game::renderCharCreator() {
         }
     }
 
-    // ── SECTION: ACTIONS ─────────────────────────────────────────────────────
+    // SECTION: ACTIONS
     drawSection("ACTIONS");
     {
         const int btnH  = 26;
@@ -721,7 +736,7 @@ void Game::renderCharCreator() {
         }
     }
 
-    // ── RIGHT WINDOW content ──────────────────────────────────────────────────
+    // RIGHT WINDOW content
     const int rPad  = 12;
     const int rCX   = rightWinX + rPad;
 
@@ -954,7 +969,7 @@ void Game::renderCharCreator() {
         "Navigate: arrow keys / gamepad   Adjust: < >   Confirm: Enter   Back: Esc");
 }
 
-// ── Mod build folder helper ──────────────────────────────────────────────────
+// Mod build folder helper
 
 /*static*/ std::string Game::modBuildFolder(const std::string& modId, const std::string& displayName) {
     std::string base = "mods/" + modId;
@@ -997,7 +1012,7 @@ void Game::renderCharCreator() {
     return base;
 }
 
-// ── Character save/load helpers ─────────────────────────────────────────────
+// Character save/load helpers
 
 void Game::saveCharacterToFolder(const std::string& folderPath) {
     auto& cc = charCreator_;
@@ -1319,7 +1334,7 @@ void Game::renderModSaveDialog() {
 
     int y = panY + UI::W98::TitleH + 14;
 
-    // ── Phase: choose mod ──────────────────────────────────────────────
+    // Phase: choose mod
     if (d.phase == ModSaveDialogState::ChooseMod) {
         ui_.drawTextCentered("Choose or create a mod to save into:", y, 13, UI::W98::Shadow);
         y += 24;
@@ -1361,7 +1376,7 @@ void Game::renderModSaveDialog() {
         { UI::HintPair hints[] = { {UI::Action::Navigate, "Navigate"}, {UI::Action::Confirm, "Confirm"}, {UI::Action::Back, "Cancel"} };
           ui_.drawHintBar(hints, 3, y); }
     }
-    // ── Phase: name new mod ────────────────────────────────────────────
+    // Phase: name new mod
     else if (d.phase == ModSaveDialogState::NameNewMod) {
         ui_.drawTextCentered("Type a mod ID (letters, digits, _ -)", y, 13, UI::W98::Shadow);
         y += 30;
@@ -1378,7 +1393,7 @@ void Game::renderModSaveDialog() {
         y = panY + panH - 40;
         ui_.drawTextCentered("ENTER / OK confirms   ESC / CANCEL goes back", y, 11, UI::W98::Shadow);
     }
-    // ── Phase: choose sprite category ─────────────────────────────────
+    // Phase: choose sprite category
     else if (d.phase == ModSaveDialogState::ChooseCategory) {
         ui_.drawTextCentered("Where should this sprite go?", y, 13, UI::W98::Shadow);
         y += 26;
@@ -1401,7 +1416,5 @@ void Game::renderModSaveDialog() {
     }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  Config persistence
-// ═════════════════════════════════════════════════════════════════════════════
+// Config persistence
 

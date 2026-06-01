@@ -18,7 +18,7 @@ fi
 push() {
     local file="$1" channel="$2"
     if [ -f "$file" ]; then
-        echo "→ pushing $channel"
+        echo "-> pushing $channel"
         "$BUTLER" push "$file" "$GAME:$channel" --userversion "$VER"
     fi
 }

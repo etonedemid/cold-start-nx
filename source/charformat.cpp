@@ -1,4 +1,3 @@
-// ─── charformat.cpp ─── Easy folder-based character system ──────────────────
 #include "charformat.h"
 #include "assets.h"
 #include <cstdio>
@@ -11,7 +10,7 @@
 #  define mkdir(p, m) _mkdir(p)
 #endif
 
-// ── INI parser (shared by .cschar and character.cfg) ─────────────────────────
+// INI parser (shared by .cschar and character.cfg)
 
 static bool parseLine(const char* line, std::string& key, std::string& value) {
     while (*line == ' ' || *line == '\t') line++;
@@ -28,7 +27,7 @@ static bool parseLine(const char* line, std::string& key, std::string& value) {
     return true;
 }
 
-// ── Auto-detect sprite count from files in a folder ─────────────────────────
+// Auto-detect sprite count from files in a folder
 
 static bool fileExists(const std::string& path) {
     FILE* f = fopen(path.c_str(), "rb");
@@ -66,7 +65,7 @@ static int autoDetectDeathFrames(const std::string& folder) {
     return count;
 }
 
-// ── Config file parser ──────────────────────────────────────────────────────
+// Config file parser
 
 bool CharacterDef::loadConfig(const std::string& path) {
     FILE* f = fopen(path.c_str(), "r");
@@ -94,7 +93,7 @@ bool CharacterDef::loadConfig(const std::string& path) {
     return true;
 }
 
-// ── Sprite loader ───────────────────────────────────────────────────────────
+// Sprite loader
 
 bool CharacterDef::loadSprites(SDL_Renderer* renderer) {
     // Load body sprites (body-0001.png, body-0002.png, ...)
@@ -152,7 +151,7 @@ bool CharacterDef::loadSprites(SDL_Renderer* renderer) {
     return !bodySprites.empty();
 }
 
-// ── Main entry points ───────────────────────────────────────────────────────
+// Main entry points
 
 bool CharacterDef::loadFromFolder(const std::string& folderPath, SDL_Renderer* renderer) {
     // Normalize folder path to end with /
@@ -302,7 +301,7 @@ std::vector<std::string> CharacterDef::validate() const {
     return warnings;
 }
 
-// ── Scanner ─────────────────────────────────────────────────────────────────
+// Scanner
 
 std::vector<CharacterDef> scanCharacters(const std::string& baseDir, SDL_Renderer* renderer) {
     std::vector<CharacterDef> chars;
@@ -334,7 +333,7 @@ std::vector<CharacterDef> scanCharacters(const std::string& baseDir, SDL_Rendere
     return chars;
 }
 
-// ── Template creator ────────────────────────────────────────────────────────
+// Template creator
 
 bool createCharacterTemplate(const std::string& baseDir, const std::string& charName) {
     std::string safeName = charName;

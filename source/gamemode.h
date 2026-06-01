@@ -1,11 +1,10 @@
 #pragma once
-// ─── gamemode.h ─── Gamemode system for multiplayer & singleplayer ──────────
 #include <cstdint>
 #include <string>
 #include <vector>
 #include <functional>
 
-// ── Built-in gamemode types ──
+// Built-in gamemode types
 enum class GameModeType : uint8_t {
     Arena,          // Classic singleplayer wave survival (default)
     CoopArena,      // Multiplayer cooperative wave survival
@@ -17,7 +16,7 @@ enum class GameModeType : uint8_t {
     COUNT
 };
 
-// ── Gamemode rules / configuration ──
+// Gamemode rules / configuration
 struct GameModeRules {
     GameModeType type            = GameModeType::Arena;
     std::string  name            = "Arena";
@@ -55,7 +54,7 @@ struct GameModeRules {
     bool  upgradesShared         = false;   // upgrade applies to all players or just picker
 };
 
-// ── Lobby settings synced from host to all clients ──
+// Lobby settings synced from host to all clients
 struct LobbySettings {
     // Gamemode
     bool  friendlyFire           = false;
@@ -89,7 +88,7 @@ struct LobbySettings {
     int   maxPlayers             = 8;       // max players for this lobby (2-16)
 };
 
-// ── Predefined gamemode factories ──
+// Predefined gamemode factories
 GameModeRules createArenaRules();
 GameModeRules createCoopArenaRules(int maxPlayers = 4);
 GameModeRules createDeathmatchRules(int scoreLimit = 20, int maxPlayers = 8);
@@ -97,7 +96,7 @@ GameModeRules createCoopPlaylistRules(int maxPlayers = 4);
 GameModeRules createCustomRules();
 GameModeRules createTeamDeathmatchRules(int teamCount = 2, int scoreLimit = 20, int maxPlayers = 8);
 
-// ── Gamemode registry (for mod-added gamemodes) ──
+// Gamemode registry (for mod-added gamemodes)
 struct GameModeEntry {
     std::string   id;           // unique string ID e.g. "deathmatch", "mymod_ctf"
     std::string   displayName;

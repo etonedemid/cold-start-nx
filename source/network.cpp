@@ -1,4 +1,3 @@
-// ─── network.cpp ─── ENet-based multiplayer networking ──────────────────────
 #include "network.h"
 #include "gamemode.h"
 #include "constants.h"
@@ -1031,7 +1030,7 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
         break;
     }
 
-    // ── PvP host-authoritative damage ──
+    // PvP host-authoritative damage
     case NetPacketType::HitRequest: {
         // payload: bulletNetId(4) + damage(1) + ownerId(1) + targetSlot(1) - sent by a client to host
         if (isHost_ && payloadLen >= 7) {
@@ -1677,7 +1676,7 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
 }
 #endif
 
-// ── Send helpers ──
+// Send helpers
 void NetworkManager::sendReliable(const std::vector<uint8_t>& data, ENetPeer* peer) {
 #if HAS_ENET
     ENetPacket* pkt = enet_packet_create(data.data(), data.size(),
@@ -1732,7 +1731,7 @@ std::vector<uint8_t> NetworkManager::buildPacket(NetPacketType type, const void*
     return pkt;
 }
 
-// ── Player management ──
+// Player management
 NetPlayer* NetworkManager::localPlayer() {
     for (auto& p : players_) {
         if (p.id == localId_) return &p;
@@ -1747,7 +1746,7 @@ NetPlayer* NetworkManager::findPlayer(uint8_t id) {
     return nullptr;
 }
 
-// ── Lobby ──
+// Lobby
 void NetworkManager::setReady(bool ready) {
 #if HAS_ENET
     if (isHost_) {
@@ -1855,7 +1854,7 @@ void NetworkManager::sendLobbyHostTransfer(uint8_t targetId) {
 #endif
 }
 
-// ── Chat ──
+// Chat
 void NetworkManager::sendChat(const std::string& message) {
 #if HAS_ENET
     std::vector<uint8_t> payload;
@@ -1874,7 +1873,7 @@ void NetworkManager::sendChat(const std::string& message) {
 #endif
 }
 
-// ── Game state sending ──
+// Game state sending
 void NetworkManager::sendPlayerState(const NetPlayer& state) {
 #if HAS_ENET
     uint8_t payload[35];
@@ -2160,7 +2159,7 @@ void NetworkManager::sendScoreUpdate(uint8_t playerId, int score) {
 #endif
 }
 
-// ── Mod sync ──
+// Mod sync
 void NetworkManager::sendModSync(const std::vector<uint8_t>& modData) {
 #if HAS_ENET
     if (!isHost_ || modData.empty()) return;
@@ -2187,7 +2186,7 @@ void NetworkManager::sendModSync(const std::vector<uint8_t>& modData) {
 void NetworkManager::sendConfigSync(const LobbySettings& settings) {
 #if HAS_ENET
     // Serialize: flags:1, mapW:4, mapH:4, ehp:4, espd:4, srate:4, playerHp:4, teamCount:1, lives:1, livesShared:1,
-    //            isPvp:1, crateInterval:4, waveCount:2, maxPlayers:1, reserved:1, pvpMatchDuration:4 = 41 bytes
+    //          isPvp:1, crateInterval:4, waveCount:2, maxPlayers:1, reserved:1, pvpMatchDuration:4 = 41 bytes
     uint8_t payload[41];
     uint8_t flags = 0;
     if (settings.friendlyFire) flags |= 0x01;
@@ -2359,7 +2358,7 @@ void NetworkManager::sendCharacterSyncForPlayer(uint8_t ownerId, const std::stri
 #endif
 }
 
-// ── File sync ──
+// File sync
 void NetworkManager::requestFile(const std::string& filename, uint8_t fromPeer) {
 #if HAS_ENET
     auto pkt = buildPacket(NetPacketType::FileSyncRequest, filename.c_str(), filename.size());
@@ -2479,7 +2478,7 @@ void NetworkManager::assignLobbyHost(uint8_t newHostId, bool broadcast) {
     if (onLobbyHostChanged) onLobbyHostChanged(lobbyHostId_);
 }
 
-// ── Serialization helpers ──
+// Serialization helpers
 std::vector<uint8_t> NetworkManager::serializePlayerState(const NetPlayer& p) {
     std::vector<uint8_t> buf(35);
     buf[0] = p.id;

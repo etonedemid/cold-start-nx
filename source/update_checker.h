@@ -1,5 +1,4 @@
 #pragma once
-// ─── update_checker.h ─── Version update checker ────────────────────────────
 #include <string>
 
 namespace UpdateChecker {

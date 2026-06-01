@@ -1,38 +1,38 @@
 #pragma once
-// ─── mapformat.h ─── .csm (Cold Start Map) file format ─────────────────────
 // Binary format:
-//   Header (CSM_HEADER)
-//   Tile data (width * height bytes)
-//   Ceiling data (width * height bytes)
-//   Trigger count (uint16_t)
-//   Trigger array (count * MapTrigger)
-//   Enemy spawn count (uint16_t)
-//   Enemy spawn array (count * EnemySpawn)
-//   Custom tile paths (null-separated strings) - for editor tile references
-// ─────────────────────────────────────────────────────────────────────────────
+// Header (CSM_HEADER)
+// Tile data (width * height bytes)
+// Ceiling data (width * height bytes)
+// Trigger count (uint16_t)
+// Trigger array (count * MapTrigger)
+// Enemy spawn count (uint16_t)
+// Enemy spawn array (count * EnemySpawn)
+// Custom tile paths (null-separated strings) - for editor tile references
 #include "vec2.h"
 #include <cstdint>
 #include <string>
 #include <vector>
 
 constexpr uint32_t CSM_MAGIC   = 0x4D534343; // "CCSM"
-constexpr uint16_t CSM_VERSION = 1;
+constexpr uint16_t CSM_VERSION = 2;
 
-// ── Trigger types ──
+// Trigger types
 enum class TriggerType : uint8_t {
     LevelStart       = 0, // player spawn point (solo / PvE)
     LevelEnd         = 1, // goal (configurable unlock condition)
     Crate            = 2, // breakable crate with optional loot
     Effect           = 3, // visual/audio effect zone
-    // Team spawn points (PvP / team modes - team index 0–3)
+    // Team spawn points (PvP / team modes - team index 0-3)
     TeamSpawnRed     = 10, // team 0 spawn
     TeamSpawnBlue    = 11, // team 1 spawn
     TeamSpawnGreen   = 12, // team 2 spawn
     TeamSpawnYellow  = 13, // team 3 spawn
-    COUNT            = 14,
+    LayerFade        = 14, // zone where top image layer fades when player is inside
+    CollisionZone    = 15, // invisible solid rectangle (can be rotated); blocks player + enemies
+    COUNT            = 16,
 };
 
-// ── End-goal unlock condition ──
+// End-goal unlock condition
 enum class GoalCondition : uint8_t {
     DefeatAll   = 0, // kill all spawned enemies
     OnTrigger   = 1, // activated by stepping on a specific trigger
@@ -45,8 +45,22 @@ struct MapTrigger {
     float width, height;     // trigger area size
     GoalCondition condition;  // only used for LevelEnd
     uint8_t param;            // generic parameter (effect ID, linked trigger, etc.)
-    uint8_t reserved[2];
+    uint8_t reserved[2];     // [0|1] = rotation in tenths-of-a-degree (uint16_t, LE) for CollisionZone
 };
+
+// Rotation helpers for CollisionZone triggers (stored in reserved[0..1])
+inline float triggerGetAngle(const MapTrigger& t) {
+    uint16_t deg10 = (uint16_t)(t.reserved[0] | (t.reserved[1] << 8));
+    return (float)deg10 * 0.1f * (3.14159265f / 180.0f);
+}
+inline void triggerSetAngleDeg(MapTrigger& t, float deg) {
+    // normalise to [0, 360)
+    while (deg < 0.0f) deg += 360.0f;
+    while (deg >= 360.0f) deg -= 360.0f;
+    uint16_t deg10 = (uint16_t)(deg * 10.0f + 0.5f);
+    t.reserved[0] = deg10 & 0xFF;
+    t.reserved[1] = (deg10 >> 8) & 0xFF;
+}
 
 struct EnemySpawn {
     float x, y;          // tile position (converted to world on load)
@@ -55,7 +69,15 @@ struct EnemySpawn {
     uint8_t reserved[2];
 };
 
-// ── File header ──
+// Free-placed prop (not snapped to tile grid)
+struct PropSpawn {
+    float x, y;         // world position (center)
+    uint8_t tileType;   // which prop sprite (same tile type IDs as tiles array)
+    uint8_t rotation;   // 0-3 (x90 degrees)
+    uint8_t reserved[2];
+};
+
+// File header
 struct CSM_Header {
     uint32_t magic;       // CSM_MAGIC
     uint16_t version;     // CSM_VERSION
@@ -67,7 +89,7 @@ struct CSM_Header {
     uint8_t  reserved[32];
 };
 
-// ── Per-map player restrictions (stored in header reserved bytes [1..5]) ──
+// Per-map player restrictions (stored in header reserved bytes [1..5])
 struct MapPlayerConfig {
     bool    enabled    = false;   // false = apply no restrictions (backward compat)
     bool    hasGun     = true;
@@ -81,20 +103,25 @@ struct MapPlayerConfig {
     uint8_t damagePct  = 100;  // damage percent 50-150
 };
 
-// ── Map data container (loaded from .csm) ──
+// Map data container (loaded from .csm)
 struct CustomMap {
     CSM_Header header;
     int width  = 0;
     int height = 0;
     std::vector<uint8_t> tiles;
     std::vector<uint8_t> ceiling;
+    std::vector<uint8_t> tileRotations;  // per-tile rotation 0-3 (x90°), same size as tiles
+    std::vector<uint8_t> tileNoCollide;  // 1 = tile has no square collision, same size as tiles
     std::vector<MapTrigger> triggers;
     std::vector<EnemySpawn> enemySpawns;
+    std::vector<PropSpawn>  props;      // free-placed props (world coords)
     std::string name;
     std::string creator;
     uint8_t gameMode = 0;  // 0=Arena, 1=Sandbox
     MapPlayerConfig playerConfig;
     std::string musicPath;   // optional music filename relative to map folder (empty = default)
+    std::string bgImagePath;  // full-map background image (1:1 world scale, empty = tile-rendered)
+    std::string topImagePath; // full-map top-layer image rendered above entities (empty = none)
     // Texture paths for TILE_CUSTOM_0..7 (empty = not used)
     std::string customTilePaths[8];
 
@@ -104,6 +131,6 @@ struct CustomMap {
     // Find specific triggers
     MapTrigger* findStartTrigger();
     MapTrigger* findEndTrigger();
-    MapTrigger* findTeamSpawnTrigger(int team); // team 0-3 → TeamSpawnRed/Blue/Green/Yellow
+    MapTrigger* findTeamSpawnTrigger(int team); // team 0-3 -> TeamSpawnRed/Blue/Green/Yellow
     std::vector<MapTrigger*> findTriggersByType(TriggerType type);
 };

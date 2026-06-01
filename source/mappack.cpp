@@ -1,4 +1,3 @@
-// ─── mappack.cpp ─── Map Pack implementation ────────────────────────────────
 #include "mappack.h"
 #include <cstdio>
 #include <cstring>
