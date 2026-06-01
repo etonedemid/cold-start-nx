@@ -22,7 +22,7 @@ cp $ROOT/cold_start.nro $OUT/cold-start-nx.nro
 echo "Switch done: cold-start-nx.nro"
 
 echo "==> Android..."
-cp $ROOT/android/app/build/outputs/apk/release/app-release.apk $OUT/cold_start-android-$VER.apk
+cp $ROOT/android/app/build/outputs/apk/debug/app-debug.apk $OUT/cold_start-android-$VER.apk
 echo "Android done: cold_start-android-$VER.apk"
 
 echo ""
