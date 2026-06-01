@@ -147,27 +147,34 @@ bool Game::rebuildScreenTextures() {
     return sceneTarget_ != nullptr;
 }
 
-void Game::applyResolutionSettings(bool rebuildTargets) {
-#ifdef __SWITCH__
-    // On Switch: use fixed 720p resolution
-    config_.windowWidth = 1280;
-    config_.windowHeight = 720;
-#else
-    clampResolutionConfig(config_);
-#endif
+void Game::updateAspectMode() {
+    // Pick logical resolution based on window shape:
+    //   aspect <= 1.5  →  4:3 mode  (960×720, e.g. 4:3 monitor or square-ish window)
+    //   aspect >  1.5  → 16:9 mode  (1280×720, letterboxed inside any wider window)
+    // SDL_RenderSetLogicalSize handles letterboxing for anything in between.
+    int winW = SCREEN_W, winH = SCREEN_H;
+    if (window_) SDL_GetWindowSize(window_, &winW, &winH);
+    float aspect = (winH > 0) ? (float)winW / (float)winH : 16.0f / 9.0f;
+    int newW = (aspect <= 1.5f) ? 960 : 1280;
+    int newH = 720;
+    if (newW == SCREEN_W && newH == SCREEN_H) return;
+    SCREEN_W = newW;
+    SCREEN_H = newH;
+    camera_.viewW = SCREEN_W;
+    camera_.viewH = SCREEN_H;
+    editor_.setScreenSize(SCREEN_W, SCREEN_H);
+    if (renderer_) {
+        SDL_RenderSetLogicalSize(renderer_, SCREEN_W, SCREEN_H);
+        rebuildScreenTextures();
+    }
+}
 
-    // Camera viewport is ALWAYS the base resolution (SCREEN_W x SCREEN_H) for consistent gameplay
+void Game::applyResolutionSettings(bool rebuildTargets) {
     camera_.viewW = SCREEN_W;
     camera_.viewH = SCREEN_H;
     editor_.setScreenSize(SCREEN_W, SCREEN_H);
 
-    if (window_ && !config_.fullscreen) {
-        SDL_SetWindowSize(window_, config_.windowWidth, config_.windowHeight);
-        SDL_SetWindowPosition(window_, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
-    }
-
     if (renderer_) {
-        // Logical size is always SCREEN_W x SCREEN_H - SDL scales to window size
         SDL_RenderSetLogicalSize(renderer_, SCREEN_W, SCREEN_H);
         if (rebuildTargets) rebuildScreenTextures();
     }
@@ -221,7 +228,7 @@ bool Game::init() {
 #elif defined(__SWITCH__)
         0
 #else
-        0
+        SDL_WINDOW_RESIZABLE
 #endif
     );
     if (!window_) { printf("SDL_CreateWindow: %s\n", SDL_GetError()); return false; }
@@ -292,6 +299,7 @@ bool Game::init() {
     if (config_.fullscreen)
         SDL_SetWindowFullscreen(window_, SDL_WINDOW_FULLSCREEN_DESKTOP);
 #endif
+    updateAspectMode(); // set initial 4:3 or 16:9 based on actual window/screen shape
     loadSavedServers();
     loadServerPresets();
 
@@ -1066,8 +1074,6 @@ void Game::saveConfig() {
     if (!f) { printf("Failed to save config\n"); return; }
     fprintf(f, "mapWidth=%d\n", config_.mapWidth);
     fprintf(f, "mapHeight=%d\n", config_.mapHeight);
-    fprintf(f, "windowWidth=%d\n", config_.windowWidth);
-    fprintf(f, "windowHeight=%d\n", config_.windowHeight);
     fprintf(f, "playerMaxHp=%d\n", config_.playerMaxHp);
     fprintf(f, "spawnRateScale=%.2f\n", config_.spawnRateScale);
     fprintf(f, "enemyHpScale=%.2f\n", config_.enemyHpScale);
@@ -1098,8 +1104,6 @@ void Game::loadConfig() {
         int ival;
         if (sscanf(line, "mapWidth=%d", &ival) == 1) config_.mapWidth = ival;
         else if (sscanf(line, "mapHeight=%d", &ival) == 1) config_.mapHeight = ival;
-        else if (sscanf(line, "windowWidth=%d", &ival) == 1) config_.windowWidth = ival;
-        else if (sscanf(line, "windowHeight=%d", &ival) == 1) config_.windowHeight = ival;
         else if (sscanf(line, "playerMaxHp=%d", &ival) == 1) config_.playerMaxHp = ival;
         else if (sscanf(line, "spawnRateScale=%f", &fval) == 1) config_.spawnRateScale = fval;
         else if (sscanf(line, "enemyHpScale=%f", &fval) == 1) config_.enemyHpScale = fval;
@@ -1121,7 +1125,6 @@ void Game::loadConfig() {
         else if (sscanf(line, "uiScale=%f",   &fval) == 1) config_.uiScale   = std::clamp(fval, 0.5f, 2.0f);
         else if (sscanf(line, "shakeScale=%f", &fval) == 1) config_.shakeScale = std::clamp(fval, 0.0f, 1.0f);
     }
-    clampResolutionConfig(config_);
     fclose(f);
     printf("Config loaded from config.txt\n");
 }

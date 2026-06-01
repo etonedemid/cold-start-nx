@@ -2144,9 +2144,6 @@ void Game::renderBiosIntro() {
         loginField_  = 0;
         loginBlinkT_ = 0;
         state_ = GameState::LoginScreen;
-#ifndef __SWITCH__
-        SDL_StartTextInput();
-#endif
     }
 }
 
@@ -2178,19 +2175,31 @@ void Game::renderLoginScreen() {
     ui_.drawText("Hint: trololo", contentX, cy, 11, UI::W98::Shadow);
     cy += 28;
 
-    // Username row - clicking field switches focus
+    // Username row - clicking field switches focus and opens keyboard
     ui_.drawText("User name:", contentX, cy + (fieldH - 14) / 2, 13, UI::W98::Black);
-    if (ui_.mouseClicked && ui_.pointInRect(ui_.mouseX, ui_.mouseY, contentX + labelW, cy, fieldW, fieldH))
-        { loginField_ = 0; loginBlinkT_ = 0; ui_.mouseClicked = false; }
+    if (ui_.mouseClicked && ui_.pointInRect(ui_.mouseX, ui_.mouseY, contentX + labelW, cy, fieldW, fieldH)) {
+        loginField_ = 0; loginBlinkT_ = 0; ui_.mouseClicked = false;
+#ifdef __SWITCH__
+        softKB_.open(&loginUsername_, 32, nullptr);
+#else
+        SDL_StartTextInput();
+#endif
+    }
     bool unFocused = (loginField_ == 0);
     ui_.drawWin98TextField(contentX + labelW, cy, fieldW, fieldH,
                            loginUsername_.c_str(), unFocused, false, loginBlinkT_);
     cy += rowGap;
 
-    // Password row - clicking field switches focus
+    // Password row - clicking field switches focus and opens keyboard
     ui_.drawText("Password:", contentX, cy + (fieldH - 14) / 2, 13, UI::W98::Black);
-    if (ui_.mouseClicked && ui_.pointInRect(ui_.mouseX, ui_.mouseY, contentX + labelW, cy, fieldW, fieldH))
-        { loginField_ = 1; loginBlinkT_ = 0; ui_.mouseClicked = false; }
+    if (ui_.mouseClicked && ui_.pointInRect(ui_.mouseX, ui_.mouseY, contentX + labelW, cy, fieldW, fieldH)) {
+        loginField_ = 1; loginBlinkT_ = 0; ui_.mouseClicked = false;
+#ifdef __SWITCH__
+        softKB_.open(&loginPassword_, 32, nullptr);
+#else
+        SDL_StartTextInput();
+#endif
+    }
     bool pwFocused = (loginField_ == 1);
     ui_.drawWin98TextField(contentX + labelW, cy, fieldW, fieldH,
                            loginPassword_.c_str(), pwFocused, true, loginBlinkT_);
@@ -3365,9 +3374,6 @@ void Game::renderConfigMenu() {
         {"Music Volume:", 4}, {"SFX Volume:", 5},
         {"Player HP:", 0}, {"Spawnrate:", 1},
         {"Enemy HP:", 2}, {"Enemy Speed:", 3},
-#ifndef __SWITCH__
-        {"Resolution:", CONFIG_RESOLUTION_INDEX},
-#endif
     };
     auto fmtS = [&](int idx) -> const char* {
         switch (idx) {
@@ -3377,7 +3383,6 @@ void Game::renderConfigMenu() {
             case 3: snprintf(valBuf,sizeof(valBuf),"%.1fx", config_.enemySpeedScale); break;
             case 4: snprintf(valBuf,sizeof(valBuf),"%d%%",  config_.musicVolume*100/128); break;
             case 5: snprintf(valBuf,sizeof(valBuf),"%d%%",  config_.sfxVolume*100/128);   break;
-            case CONFIG_RESOLUTION_INDEX: snprintf(valBuf,sizeof(valBuf),"%dx%d",config_.windowWidth,config_.windowHeight); break;
             default: valBuf[0]=0; break;
         }
         return valBuf;
@@ -3397,9 +3402,6 @@ void Game::renderConfigMenu() {
                 case 3: config_.enemySpeedScale=std::max(0.5f,std::min(2.5f,config_.enemySpeedScale+d*0.1f));  break;
                 case 4: config_.musicVolume    =std::max(0,   std::min(128, config_.musicVolume    +d*8));  Mix_VolumeMusic(config_.musicVolume); break;
                 case 5: config_.sfxVolume      =std::max(0,   std::min(128, config_.sfxVolume      +d*8));  break;
-#ifndef __SWITCH__
-                case CONFIG_RESOLUTION_INDEX: { int i=findResolutionPresetIndex(config_.windowWidth,config_.windowHeight); i=std::max(0,i-1); config_.windowWidth=kResolutionPresets[i].w; config_.windowHeight=kResolutionPresets[i].h; applyResolutionSettings(true); } break;
-#endif
             }
         }
         ui_.drawWin98TextField(fx+arrowW+2, y, fwA, rowH, fmtS(row.idx), sel, false, 0.f);
@@ -3413,9 +3415,6 @@ void Game::renderConfigMenu() {
                 case 3: config_.enemySpeedScale=std::max(0.5f,std::min(2.5f,config_.enemySpeedScale+d*0.1f));  break;
                 case 4: config_.musicVolume    =std::max(0,   std::min(128, config_.musicVolume    +d*8));  Mix_VolumeMusic(config_.musicVolume); break;
                 case 5: config_.sfxVolume      =std::max(0,   std::min(128, config_.sfxVolume      +d*8));  break;
-#ifndef __SWITCH__
-                case CONFIG_RESOLUTION_INDEX: { int i=findResolutionPresetIndex(config_.windowWidth,config_.windowHeight); i=std::min((int)(sizeof(kResolutionPresets)/sizeof(kResolutionPresets[0]))-1,i+1); config_.windowWidth=kResolutionPresets[i].w; config_.windowHeight=kResolutionPresets[i].h; applyResolutionSettings(true); } break;
-#endif
             }
         }
         if (ui_.hoveredItem == row.idx && !usingGamepad_) { configSelection_=row.idx; menuSelection_=row.idx; }
