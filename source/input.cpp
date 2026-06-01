@@ -2,6 +2,9 @@
 #include "game_internal.h"
 #include <ctime>
 #include <cstring>
+#ifdef __SWITCH__
+#include <switch.h>
+#endif
 
 // Key layout
 // act: 0=insert ch, 1=backspace, 2=enter/OK, 3=shift, 4=space, 5=cancel
@@ -35,10 +38,28 @@ static const int KROW_NCOLS[5] = {13, 13, 14, 12, 3};
 
 void Game::SoftKeyboard::open(std::string* tgt, int max,
                               std::function<void(bool)> done) {
+#ifdef __SWITCH__
+    // Use the Switch system keyboard applet — blocks until the user confirms or cancels.
+    SwkbdConfig kbd;
+    swkbdCreate(&kbd, 0);
+    swkbdConfigSetType(&kbd, SwkbdType_Normal);
+    swkbdConfigSetStringLenMax(&kbd, (u32)max);
+    if (tgt && !tgt->empty())
+        swkbdConfigSetInitialText(&kbd, tgt->c_str());
+    char buf[512] = {};
+    Result rc = swkbdShow(&kbd, buf, sizeof(buf));
+    swkbdClose(&kbd);
+    if (R_SUCCEEDED(rc) && tgt) {
+        *tgt = buf;
+        if (done) done(true);
+    } else {
+        if (done) done(false);
+    }
+    // active stays false — no custom keyboard overlay needed
+#else
     active = true; target = tgt; maxLen = max; onDone = done;
     shiftOn = false; heldNav = -1; repeatAt = 0;
     hits.clear();
-#ifndef __SWITCH__
     SDL_StartTextInput();
 #endif
 }
@@ -389,6 +410,11 @@ void Game::handleInput() {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         if (e.type == SDL_QUIT) { running_ = false; return; }
+        if (e.type == SDL_WINDOWEVENT &&
+            (e.window.event == SDL_WINDOWEVENT_RESIZED ||
+             e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)) {
+            updateAspectMode();
+        }
 
         // Mod-save dialog gets first pick of all events when open
         if (modSaveDialog_.isOpen()) {
@@ -473,11 +499,11 @@ void Game::handleInput() {
             if (e.type != SDL_QUIT) continue;
         }
 
-        // Toggle dev console with ~ (tilde / backtick) - single-player only
+        // Toggle dev console with ~ (tilde / backtick) - single-player or host
         if (e.type == SDL_KEYDOWN && !e.key.repeat) {
             if (e.key.keysym.sym == SDLK_BACKQUOTE) {
                 auto& net = NetworkManager::instance();
-                if (!net.isInGame()) {
+                if (!net.isInGame() || net.isHost()) {
                     consoleOpen_ = !consoleOpen_;
                     if (consoleOpen_) SDL_StartTextInput();
                     else              SDL_StopTextInput();
@@ -1056,9 +1082,6 @@ void Game::handleInput() {
             loginField_  = 0;
             loginBlinkT_ = 0;
             state_ = GameState::LoginScreen;
-#ifndef __SWITCH__
-            SDL_StartTextInput();
-#endif
         }
     }
     else if (state_ == GameState::LoginScreen) {
@@ -1092,6 +1115,9 @@ void Game::handleInput() {
         // Log-off confirmation dialog intercept
         // Must run before the clamp so menuSelection_ 90/91 aren't wiped.
         if (logOffConfirm_) {
+            // Navigate between Yes (90) and No (91) with left/right or up/down
+            if (leftInput_  || moveInput_.y < -0.5f) menuSelection_ = 90;
+            if (rightInput_ || moveInput_.y >  0.5f) menuSelection_ = 91;
             if (confirmInput_) {
                 if (menuSelection_ == 90) { running_ = false; }
 #ifdef __SWITCH__
@@ -1325,28 +1351,12 @@ void Game::handleInput() {
             auto toggleBool = [&](bool& value) {
                 if (confirmInput_) value = !value;
             };
-#ifndef __SWITCH__
-            auto adjustResolution = [&](int dir) {
-                int idx = findResolutionPresetIndex(config_.windowWidth, config_.windowHeight);
-                idx = std::max(0, std::min((int)(sizeof(kResolutionPresets) / sizeof(kResolutionPresets[0])) - 1, idx + dir));
-                config_.windowWidth = kResolutionPresets[idx].w;
-                config_.windowHeight = kResolutionPresets[idx].h;
-                applyResolutionSettings(true);
-            };
-#endif
-
             if      (configSelection_ == 0) adjustInt  (config_.playerMaxHp,    1,    20, 1);
             else if (configSelection_ == 1) adjustFloat(config_.spawnRateScale, 0.3f, 3.0f, 0.1f);
             else if (configSelection_ == 2) adjustFloat(config_.enemyHpScale,   0.3f, 3.0f, 0.1f);
             else if (configSelection_ == 3) adjustFloat(config_.enemySpeedScale,0.5f, 2.5f, 0.1f);
             else if (configSelection_ == 4) { adjustInt(config_.musicVolume, 0, 128, 8); Mix_VolumeMusic(config_.musicVolume); }
             else if (configSelection_ == 5) { adjustInt(config_.sfxVolume, 0, 128, 8); }
-#ifndef __SWITCH__
-            else if (configSelection_ == CONFIG_RESOLUTION_INDEX) {
-                if (leftInput_) adjustResolution(-1);
-                if (rightInput_) adjustResolution(1);
-            }
-#endif
             else if (configSelection_ == CONFIG_SHADER_CRT_INDEX) toggleBool(config_.shaderCRT);
             else if (configSelection_ == CONFIG_SHADER_CHROMATIC_INDEX) toggleBool(config_.shaderChromatic);
             else if (configSelection_ == CONFIG_SHADER_SCANLINES_INDEX) toggleBool(config_.shaderScanlines);
