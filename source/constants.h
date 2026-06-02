@@ -4,6 +4,10 @@
 // Version
 constexpr const char* GAME_VERSION = "2.1.0";
 
+// Workshop
+constexpr const char* WORKSHOP_URL    = "https://coldstartworkshop.duckdns.org";
+constexpr const char* WORKSHOP_PUBKEY = "c7963d86025b9dbd05a9740a496c672fb999a4fcc49e1da2acb062c831def453";
+
 // Screen (window resolution - runtime configurable)
 inline int SCREEN_W = 1280;
 inline int SCREEN_H = 720;
@@ -153,7 +157,8 @@ constexpr float BOMB_ORBIT_SPEED  = 80.0f;
 constexpr float BOMB_DASH_SPEED   = 1000.0f;
 constexpr float BOMB_SIZE         = 32.0f;
 constexpr float EXPLOSION_RADIUS  = 200.0f;
-constexpr float EXPLOSION_DAMAGE  = 100.0f;
+constexpr float EXPLOSION_DAMAGE  = 100.0f;  // vs enemies
+constexpr int   PVP_EXPLOSION_DAMAGE = 50;   // vs players in PvP (half HP)
 constexpr float EXPLOSION_DURATION= 1.1f;
 constexpr int   KILLS_PER_BOMB    = 5;
 constexpr int   MAX_BOMBS         = 100;

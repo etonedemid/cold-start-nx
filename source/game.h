@@ -92,6 +92,8 @@ struct GameConfig {
     bool shaderGlitch = true;
     bool shaderNeonEdge = true;
     bool  saveIncomingModsPermanently = false;
+    bool  enableUpnp    = true;   // auto-forward port via UPnP when hosting
+    bool  acceptMods    = true;   // receive mod payloads from multiplayer host
     float uiScale   = 1.0f;   // HUD + touch controls scale multiplier
     float shakeScale = 1.0f;  // screen shake intensity  0=off  1=full
 };
@@ -283,6 +285,7 @@ private:
     // Input (mapped to Joy-Con / Pro Controller)
     Vec2 moveInput_  = {0,0};
     Vec2 aimInput_   = {0,0};
+    Vec2 lastTouchAimDir_ = {1,0}; // persists last touch right-stick direction
     bool fireInput_  = false;
     bool bombInput_  = false;
     bool bombLaunchInput_ = false;
