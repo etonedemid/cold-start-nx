@@ -232,8 +232,8 @@ void TouchControls::render(SDL_Renderer* r, float uiScale) const {
         SDL_SetRenderDrawColor(r, 255,255,255,45);
         drawCircleOutline(r, (int)hx, (int)hy, (int)maxR, 2);
     };
-    if (leftSlot_  < 0) drawIdleStick(180.f*us, 570.f*us, 75.f*us);
-    if (rightSlot_ < 0) drawIdleStick(850.f*us, 570.f*us, 65.f*us);
+    if (leftSlot_  < 0) drawIdleStick(180.f*us, (SCREEN_H - 150.f)*us, 75.f*us);
+    if (rightSlot_ < 0) drawIdleStick((SCREEN_W - 430.f)*us, (SCREEN_H - 150.f)*us, 65.f*us);
 
     // Action buttons
     // Labels adapt to context: in gameplay they fire actions; in menus they

@@ -141,6 +141,59 @@ void Game::renderMultiplayerMenu() {
         }
     }
 
+    // Security settings strip (two checkboxes + notices)
+    const int SEC_H = 46;
+    const int SEC_Y = WY + WH - STRIP_H - SEC_H - 2;
+    SDL_SetRenderDrawColor(renderer_, 212,208,200,255);
+    SDL_Rect secBg={WX,SEC_Y,WW,SEC_H}; SDL_RenderFillRect(renderer_,&secBg);
+    SDL_SetRenderDrawColor(renderer_, 128,128,128,255);
+    SDL_RenderDrawLine(renderer_, WX,SEC_Y,WX+WW-1,SEC_Y);
+    SDL_SetRenderDrawColor(renderer_, 255,255,255,255);
+    SDL_RenderDrawLine(renderer_, WX,SEC_Y+1,WX+WW-1,SEC_Y+1);
+    {
+        // UPnP toggle
+        int cbX = WX+8, cbY1 = SEC_Y+6, cbY2 = SEC_Y+26, cbW = 13, cbH = 13;
+        // Row 1: UPnP
+#if HAS_UPNP
+        const bool upnpAvail = true;
+#else
+        const bool upnpAvail = false;
+#endif
+        SDL_Color upnpLblC = upnpAvail ? UI::W98::Black : UI::W98::Shadow;
+        ui_.drawWin98Bevel(cbX,cbY1,cbW,cbH,false);
+        {
+            Uint8 fill = upnpAvail ? 255 : 220;
+            SDL_SetRenderDrawColor(renderer_, fill, fill, fill, 255);
+        }
+        SDL_Rect inner1={cbX+2,cbY1+2,cbW-4,cbH-4}; SDL_RenderFillRect(renderer_,&inner1);
+        if (upnpAvail && config_.enableUpnp) {
+            SDL_SetRenderDrawColor(renderer_,0,0,0,255);
+            SDL_RenderDrawLine(renderer_,cbX+2,cbY1+6,cbX+5,cbY1+10);
+            SDL_RenderDrawLine(renderer_,cbX+5,cbY1+10,cbX+11,cbY1+2);
+        }
+        if (upnpAvail && ui_.mouseClicked && ui_.pointInRect(ui_.mouseX,ui_.mouseY,cbX,cbY1,cbW+160,cbH)) {
+            config_.enableUpnp = !config_.enableUpnp; saveConfig();
+        }
+        drawText("Enable UPnP", cbX+cbW+6, cbY1, 12, upnpLblC);
+        ui_.drawTextRight(upnpAvail ? "Opens a port on your router when hosting. Use on trusted networks only."
+                                    : "Not supported by the current platform.",
+                          WX+WW-10, cbY1+1, 10, upnpAvail ? SDL_Color{160,80,0,255} : UI::W98::Shadow);
+        // Row 2: Accept Mods
+        ui_.drawWin98Bevel(cbX,cbY2,cbW,cbH,false);
+        SDL_SetRenderDrawColor(renderer_,255,255,255,255);
+        SDL_Rect inner2={cbX+2,cbY2+2,cbW-4,cbH-4}; SDL_RenderFillRect(renderer_,&inner2);
+        if (config_.acceptMods) {
+            SDL_SetRenderDrawColor(renderer_,0,0,0,255);
+            SDL_RenderDrawLine(renderer_,cbX+2,cbY2+6,cbX+5,cbY2+10);
+            SDL_RenderDrawLine(renderer_,cbX+5,cbY2+10,cbX+11,cbY2+2);
+        }
+        if (ui_.mouseClicked && ui_.pointInRect(ui_.mouseX,ui_.mouseY,cbX,cbY2,cbW+160,cbH)) {
+            config_.acceptMods = !config_.acceptMods; saveConfig();
+        }
+        drawText("Accept mods", cbX+cbW+6, cbY2, 12, UI::W98::Black);
+        ui_.drawTextRight("Hosts and other players may send mods that replace game content.", WX+WW-10, cbY2+1, 10, {160,80,0,255});
+    }
+
     // Bottom strip (Discord notice)
     const int STRIP_Y=WY+WH-STRIP_H-2;
     SDL_SetRenderDrawColor(renderer_, 212,208,200,255);

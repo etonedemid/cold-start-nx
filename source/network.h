@@ -263,6 +263,7 @@ public:
     void setUsername(const std::string& name) { username_ = name; }
     const std::string& username() const { return username_; }
     void setHostPassword(const std::string& pw) { hostPassword_ = pw; }
+    void setUpnpEnabled(bool v) { upnpEnabled_ = v; }
 
     // Lobby
     const LobbyInfo& lobbyInfo() const { return lobby_; }
@@ -381,6 +382,7 @@ private:
     bool        serverIsDedicated_ = false; // set on clients when server is headless
     uint32_t    tick_ = 0;
     std::string hostPassword_;          // password required to join (host side, empty=open)
+    bool        upnpEnabled_ = true;
     std::string pendingJoinPassword_;   // password to send in Connect packet (client side)
 
     // Players

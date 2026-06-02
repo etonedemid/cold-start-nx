@@ -21,15 +21,17 @@ void Game::render() {
     SDL_RenderClear(renderer_);
 
 #ifndef __SWITCH__
-    // Hide OS cursor only during active gameplay; show it during pause menus and dead screens
-    if (state_ == GameState::Playing ||
-        state_ == GameState::PlayingCustom ||
-        state_ == GameState::PlayingPack ||
-        state_ == GameState::MultiplayerGame ||
-        state_ == GameState::LocalCoopGame)
-        SDL_ShowCursor(SDL_DISABLE);
-    else
-        SDL_ShowCursor(SDL_ENABLE);
+    // During active gameplay: hide OS cursor and confine it to the window.
+    // During any menu/pause/dead state: restore cursor and release window grab.
+    {
+        bool inGame = (state_ == GameState::Playing ||
+                       state_ == GameState::PlayingCustom ||
+                       state_ == GameState::PlayingPack ||
+                       state_ == GameState::MultiplayerGame ||
+                       state_ == GameState::LocalCoopGame);
+        SDL_ShowCursor(inGame ? SDL_DISABLE : SDL_ENABLE);
+        SDL_SetWindowGrab(window_, inGame ? SDL_TRUE : SDL_FALSE);
+    }
 #endif
 
     switch (state_) {
@@ -2296,9 +2298,10 @@ void Game::renderMainMenu() {
         {"Mods"},             // 7
         {"Config"},           // 8
         {"Credits"},          // 9
-        {"Log Off"},          // 10
+        {"Workshop"},         // 10
+        {"Log Off"},          // 11
     };
-    constexpr int count = 11;
+    constexpr int count = 12;
 #else
     Item items[] = {
         {"Play"},             // 0
@@ -2312,9 +2315,10 @@ void Game::renderMainMenu() {
         {"Config"},           // 8
         {updateAvailable_ ? "Update (available!)" : "Update", true}, // 9
         {"Credits"},          // 10
-        {"Log Off"},          // 11
+        {"Workshop"},         // 11
+        {"Log Off"},          // 12
     };
-    constexpr int count = 12;
+    constexpr int count = 13;
 #endif
 
     // Window sizing: fit all buttons

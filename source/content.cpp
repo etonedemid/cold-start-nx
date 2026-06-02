@@ -1388,7 +1388,7 @@ void Game::renderModSaveDialog() {
                                (float)fmod(gameTime_ * 1.0, 1.0));
         y += bh + 16;
 
-        ui_.drawTextCentered("The shared on-screen keyboard handles naming here.", y, 11, UI::W98::Shadow);
+        ui_.drawTextCentered("If you see this, have a great day!", y, 11, UI::W98::Shadow);
         renderSoftKB();
         y = panY + panH - 40;
         ui_.drawTextCentered("ENTER / OK confirms   ESC / CANCEL goes back", y, 11, UI::W98::Shadow);
