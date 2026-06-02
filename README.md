@@ -1,7 +1,7 @@
 
 <img width="848" height="204" alt="banner" src="https://github.com/user-attachments/assets/2a0af91e-a15e-462f-aa99-d2869a311675" />
 
-# COLD START  `v2.1.0`
+# COLD START  `v2.2.0`
 
 Top-down twin-stick shooter built in C++ with SDL2. Runs on PC, Nintendo Switch homebrew, and Android.
 
