@@ -155,7 +155,11 @@ void Game::updateAspectMode() {
     int winW = SCREEN_W, winH = SCREEN_H;
     if (window_) SDL_GetWindowSize(window_, &winW, &winH);
     float aspect = (winH > 0) ? (float)winW / (float)winH : 16.0f / 9.0f;
-    int newW = (aspect <= 1.5f) ? 960 : 1280;
+    int newW;
+    if      (aspect <= 1.50f) newW = 960;   // 4:3
+    else if (aspect <= 1.95f) newW = 1280;  // 16:9
+    else if (aspect <= 2.15f) newW = 1560;  // 19.5:9
+    else                      newW = 1600;  // 20:9
     int newH = 720;
     if (newW == SCREEN_W && newH == SCREEN_H) return;
     SCREEN_W = newW;
@@ -1089,6 +1093,8 @@ void Game::saveConfig() {
     fprintf(f, "shaderGlitch=%d\n", config_.shaderGlitch ? 1 : 0);
     fprintf(f, "shaderNeonEdge=%d\n", config_.shaderNeonEdge ? 1 : 0);
     fprintf(f, "saveIncomingModsPermanently=%d\n", config_.saveIncomingModsPermanently ? 1 : 0);
+    fprintf(f, "enableUpnp=%d\n",  config_.enableUpnp  ? 1 : 0);
+    fprintf(f, "acceptMods=%d\n",  config_.acceptMods  ? 1 : 0);
     fprintf(f, "uiScale=%.2f\n", config_.uiScale);
     fprintf(f, "shakeScale=%.2f\n", config_.shakeScale);
     fclose(f);
@@ -1122,6 +1128,8 @@ void Game::loadConfig() {
         else if (sscanf(line, "shaderGlitch=%d", &ival) == 1) config_.shaderGlitch = (ival != 0);
         else if (sscanf(line, "shaderNeonEdge=%d", &ival) == 1) config_.shaderNeonEdge = (ival != 0);
         else if (sscanf(line, "saveIncomingModsPermanently=%d", &ival) == 1) config_.saveIncomingModsPermanently = (ival != 0);
+        else if (sscanf(line, "enableUpnp=%d",  &ival) == 1) config_.enableUpnp  = (ival != 0);
+        else if (sscanf(line, "acceptMods=%d",  &ival) == 1) config_.acceptMods  = (ival != 0);
         else if (sscanf(line, "uiScale=%f",   &fval) == 1) config_.uiScale   = std::clamp(fval, 0.5f, 2.0f);
         else if (sscanf(line, "shakeScale=%f", &fval) == 1) config_.shakeScale = std::clamp(fval, 0.0f, 1.0f);
     }

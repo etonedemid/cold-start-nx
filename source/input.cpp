@@ -1022,8 +1022,11 @@ void Game::handleInput() {
         if (touchControls_.moveStick.length() > 0.15f)
             moveInput_ = touchControls_.moveStick;
         if (touchControls_.aimStick.length() > 0.2f) {
-            aimInput_   = touchControls_.aimStick;
-            fireInput_  = true;   // auto-fire while aiming
+            aimInput_        = touchControls_.aimStick;
+            lastTouchAimDir_ = touchControls_.aimStick.normalized();
+            fireInput_       = true;   // auto-fire while aiming
+        } else {
+            aimInput_ = lastTouchAimDir_;  // hold last direction when stick released
         }
 
         // Buttons act as gameplay actions in gameplay, or as face buttons in menus
@@ -1069,7 +1072,27 @@ void Game::handleInput() {
     backInput_    |= renderBack;
     leftInput_    |= renderLeft;
     rightInput_   |= renderRight;
-    // Note: renderLeft_/renderRight_ are already cleared above; no carry-over.
+
+    // In menu states, Escape acts as back navigation.
+    // Active gameplay and pause-menu states keep pauseInput_ for their own use.
+    {
+        bool keepPause =
+            state_ == GameState::Playing              ||
+            state_ == GameState::PlayingCustom        ||
+            state_ == GameState::PlayingPack          ||
+            state_ == GameState::MultiplayerGame      ||
+            state_ == GameState::LocalCoopGame        ||
+            state_ == GameState::MultiplayerSpectator ||
+            state_ == GameState::Paused               ||
+            state_ == GameState::CustomPaused         ||
+            state_ == GameState::PackPaused           ||
+            state_ == GameState::MultiplayerPaused    ||
+            state_ == GameState::LocalCoopPaused;
+        if (!keepPause && pauseInput_) {
+            backInput_  = true;
+            pauseInput_ = false;
+        }
+    }
 
     // Handle menu state transitions
     if (state_ == GameState::BiosIntro) {
@@ -1445,6 +1468,10 @@ void Game::handleInput() {
     else if (state_ == GameState::Dead) {
         if (menuSelection_ < 0) menuSelection_ = 0;
         if (menuSelection_ > 1) menuSelection_ = 1;
+        if (backInput_) {
+            if (testPlayFromEditor_) { testPlayFromEditor_ = false; state_ = GameState::CharCreator; playMenuMusic(); menuSelection_ = 0; }
+            else { state_ = GameState::MainMenu; playMenuMusic(); menuSelection_ = 0; }
+        }
         if (confirmInput_) {
             if (menuSelection_ == 0) {
                 if (testPlayFromEditor_) {
@@ -1566,6 +1593,11 @@ void Game::handleInput() {
     else if (state_ == GameState::CustomDead) {
         if (menuSelection_ < 0) menuSelection_ = 0;
         if (menuSelection_ > 1) menuSelection_ = 1;
+        if (backInput_) {
+            playMenuMusic(); menuSelection_ = 0; playingCustomMap_ = false;
+            if (testPlayFromEditor_) { state_ = GameState::Editor; testPlayFromEditor_ = false; }
+            else { state_ = GameState::MainMenu; }
+        }
         if (confirmInput_) {
             if (menuSelection_ == 0 && !customMap_.name.empty() && !testPlayFromEditor_) {
                 startCustomMap("maps/" + customMap_.name + ".csm");
@@ -1579,7 +1611,7 @@ void Game::handleInput() {
     else if (state_ == GameState::CustomWin) {
         if (menuSelection_ < 0) menuSelection_ = 0;
         if (menuSelection_ > 1) menuSelection_ = 1;
-        if (confirmInput_) {
+        if (backInput_ || confirmInput_) {
             playMenuMusic(); menuSelection_ = 0; playingCustomMap_ = false;
             if (testPlayFromEditor_) { state_ = GameState::Editor; testPlayFromEditor_ = false; }
             else { state_ = GameState::MainMenu; }
@@ -1816,9 +1848,13 @@ void Game::handleInput() {
     else if (state_ == GameState::PackDead) {
         if (menuSelection_ < 0) menuSelection_ = 0;
         if (menuSelection_ > 1) menuSelection_ = 1;
+        if (backInput_) {
+            playMenuMusic(); menuSelection_ = 0; playingPack_ = false;
+            packCharDef_.unload(); state_ = GameState::MainMenu;
+        }
         if (confirmInput_) {
             if (menuSelection_ == 0) {
-                startPackLevel(); // Retry current level
+                startPackLevel();
             } else {
                 playMenuMusic(); menuSelection_ = 0; playingPack_ = false;
                 packCharDef_.unload();
@@ -1829,6 +1865,10 @@ void Game::handleInput() {
     else if (state_ == GameState::PackLevelWin) {
         if (menuSelection_ < 0) menuSelection_ = 0;
         if (menuSelection_ > 1) menuSelection_ = 1;
+        if (backInput_) {
+            playMenuMusic(); menuSelection_ = 0; playingPack_ = false;
+            packCharDef_.unload(); state_ = GameState::MainMenu;
+        }
         if (confirmInput_) {
             if (menuSelection_ == 0) {
                 advancePackLevel();
@@ -1840,7 +1880,7 @@ void Game::handleInput() {
         }
     }
     else if (state_ == GameState::PackComplete) {
-        if (confirmInput_) {
+        if (backInput_ || confirmInput_) {
             playMenuMusic(); menuSelection_ = 0; playingPack_ = false;
             packCharDef_.unload();
             state_ = GameState::MainMenu;
@@ -1853,7 +1893,7 @@ void Game::handleInput() {
         if (menuSelection_ >= totalItems) menuSelection_ = totalItems - 1;
         multiMenuSelection_ = menuSelection_;
         if (multiMenuSelection_ >= 3) serverListSelection_ = multiMenuSelection_ - 3;
-        if (backInput_ || pauseInput_) { state_ = GameState::MainMenu; menuSelection_ = 0; }
+        if (backInput_) { state_ = GameState::MainMenu; menuSelection_ = 0; }
         if (confirmInput_) {
             if (multiMenuSelection_ == 0) {
                 // Host game
@@ -2530,8 +2570,12 @@ void Game::handleInput() {
         }
     }
     else if (state_ == GameState::MultiplayerDead) {
-        // Wait for respawn (automatic from updateMultiplayer)
         if (respawnTimer_ <= 0) respawnTimer_ = currentRules_.respawnTime;
+        if (backInput_) {
+            auto& net = NetworkManager::instance();
+            net.disconnect();
+            state_ = GameState::MainMenu; menuSelection_ = 0; playMenuMusic();
+        }
     }
     else if (state_ == GameState::WinLoss) {
         // Any confirm or back -> proceed to full scoreboard

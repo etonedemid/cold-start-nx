@@ -1614,6 +1614,18 @@ void Game::spawnBulletExplosion(Vec2 pos, int damage, uint8_t ownerId, uint8_t o
 // Bombs & Explosions
 
 void Game::updateBombs(float dt) {
+    auto& netBombs = NetworkManager::instance();
+    // Only the bomb owner (or offline) spawns the explosion.
+    // Remote machines skip the spawn and wait for the network explosion packet,
+    // preventing the double-explosion where both sides fire spawnExplosion.
+    auto detonateIfOwner = [&](Bomb& b) {
+        bool isOwner = !netBombs.isOnline()
+                    || b.ownerId == 255
+                    || b.ownerId == netBombs.localPlayerId();
+        if (isOwner) spawnExplosion(b.pos, b.ownerId, b.ownerSubSlot);
+        b.alive = false;
+    };
+
     for (auto& b : bombs_) {
         if (!b.alive) continue;
         b.age += dt;
@@ -1707,10 +1719,8 @@ end_remote_bomb_homing:
                 int bty = TileMap::toTile(b.pos.y);
                 if (map_.get(btx, bty) == TILE_BOX) {
                     destroyBox(btx, bty);
-                    // Bomb continues through boxes
                 } else {
-                    spawnExplosion(b.pos, b.ownerId, b.ownerSubSlot);
-                    b.alive = false;
+                    detonateIfOwner(b);
                 }
             }
             // CollisionZone trigger => explode
@@ -1719,38 +1729,33 @@ end_remote_bomb_homing:
                     if (t.type != TriggerType::CollisionZone) continue;
                     if (collisionZonePushout(b.pos, BOMB_SIZE * 0.3f, {t.x, t.y},
                             t.width*0.5f, t.height*0.5f, triggerGetAngle(t)).lengthSq() > 0.0f) {
-                        spawnExplosion(b.pos, b.ownerId, b.ownerSubSlot);
-                        b.alive = false;
+                        detonateIfOwner(b);
                         break;
                     }
                 }
             }
             // Explode if speed drops too low
-            if (b.vel.length() < 30.0f) {
-                spawnExplosion(b.pos, b.ownerId, b.ownerSubSlot);
-                b.alive = false;
+            if (b.alive && b.vel.length() < 30.0f) {
+                detonateIfOwner(b);
             }
             // Proximity: explode on contact with any enemy
             if (b.alive) {
                 for (auto& e : enemies_) {
                     if (!e.alive) continue;
                     if (Vec2::dist(b.pos, e.pos) < BOMB_SIZE + 20.0f) {
-                        spawnExplosion(b.pos, b.ownerId, b.ownerSubSlot);
-                        b.alive = false;
+                        detonateIfOwner(b);
                         break;
                     }
                 }
             }
             // Proximity: explode on contact with any remote enemy player (PvP)
             if (b.alive && (lobbySettings_.isPvp || currentRules_.pvpEnabled)) {
-                auto& netP = NetworkManager::instance();
-                uint8_t localId = netP.localPlayerId();
-                for (auto& rp : netP.players()) {
+                uint8_t localId = netBombs.localPlayerId();
+                for (auto& rp : netBombs.players()) {
                     if (rp.id == localId || !rp.alive || rp.spectating) continue;
                     if (localTeam_ >= 0 && rp.team == localTeam_) continue;
                     if (Vec2::dist(b.pos, rp.targetPos) < BOMB_SIZE + 20.0f) {
-                        spawnExplosion(b.pos, b.ownerId, b.ownerSubSlot);
-                        b.alive = false;
+                        detonateIfOwner(b);
                         break;
                     }
                 }
@@ -1838,7 +1843,7 @@ void Game::updateExplosions(float dt) {
                 }
                 if (!selfFire && !teamFire && (netEx.isHost() || netEx.isConnectedToDedicated())) {
                     // P2P host or dedicated-server client: process own explosion damage locally
-                    int newHp = std::max(0, player_.hp - 30);
+                    int newHp = std::max(0, player_.hp - PVP_EXPLOSION_DAMAGE);
                     player_.hp = newHp;
                     NetPlayer* localNetP = netEx.localPlayer();
                     if (localNetP) localNetP->hp = newHp;
@@ -1869,7 +1874,7 @@ void Game::updateExplosions(float dt) {
                         if (Vec2::dist(ex.pos, rp.targetPos) < ex.radius) {
                             NetPlayer* rpM = netEx2.findPlayer(rp.id);
                             if (!rpM) continue;
-                            rpM->hp -= (int)ex.damage;
+                            rpM->hp -= PVP_EXPLOSION_DAMAGE;
                             if (rpM->hp <= 0) {
                                 rpM->hp = 0;
                                 rpM->alive = false;
@@ -1917,7 +1922,7 @@ void Game::updateExplosions(float dt) {
                     }
                     if (!selfFire && !teamFire && (netEx3.isHost() || netEx3.isConnectedToDedicated())) {
                         Player& target = coopSlots_[ci].player;
-                        target.hp = std::max(0, target.hp - 3);
+                        target.hp = std::max(0, target.hp - PVP_EXPLOSION_DAMAGE);
                         if (target.hp <= 0) {
                             target.dead = true;
                             netEx3.sendSubPlayerDied(netEx3.localPlayerId(), (uint8_t)ci, ex.ownerId);
@@ -3039,7 +3044,7 @@ void Game::resolveCollisions() {
     }
 
     // PVP: Player bullets vs remote players (when friendlyFire/pvp is enabled)
-    if (net.isInGame() && currentRules_.pvpEnabled) {
+    if (net.isInGame() && (lobbySettings_.isPvp || currentRules_.pvpEnabled)) {
         auto& players = net.players();
         bool mpSplitscreenLocal = coopPlayerCount_ > 1 &&
             (state_ == GameState::MultiplayerGame || state_ == GameState::MultiplayerPaused ||
@@ -3248,32 +3253,39 @@ void Game::resolveCollisions() {
     }
 
     // Bombs vs enemies (dashed bombs)
-    for (auto& b : bombs_) {
-        if (!b.alive || !b.hasDashed) continue;
-        for (auto& e : enemies_) {
-            if (!e.alive) continue;
-            if (circleOverlap(b.pos, BOMB_SIZE, e.pos, e.size * 0.7f)) {
-                spawnExplosion(b.pos, b.ownerId, b.ownerSubSlot);
-                b.alive = false;
-                break;
-            }
-        }
-    }
-
-    // Bombs vs remote players (PvP, dashed bombs)
-    if (lobbySettings_.isPvp || currentRules_.pvpEnabled) {
-        auto& netBvP = NetworkManager::instance();
-        uint8_t localId = netBvP.localPlayerId();
+    {
+        auto& netColl = NetworkManager::instance();
+        auto detonateIfOwnerColl = [&](Bomb& b) {
+            bool isOwner = !netColl.isOnline()
+                        || b.ownerId == 255
+                        || b.ownerId == netColl.localPlayerId();
+            if (isOwner) spawnExplosion(b.pos, b.ownerId, b.ownerSubSlot);
+            b.alive = false;
+        };
         for (auto& b : bombs_) {
             if (!b.alive || !b.hasDashed) continue;
-            for (const auto& rp : netBvP.players()) {
-                if (rp.id == localId || !rp.alive || rp.spectating) continue;
-                if (rp.id == b.ownerId) continue;  // can't detonate on own player
-                if (localTeam_ >= 0 && rp.team == localTeam_) continue;
-                if (circleOverlap(b.pos, BOMB_SIZE, rp.targetPos, 18.0f)) {
-                    spawnExplosion(b.pos, b.ownerId, b.ownerSubSlot);
-                    b.alive = false;
+            for (auto& e : enemies_) {
+                if (!e.alive) continue;
+                if (circleOverlap(b.pos, BOMB_SIZE, e.pos, e.size * 0.7f)) {
+                    detonateIfOwnerColl(b);
                     break;
+                }
+            }
+        }
+
+        // Bombs vs remote players (PvP, dashed bombs)
+        if (lobbySettings_.isPvp || currentRules_.pvpEnabled) {
+            uint8_t localId = netColl.localPlayerId();
+            for (auto& b : bombs_) {
+                if (!b.alive || !b.hasDashed) continue;
+                for (const auto& rp : netColl.players()) {
+                    if (rp.id == localId || !rp.alive || rp.spectating) continue;
+                    if (rp.id == b.ownerId) continue;
+                    if (localTeam_ >= 0 && rp.team == localTeam_) continue;
+                    if (circleOverlap(b.pos, BOMB_SIZE, rp.targetPos, 18.0f)) {
+                        detonateIfOwnerColl(b);
+                        break;
+                    }
                 }
             }
         }

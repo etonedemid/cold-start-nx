@@ -190,11 +190,13 @@ bool NetworkManager::host(uint16_t port, int maxClients) {
     lobby_.maxPlayers = dedicatedServer_ ? maxClients : (maxClients + 1);
 
     printf("Network: Hosting on port %d (max %d clients)\n", port, maxClients);
-    // Async UPnP port mapping so routers/firewalls automatically forward the port
+    // Async UPnP port mapping (only if enabled in config)
 #if HAS_UPNP
-    if (s_upnp.mapped) upnpUnmap();  // remove any stale mapping first
-    std::thread(upnpMapPort, port).detach();
-    printf("UPnP: port mapping requested (async)\n");
+    if (upnpEnabled_) {
+        if (s_upnp.mapped) upnpUnmap();
+        std::thread(upnpMapPort, port).detach();
+        printf("UPnP: port mapping requested (async)\n");
+    }
 #endif
     return true;
 #else
