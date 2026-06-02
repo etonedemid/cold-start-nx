@@ -1267,7 +1267,11 @@ void Game::setupNetworkCallbacks() {
     };
 
     net.onModSyncReceived = [this](const std::vector<uint8_t>& modData) {
-        // Client received mod data from host - install and apply
+        // Client received mod data from host — only install if the user allows it
+        if (!config_.acceptMods) {
+            printf("Game: Mod sync skipped (acceptMods=false)\n");
+            return;
+        }
         printf("Game: Received mod sync from host, installing...\n");
         auto& mm = ModManager::instance();
         mm.deserializeAndInstallMods(modData, config_.saveIncomingModsPermanently);
@@ -1365,7 +1369,7 @@ void Game::updateMultiplayer(float dt) {
     if (net.isInGame()) {
         netStateSendTimer_ -= dt;
         if (netStateSendTimer_ <= 0) {
-            netStateSendTimer_ = 1.0f / 20.0f; // 20 Hz - interpolation handles smooth display
+            netStateSendTimer_ = 1.0f / 30.0f; // 30 Hz - packets arrive every 33ms, lerp takes 42ms so always interpolating
 
             NetPlayer state;
             state.id = net.localPlayerId();
@@ -1541,6 +1545,7 @@ void Game::hostGame() {
     auto& net = NetworkManager::instance();
     clearSyncedCharacters();
     int maxClients = dedicatedMode_ ? hostMaxPlayers_ : (hostMaxPlayers_ - 1);
+    net.setUpnpEnabled(config_.enableUpnp);
     if (net.host(hostPort_, maxClients)) {
         net.setHostPassword(lobbyPassword_);
         if (state_ != GameState::HostSetup) {

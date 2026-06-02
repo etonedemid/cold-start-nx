@@ -1,5 +1,6 @@
 #pragma once
 #include "vec2.h"
+#include "constants.h"
 #include <SDL2/SDL.h>
 
 struct TouchControls {
@@ -61,11 +62,11 @@ private:
     // Button geometry helpers (logical px, scaled by uiScale)
     struct BtnPos { float x, y, r; };
     BtnPos btnToggle(float s) const { return {  32*s,  32*s, 22*s}; }
-    BtnPos btnFire  (float s) const { return {1190*s, 480*s, 42*s}; }
-    BtnPos btnParry (float s) const { return {1100*s, 480*s, 38*s}; }
-    BtnPos btnMelee (float s) const { return {1190*s, 570*s, 38*s}; }
-    BtnPos btnBomb  (float s) const { return {1100*s, 570*s, 38*s}; }
-    BtnPos btnPause (float s) const { return { 640*s,  32*s, 26*s}; }
+    BtnPos btnFire  (float s) const { return {(SCREEN_W -  90.f)*s, (SCREEN_H - 240.f)*s, 42*s}; }
+    BtnPos btnParry (float s) const { return {(SCREEN_W - 180.f)*s, (SCREEN_H - 240.f)*s, 38*s}; }
+    BtnPos btnMelee (float s) const { return {(SCREEN_W -  90.f)*s, (SCREEN_H - 150.f)*s, 38*s}; }
+    BtnPos btnBomb  (float s) const { return {(SCREEN_W - 180.f)*s, (SCREEN_H - 150.f)*s, 38*s}; }
+    BtnPos btnPause (float s) const { return {SCREEN_W * 0.5f * s,   32*s, 26*s}; }
 
     static bool inCircle(float px, float py, float cx, float cy, float r) {
         float dx = px-cx, dy = py-cy;
