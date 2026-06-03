@@ -3,7 +3,8 @@
 
 # COLD START  `v2.2.0`
 
-Top-down twin-stick shooter built in C++ with SDL2. Runs on PC, Nintendo Switch homebrew, and Android.
+roguelike survival with bombs, upgrades, parrying and a console where you can spawn a car and run enemies over. 
+Runs on PC, Nintendo Switch homebrew, and Android.
 
 License: GNU GPL — except music; consult authors before distributing. Sounds from https://pixabay.com/
 
