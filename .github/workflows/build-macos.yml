@@ -1,0 +1,58 @@
+name: Build macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to upload to'
+        required: true
+        default: 'v2.4.0'
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew install sdl2 sdl2_image sdl2_ttf sdl2_mixer curl miniupnpc cmake dylibbundler
+
+      - name: Build
+        run: |
+          mkdir build-mac
+          cd build-mac
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          cmake --build . -j$(sysctl -n hw.ncpu)
+
+      - name: Bundle
+        run: |
+          VER=$(grep -o '"[0-9][^"]*"' source/constants.h | tr -d '"')
+          DIST=mac-dist
+
+          mkdir -p $DIST/libs
+          cp build-mac/cold_start $DIST/
+          cp -r romfs $DIST/romfs
+
+          # Bundle dylibs and fix up rpaths
+          cd $DIST
+          dylibbundler -b -x cold_start -d libs -p @executable_path/libs/ -of
+          cd ..
+
+          cat > $DIST/run.sh << 'EOF'
+          #!/bin/sh
+          DIR="$(cd "$(dirname "$0")" && pwd)"
+          cd "$DIR"
+          ./cold_start
+          EOF
+          chmod +x $DIST/run.sh
+
+          zip -r cold_start-macos-$VER.zip $DIST/
+          echo "ZIP=cold_start-macos-$VER.zip" >> $GITHUB_ENV
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ inputs.release_tag }} $ZIP --clobber
