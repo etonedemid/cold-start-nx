@@ -2,7 +2,7 @@
 #include "vec2.h"
 
 // Version
-constexpr const char* GAME_VERSION = "2.1.0";
+constexpr const char* GAME_VERSION = "2.3.0";
 
 // Workshop
 constexpr const char* WORKSHOP_URL    = "https://coldstartworkshop.duckdns.org";
@@ -181,11 +181,11 @@ constexpr int   MELEE_ANIM_FIRST    = 3;      // first body frame (sprite 0004)
 constexpr int   MELEE_ANIM_LAST     = 9;      // last  body frame (sprite 0010)
 
 // Spawning - wave system
-constexpr float WAVE_PAUSE_BASE     = 10.0f; // pause between waves (scales down over time)
+constexpr float WAVE_PAUSE_BASE     = 10.0f; 
 constexpr int   WAVE_SIZE_BASE      = 2;     // enemies per wave at start
 constexpr int   WAVE_SIZE_GROWTH    = 1;     // extra enemies per wave number
 constexpr int   WAVE_MAX_SIZE       = 15;    // cap per wave
-constexpr float WAVE_SPAWN_INTERVAL = 0.6f;  // delay between each enemy in a wave
+constexpr float WAVE_SPAWN_INTERVAL = 0.6f; 
 constexpr int   WAVE_MELEE_WEIGHT   = 42;
 constexpr int   WAVE_SHOOTER_WEIGHT = 22;
 constexpr int   WAVE_BRUTE_WEIGHT   = 10;

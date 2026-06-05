@@ -169,18 +169,35 @@ bool Mod::loadFromFolder(const std::string& path) {
     std::string cfgPath = path + "/mod.cfg";
     auto ini = parseINI(cfgPath);
 
+    // Check for workshop metadata marker (.workshop_meta)
+    std::string metaPath = path + "/.workshop_meta";
+    {
+        auto metaIni = parseINI(metaPath);
+        if (metaIni.count("workshop")) {
+            auto& ws = metaIni["workshop"];
+            workshopId   = ws.count("id")   ? ws["id"]   : "";
+            workshopHash = ws.count("hash") ? ws["hash"] : "";
+            if (!workshopId.empty()) source = ModSource::Workshop;
+        }
+    }
+
     if (ini.find("mod") == ini.end()) {
         printf("Mod: no [mod] section in %s\n", cfgPath.c_str());
         return false;
     }
 
     auto& modSec = ini["mod"];
-    id          = modSec.count("id")          ? modSec["id"]          : "";
-    name        = modSec.count("name")        ? modSec["name"]        : id;
-    author      = modSec.count("author")      ? modSec["author"]      : "Unknown";
-    version     = modSec.count("version")     ? modSec["version"]     : "1.0";
-    description = modSec.count("description") ? modSec["description"] : "";
-    gameVersion = modSec.count("game_version") ? std::atoi(modSec["game_version"].c_str()) : 1;
+    id               = modSec.count("id")                ? modSec["id"]                : "";
+    name             = modSec.count("name")              ? modSec["name"]              : id;
+    author           = modSec.count("author")            ? modSec["author"]            : "Unknown";
+    version          = modSec.count("version")           ? modSec["version"]           : "1.0";
+    description      = modSec.count("description")       ? modSec["description"]       : "";
+    shortDescription = modSec.count("short_description") ? modSec["short_description"] : "";
+    modType          = modSec.count("type")              ? modSec["type"]              : "";
+    gameVersion      = modSec.count("game_version")      ? std::atoi(modSec["game_version"].c_str()) : 1;
+    // workshop_id in mod.cfg takes priority if .workshop_meta not present
+    if (workshopId.empty() && modSec.count("workshop_id"))
+        workshopId = modSec["workshop_id"];
 
     if (id.empty()) {
         printf("Mod: missing id in %s\n", cfgPath.c_str());
@@ -542,12 +559,24 @@ static constexpr uint16_t MAX_MOD_SYNC_FILES_PER_MOD = 8192;
 static constexpr uint16_t MAX_MOD_SYNC_ID_LEN = 64;
 static constexpr uint16_t MAX_MOD_SYNC_PATH_LEN = 512;
 
-std::vector<uint8_t> ModManager::serializeEnabledMods() const {
+void ModManager::writeWorkshopMeta(const std::string& modFolder,
+                                   const std::string& workshopId,
+                                   const std::string& fileHash) {
+    std::string metaPath = modFolder + "/.workshop_meta";
+    FILE* f = fopen(metaPath.c_str(), "w");
+    if (!f) return;
+    fprintf(f, "[workshop]\n");
+    fprintf(f, "id=%s\n", workshopId.c_str());
+    fprintf(f, "hash=%s\n", fileHash.c_str());
+    fclose(f);
+}
+
+std::vector<uint8_t> ModManager::serializeEnabledMods(ModSource sourceFilter) const {
     std::vector<uint8_t> result;
 
     bool hasEnabledMods = false;
     for (auto& m : mods_) {
-        if (m.enabled) {
+        if (m.enabled && m.source == sourceFilter) {
             hasEnabledMods = true;
             break;
         }
@@ -560,6 +589,7 @@ std::vector<uint8_t> ModManager::serializeEnabledMods() const {
 
     for (auto& m : mods_) {
         if (!m.enabled) continue;
+        if (m.source != sourceFilter) continue;  // only send mods of the requested type
         if (m.id.empty() || m.id.size() > MAX_MOD_SYNC_ID_LEN || !isSafeModId(m.id)) {
             printf("ModSync: skipping mod with unsafe sync id '%s'\n", m.id.c_str());
             continue;
@@ -662,7 +692,14 @@ std::vector<uint8_t> ModManager::serializeEnabledMods() const {
     return result;
 }
 
-void ModManager::deserializeAndInstallMods(const std::vector<uint8_t>& data, bool permanentInstall) {
+void ModManager::deserializeAndInstallMods(const std::vector<uint8_t>& data,
+                                           bool permanentInstall,
+                                           bool acceptWorkshop,
+                                           bool acceptLocal) {
+    if (!acceptWorkshop && !acceptLocal) {
+        printf("ModSync: all mod types rejected by user settings\n");
+        return;
+    }
     if (data.size() < 2 || data.size() > MAX_MOD_SYNC_BYTES) {
         printf("ModSync: rejecting blob size %zu\n", data.size());
         return;

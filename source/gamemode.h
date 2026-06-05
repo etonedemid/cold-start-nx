@@ -64,8 +64,8 @@ struct LobbySettings {
     bool  upgradesShared         = false;
 
     // Map
-    int   mapWidth               = 40;
-    int   mapHeight              = 40;
+    int   mapWidth               = 64;
+    int   mapHeight              = 64;
 
     // Enemy
     float enemyHpScale           = 1.0f;

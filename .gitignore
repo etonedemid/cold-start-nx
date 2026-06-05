@@ -1,3 +1,8 @@
+# ─── Local secrets & helper scripts (never commit) ──────────────────────────
+.env.local
+fetch_projects.py
+fetch_projects.bat
+
 # ─── Build output ────────────────────────────────────────────────────────────
 build/
 build-pc/
@@ -57,3 +62,18 @@ Thumbs.db
 
 # ─── Claude Code ─────────────────────────────────────────────────────────────
 .claude/
+
+deploy_all.ps1
+
+# ─── Workshop runtime temp files ─────────────────────────────────────────────
+modlist.json.tmp
+ws_icon_*.png
+ws_ss_*.png
+ws_detail_*.json
+mods_download_*.zip
+
+# ─── Local mod folders (installed mods, not source) ──────────────────────────
+mods/*/
+
+# ─── Local character exports (saved from character creator) ──────────────────
+characters/

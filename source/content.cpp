@@ -275,9 +275,10 @@ void Game::renderMapSelectMenu() {
             if (slash != std::string::npos) fname = fname.substr(slash + 1);
             int animIdx = i - scrollOff;
             // Click selects; Play button below launches
-            if (ui_.win98Button(animIdx, fname.c_str(), winX + padX, y, winW - padX * 2, btnH, sel))
-                mapSelectIdx_ = i;
-            if (ui_.hoveredItem == animIdx && !usingGamepad_) mapSelectIdx_ = i;
+            if (ui_.win98Button(animIdx, fname.c_str(), winX + padX, y, winW - padX * 2, btnH, sel)) {
+                mapSelectIdx_ = i; menuSelection_ = i;
+            }
+            if (ui_.hoveredItem == animIdx && !usingGamepad_) { mapSelectIdx_ = i; menuSelection_ = i; }
         }
         if ((int)mapFiles_.size() > maxVisible) {
             float ratio = (float)maxVisible / mapFiles_.size();
@@ -699,8 +700,8 @@ void Game::renderCharCreator() {
         bool backPressed = ui_.win98Button(10, "Back", lCX, contentY, lRW, btnH, cc.field == 10);
         if (ui_.hoveredItem == 10 && !usingGamepad_) cc.field = 10;
 
-        // Button action logic (unchanged)
-        if (!modalOpen && ui_.mouseClicked) {
+        // win98Button already consumed mouseClicked and returns true only on click
+        if (!modalOpen) {
             if (reloadPressed) {
                 cc.field = 6;
                 if (cc.loaded) {
@@ -732,6 +733,7 @@ void Game::renderCharCreator() {
                 cc.clearPreviews(renderer_);
                 state_ = GameState::MainMenu;
                 menuSelection_ = 0;
+                updateAspectMode();
             }
         }
     }
@@ -1071,6 +1073,27 @@ void Game::saveCharacterToFolder(const std::string& folderPath) {
     }
 
     printf("Character saved: %s\n", cfgPath.c_str());
+
+    // If this was the active character, reload it from disk and re-apply.
+    // Falls back to default if the saved data turned out to be invalid.
+    if (selectedChar_ >= 0) {
+        std::string normFolder = folderPath;
+        if (!normFolder.empty() && normFolder.back() != '/') normFolder += '/';
+        if (selectedChar_ < (int)availableChars_.size() &&
+            availableChars_[selectedChar_].folder == normFolder) {
+            scanCharacters();
+            int newIdx = -1;
+            for (int i = 0; i < (int)availableChars_.size(); i++) {
+                if (availableChars_[i].folder == normFolder) { newIdx = i; break; }
+            }
+            if (newIdx >= 0) {
+                selectedChar_ = newIdx;
+                applyCharacter(availableChars_[newIdx]);
+            } else {
+                resetToDefaultCharacter();
+            }
+        }
+    }
 }
 
 void Game::loadCharacterIntoCreator(const std::string& folderPath) {
@@ -1378,7 +1401,7 @@ void Game::renderModSaveDialog() {
     }
     // Phase: name new mod
     else if (d.phase == ModSaveDialogState::NameNewMod) {
-        ui_.drawTextCentered("Type a mod ID (letters, digits, _ -)", y, 13, UI::W98::Shadow);
+        ui_.drawTextCentered("Type a mod name", y, 13, UI::W98::Shadow);
         y += 30;
 
         // Win98 text field with blinking cursor

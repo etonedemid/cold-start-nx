@@ -11,7 +11,7 @@
 
 // Networking: ENet for multiplayer
 // On Switch: use bundled ENet + libnx BSD sockets (source/enet/)
-// On PC:     use system libenet (detected by CMakeLists; HAS_ENET passed in)
+// On PC:     use system libenet (detected by s; HAS_ENET passed in)
 #if defined(__SWITCH__)
 #  include <enet/enet.h>
 #  include <switch.h>
