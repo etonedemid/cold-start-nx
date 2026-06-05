@@ -955,13 +955,15 @@ void Game::handleInput() {
 
     // Analog-stick menu navigation (non-gameplay states)
     {
-        bool inGameplay = (state_ == GameState::Playing  || state_ == GameState::Paused ||
-            state_ == GameState::Workshop       || state_ == GameState::Dead            || state_ == GameState::LocalCoopGame  ||
-            state_ == GameState::LocalCoopPaused || state_ == GameState::LocalCoopDead ||
+        bool inGameplay = (state_ == GameState::Playing       || state_ == GameState::Paused ||
+            state_ == GameState::Workshop        || state_ == GameState::Dead             || state_ == GameState::LocalCoopGame  ||
+            state_ == GameState::LocalCoopPaused || state_ == GameState::LocalCoopDead   ||
             state_ == GameState::MultiplayerGame  || state_ == GameState::MultiplayerPaused ||
             state_ == GameState::MultiplayerDead  || state_ == GameState::MultiplayerSpectator ||
             state_ == GameState::PlayingPack      || state_ == GameState::PackPaused ||
             state_ == GameState::PackDead         || state_ == GameState::PackLevelWin ||
+            state_ == GameState::PlayingCustom    || state_ == GameState::CustomPaused ||
+            state_ == GameState::CustomDead       || state_ == GameState::CustomWin ||
             state_ == GameState::Editor           || state_ == GameState::EditorConfig);
         if (!inGameplay) {
             Uint32 now = SDL_GetTicks();
