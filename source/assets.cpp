@@ -112,8 +112,30 @@ void Assets::androidInitRomfs() {
     int chosen = 0;
     SDL_ShowMessageBox(&mbData, &chosen);
 
-    std::string base = (chosen == 1 && extStorage) ? extStorage : intStorage;
+    std::string base;
+    if (chosen == 1) {
+        if (extStorage && SDL_AndroidGetExternalStorageState() & SDL_ANDROID_EXTERNAL_STORAGE_WRITE) {
+            base = extStorage;
+        } else {
+            // External unavailable - tell the user and fall back
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING,
+                "External Storage Unavailable",
+                "External storage is not accessible on this device.\n"
+                "Falling back to internal storage.",
+                nullptr);
+            base = intStorage;
+        }
+    } else {
+        base = intStorage;
+    }
     std::string romfsRoot = base + "/romfs";
+
+    // Show extraction destination so the user knows where files land
+    {
+        char msg[512];
+        snprintf(msg, sizeof(msg), "Extracting game assets to:\n%s", romfsRoot.c_str());
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Cold Start - Setup", msg, nullptr);
+    }
 
     printf("androidInitRomfs: extracting to %s\n", romfsRoot.c_str());
     extractFromApk(romfsRoot);
