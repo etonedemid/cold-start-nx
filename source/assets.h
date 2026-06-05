@@ -29,6 +29,10 @@ public:
     // Must be called after SDL_Init, before any assets are loaded.
     static void androidInitRomfs();
 
+    // Android only: returns the romfs root path with trailing slash, e.g.
+    // "/data/.../romfs/".  Empty string on non-Android builds.
+    static std::string androidRomfsRoot();
+
     // Load a texture from a path relative to the romfs root (caches by relPath)
     SDL_Texture* loadRelTex(const std::string& relPath);
 
