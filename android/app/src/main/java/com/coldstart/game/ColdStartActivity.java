@@ -1,12 +1,15 @@
 package com.coldstart.game;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.DocumentsContract;
+import android.provider.Settings;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
@@ -150,6 +153,57 @@ public class ColdStartActivity extends SDLActivity {
         } catch (Exception e) { return false; }
     }
 
+    // ── Storage permission + SAF folder picker ───────────────────────────────
+    // Called from JNI: requests MANAGE_EXTERNAL_STORAGE (Android 11+) or
+    // READ/WRITE_EXTERNAL_STORAGE (Android <= 10), then opens SAF picker.
+    // Blocks until permission flow and folder pick are both complete.
+    // Returns filesystem path, or "" on failure/cancel.
+
+    private static final int REQUEST_LEGACY_STORAGE = 9002;
+    private static Semaphore s_permissionSemaphore = null;
+
+    public String requestStorageAndBrowse() {
+        // Android 11+: need MANAGE_EXTERNAL_STORAGE for arbitrary path fopen()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (!Environment.isExternalStorageManager()) {
+                s_permissionSemaphore = new Semaphore(0);
+                runOnUiThread(() -> {
+                    try {
+                        Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                            Uri.parse("package:" + getPackageName()));
+                        startActivityForResult(intent, REQUEST_LEGACY_STORAGE);
+                    } catch (Exception e) {
+                        Semaphore sem = s_permissionSemaphore;
+                        if (sem != null) sem.release();
+                    }
+                });
+                try { s_permissionSemaphore.acquire(); } catch (InterruptedException ignored) {}
+                s_permissionSemaphore = null;
+            }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    != PackageManager.PERMISSION_GRANTED) {
+                s_permissionSemaphore = new Semaphore(0);
+                requestPermissions(new String[]{
+                    Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE
+                }, REQUEST_LEGACY_STORAGE);
+                try { s_permissionSemaphore.acquire(); } catch (InterruptedException ignored) {}
+                s_permissionSemaphore = null;
+            }
+        }
+        return browseFolder();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_LEGACY_STORAGE) {
+            Semaphore sem = s_permissionSemaphore;
+            if (sem != null) sem.release();
+        }
+    }
+
     // ── Android Storage Access Framework folder picker ────────────────────────
     // Called from native JNI on the SDL main thread; blocks until the user
     // picks a folder (or cancels).  Returns a filesystem path, or null on
@@ -184,6 +238,11 @@ public class ColdStartActivity extends SDLActivity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_LEGACY_STORAGE) {
+            Semaphore sem = s_permissionSemaphore;
+            if (sem != null) sem.release();
+            return;
+        }
         if (requestCode == REQUEST_PICK_FOLDER) {
             if (resultCode == Activity.RESULT_OK && data != null) {
                 Uri uri = data.getData();

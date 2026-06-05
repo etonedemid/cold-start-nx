@@ -4,6 +4,12 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Storage: legacy read/write for Android <= 9, MANAGE for Android 11+ -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
     <!-- Game controller support -->
     <uses-feature
@@ -15,7 +21,8 @@
         android:icon="@mipmap/ic_launcher"
         android:label="COLD START"
         android:hasCode="true"
-        android:supportsRtl="false">
+        android:supportsRtl="false"
+        android:requestLegacyExternalStorage="true">
 
         <activity
             android:name="com.coldstart.game.ColdStartActivity"
