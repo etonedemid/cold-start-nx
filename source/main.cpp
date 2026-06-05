@@ -32,6 +32,7 @@ static void handleFatalSignal(int sig) {
 
 #ifdef __SWITCH__
 #include <switch.h>
+#include <unistd.h>
 #endif
 
 int main(int argc, char* argv[]) {
@@ -100,6 +101,15 @@ int main(int argc, char* argv[]) {
 #ifdef __SWITCH__
     socketInitializeDefault();
     nxlinkStdio();
+    // Set CWD to the NRO directory so all relative opendir/fopen calls resolve
+    // against sdmc:/switch/<folder>/ — hbmenu provides argv[0] with the sdmc: prefix.
+    if (argc > 0 && argv[0] && argv[0][0]) {
+        char nroDir[512];
+        strncpy(nroDir, argv[0], sizeof(nroDir) - 1);
+        nroDir[sizeof(nroDir) - 1] = '\0';
+        char* lastSlash = strrchr(nroDir, '/');
+        if (lastSlash) { *lastSlash = '\0'; chdir(nroDir); }
+    }
 #endif
 
 #ifdef _WIN32
