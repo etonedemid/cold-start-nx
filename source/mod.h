@@ -85,6 +85,12 @@ struct ModItemDef {
     std::unordered_map<std::string, std::string> params;
 };
 
+// Mod source: where this mod came from
+enum class ModSource {
+    Local,      // manually placed in mods/ - not verified
+    Workshop,   // downloaded via Online Workshop - hash-verified
+};
+
 // Single mod instance
 struct Mod {
     std::string id;
@@ -92,7 +98,9 @@ struct Mod {
     std::string author;
     std::string version;
     std::string description;
-    std::string folder;        // absolute path to mod folder
+    std::string shortDescription;
+    std::string modType;        // "map", "character", "pack", "item", etc.
+    std::string folder;         // absolute path to mod folder
     int         gameVersion = 1;
 
     ModContent  content;
@@ -112,6 +120,13 @@ struct Mod {
 
     bool enabled = true;
     int  loadOrder = 0;
+
+    // Source tracking for multiplayer security
+    ModSource   source        = ModSource::Local;
+    std::string workshopId;    // backend UUID (from .workshop_meta)
+    std::string workshopHash;  // expected SHA-256 from workshop (from .workshop_meta)
+
+    bool isWorkshopMod() const { return source == ModSource::Workshop; }
 
     bool loadFromFolder(const std::string& path);
 };
@@ -159,12 +174,29 @@ public:
     };
     SyncManifest buildSyncManifest() const;
 
-    // Network mod sync: serialize all enabled mods into a blob
-    // Includes mod.cfg + small content files (skip large media)
-    std::vector<uint8_t> serializeEnabledMods() const;
+    // Network mod sync: serialize enabled mods into a blob
+    // source filter: ModSource::Workshop = only hash-verified workshop mods
+    //                ModSource::Local    = only manually-placed local mods
+    // Pass both calls and concatenate to send all mods.
+    std::vector<uint8_t> serializeEnabledMods(ModSource sourceFilter) const;
+    // Legacy overload - serializes workshop mods only (safe default)
+    std::vector<uint8_t> serializeEnabledMods() const {
+        return serializeEnabledMods(ModSource::Workshop);
+    }
+
     // Install mods from serialized blob. Temporary installs go to mods/_mp_sync/;
     // permanent installs go to mods/<id>/ so players can edit them later.
-    void deserializeAndInstallMods(const std::vector<uint8_t>& data, bool permanentInstall = false);
+    // acceptWorkshop / acceptLocal gate which source types are installed.
+    void deserializeAndInstallMods(const std::vector<uint8_t>& data,
+                                   bool permanentInstall = false,
+                                   bool acceptWorkshop = true,
+                                   bool acceptLocal = false);
+
+    // Write a .workshop_meta file into a freshly installed mod folder so
+    // future loads know it came from the workshop.
+    static void writeWorkshopMeta(const std::string& modFolder,
+                                  const std::string& workshopId,
+                                  const std::string& fileHash);
 
 private:
     std::vector<Mod> mods_;

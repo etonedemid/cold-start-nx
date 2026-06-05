@@ -27,6 +27,10 @@
 #include <arpa/inet.h>
 #endif
 
+#ifdef HAS_CURL
+#include <curl/curl.h>
+#endif
+
 #include "game_internal.h"
 
 // Pitch-varied SFX
@@ -202,11 +206,17 @@ bool Game::init() {
 #ifdef __SWITCH__
     romfsInit();
 #endif
+#ifdef HAS_CURL
+    curl_global_init(CURL_GLOBAL_ALL);
+#endif
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_AUDIO) < 0) {
         printf("SDL_Init: %s\n", SDL_GetError());
         return false;
     }
+#ifdef PLATFORM_ANDROID
+    Assets::androidInitRomfs();
+#endif
     if (TTF_Init() < 0) {
         printf("TTF_Init: %s\n", TTF_GetError());
         return false;
@@ -400,6 +410,9 @@ void Game::shutdown() {
     if (renderer_) SDL_DestroyRenderer(renderer_);
     if (window_)   SDL_DestroyWindow(window_);
     SDL_Quit();
+#ifdef HAS_CURL
+    curl_global_cleanup();
+#endif
 #ifdef __SWITCH__
     romfsExit();
 #endif
@@ -673,6 +686,9 @@ void Game::startGame() {
     sandboxMode_ = false;
 
     // Clear all custom-map visual/audio state so nothing leaks into normal games
+    playingCustomMap_  = false;
+    customGoalOpen_    = false;
+    customEnemiesTotal_= 0;
     bgImageTex_    = nullptr;
     topImageTex_   = nullptr;
     topLayerAlpha_ = 1.0f;
@@ -756,6 +772,7 @@ void Game::run() {
             || state_ == GameState::MultiplayerGame
             || state_ == GameState::MultiplayerPaused
             || state_ == GameState::MultiplayerDead
+            || state_ == GameState::MultiplayerSpectator
             || state_ == GameState::LocalCoopGame) {
             update();
             if (state_ == GameState::PlayingCustom) {
@@ -853,7 +870,12 @@ void Game::run() {
                 enemies_.clear(); bullets_.clear(); enemyBullets_.clear();
                 bombs_.clear(); explosions_.clear(); debris_.clear();
                 blood_.clear(); tileBlood_.clear(); boxFragments_.clear();
-                waveNumber_ = 0; waveEnemiesLeft_ = 0; waveActive_ = false; lastBossWaveNum_ = -1;
+                crates_.clear(); pickups_.clear();
+                vehicles_.clear(); inVehicle_ = false; vehicleIdx_ = -1;
+                upgrades_.reset();
+                crateSpawnTimer_ = 0;
+                waveNumber_ = 0; waveEnemiesLeft_ = 0; waveActive_ = false;
+                bossWaveActive_ = false; lastBossWaveNum_ = -1;
 
                 player_ = Player{};
                 player_.maxHp = config_.playerMaxHp;
@@ -920,6 +942,10 @@ void Game::update() {
     waveAnnounceTimer_ = std::max(0.0f, waveAnnounceTimer_ - dt);
     cratePopupTimer_   = std::max(0.0f, cratePopupTimer_ - dt);
 
+    // Workshop status message timer
+    workshopStatusTimer_ = std::max(0.0f, workshopStatusTimer_ - dt);
+    if (workshopStatusTimer_ <= 0.0f) workshopStatus_ = "";
+
     // Low-HP red tint: ramps in below 40% HP, smoothly follows current HP
     {
         float hpRatio = (player_.maxHp > 0) ? (float)player_.hp / player_.maxHp : 1.0f;
@@ -930,7 +956,7 @@ void Game::update() {
 
     // Only run gameplay logic in active playing states
     bool isPlayingState =
-        state_ == GameState::Playing || state_ == GameState::Paused || state_ == GameState::Dead ||
+        state_ == GameState::Playing || state_ == GameState::Paused || state_ == GameState::Workshop || state_ == GameState::Dead ||
         state_ == GameState::PlayingCustom || state_ == GameState::CustomPaused ||
         state_ == GameState::CustomDead || state_ == GameState::CustomWin ||
         state_ == GameState::PlayingPack || state_ == GameState::PackPaused ||
@@ -1093,8 +1119,9 @@ void Game::saveConfig() {
     fprintf(f, "shaderGlitch=%d\n", config_.shaderGlitch ? 1 : 0);
     fprintf(f, "shaderNeonEdge=%d\n", config_.shaderNeonEdge ? 1 : 0);
     fprintf(f, "saveIncomingModsPermanently=%d\n", config_.saveIncomingModsPermanently ? 1 : 0);
-    fprintf(f, "enableUpnp=%d\n",  config_.enableUpnp  ? 1 : 0);
-    fprintf(f, "acceptMods=%d\n",  config_.acceptMods  ? 1 : 0);
+    fprintf(f, "enableUpnp=%d\n",           config_.enableUpnp           ? 1 : 0);
+    fprintf(f, "acceptWorkshopMods=%d\n",  config_.acceptWorkshopMods   ? 1 : 0);
+    fprintf(f, "acceptLocalMods=%d\n",     config_.acceptLocalMods      ? 1 : 0);
     fprintf(f, "uiScale=%.2f\n", config_.uiScale);
     fprintf(f, "shakeScale=%.2f\n", config_.shakeScale);
     fclose(f);
@@ -1128,8 +1155,11 @@ void Game::loadConfig() {
         else if (sscanf(line, "shaderGlitch=%d", &ival) == 1) config_.shaderGlitch = (ival != 0);
         else if (sscanf(line, "shaderNeonEdge=%d", &ival) == 1) config_.shaderNeonEdge = (ival != 0);
         else if (sscanf(line, "saveIncomingModsPermanently=%d", &ival) == 1) config_.saveIncomingModsPermanently = (ival != 0);
-        else if (sscanf(line, "enableUpnp=%d",  &ival) == 1) config_.enableUpnp  = (ival != 0);
-        else if (sscanf(line, "acceptMods=%d",  &ival) == 1) config_.acceptMods  = (ival != 0);
+        else if (sscanf(line, "enableUpnp=%d",          &ival) == 1) config_.enableUpnp          = (ival != 0);
+        else if (sscanf(line, "acceptWorkshopMods=%d",  &ival) == 1) config_.acceptWorkshopMods  = (ival != 0);
+        else if (sscanf(line, "acceptLocalMods=%d",     &ival) == 1) config_.acceptLocalMods     = (ival != 0);
+        // Legacy key migration
+        else if (sscanf(line, "acceptMods=%d",          &ival) == 1) config_.acceptWorkshopMods  = (ival != 0);
         else if (sscanf(line, "uiScale=%f",   &fval) == 1) config_.uiScale   = std::clamp(fval, 0.5f, 2.0f);
         else if (sscanf(line, "shakeScale=%f", &fval) == 1) config_.shakeScale = std::clamp(fval, 0.0f, 1.0f);
     }

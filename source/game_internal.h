@@ -124,7 +124,7 @@ inline bool isCrateSpawnType(uint8_t type) {
     return type == ENTITY_CRATE || type == ENTITY_UPGRADE_CRATE;
 }
 
-constexpr int CONFIG_RESOLUTION_INDEX        = -1; // removed — window is now freely resizable
+constexpr int CONFIG_RESOLUTION_INDEX        = -1; // removed - window is now freely resizable
 constexpr int CONFIG_SHADER_CRT_INDEX        = 7;
 constexpr int CONFIG_SHADER_CHROMATIC_INDEX  = 8;
 constexpr int CONFIG_SHADER_SCANLINES_INDEX  = 9;

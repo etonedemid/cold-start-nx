@@ -55,6 +55,10 @@ if(WIN32)
     find_package(SDL2_image CONFIG REQUIRED)
     find_package(SDL2_ttf   CONFIG REQUIRED)
     find_package(SDL2_mixer CONFIG REQUIRED)
+    find_package(CURL REQUIRED)
+    target_link_libraries(cold_start PRIVATE CURL::libcurl)
+    target_compile_definitions(cold_start PRIVATE HAS_CURL=1)
+    message(STATUS "libcurl: found and linked")
 
     if(MINGW)
         # Static linking - produces a single portable .exe
@@ -122,7 +126,21 @@ if(WIN32)
     endif()
 
     target_link_libraries(cold_start PRIVATE ws2_32)
-    target_compile_definitions(cold_start PRIVATE HAS_ENET=1 HAS_UPNP=0 PLATFORM_PC)
+
+    # miniupnpc (optional - UPnP port forwarding for hosting)
+    find_path(MINIUPNPC_INCLUDE_DIR miniupnpc/miniupnpc.h
+        HINTS "C:/msys64/mingw64/include" "C:/msys2/mingw64/include" ENV MINGW_PREFIX)
+    find_library(MINIUPNPC_LIB NAMES miniupnpc libminiupnpc
+        HINTS "C:/msys64/mingw64/lib" "C:/msys2/mingw64/lib" ENV MINGW_PREFIX)
+    if(MINIUPNPC_INCLUDE_DIR AND MINIUPNPC_LIB)
+        target_include_directories(cold_start PRIVATE ${MINIUPNPC_INCLUDE_DIR})
+        target_link_libraries(cold_start PRIVATE ${MINIUPNPC_LIB})
+        target_compile_definitions(cold_start PRIVATE HAS_ENET=1 HAS_UPNP=1 PLATFORM_PC)
+        message(STATUS "miniupnpc: found - UPnP enabled")
+    else()
+        target_compile_definitions(cold_start PRIVATE HAS_ENET=1 HAS_UPNP=0 PLATFORM_PC)
+        message(STATUS "miniupnpc: not found - UPnP disabled")
+    endif()
 
 # ── Platform: Linux / macOS ─────────────────────────────────────────────────
 
@@ -130,16 +148,21 @@ else()
     find_package(PkgConfig REQUIRED)
 
     if(NOT SERVER_ONLY)
+    
         pkg_check_modules(SDL2       REQUIRED sdl2)
         pkg_check_modules(SDL2_IMAGE REQUIRED SDL2_image)
         pkg_check_modules(SDL2_TTF   REQUIRED SDL2_ttf)
         pkg_check_modules(SDL2_MIXER REQUIRED SDL2_mixer)
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(CURL REQUIRED libcurl)
+        target_link_libraries(cold_start PRIVATE ${CURL_LIBRARIES})
+        target_compile_definitions(cold_start PRIVATE HAS_CURL=1)
 
         target_include_directories(cold_start PRIVATE
             ${SDL2_INCLUDE_DIRS} ${SDL2_IMAGE_INCLUDE_DIRS}
             ${SDL2_TTF_INCLUDE_DIRS} ${SDL2_MIXER_INCLUDE_DIRS})
 
-        target_link_libraries(cold_start
+        target_link_libraries(cold_start PRIVATE
             ${SDL2_LIBRARIES} ${SDL2_IMAGE_LIBRARIES}
             ${SDL2_TTF_LIBRARIES} ${SDL2_MIXER_LIBRARIES})
     else()
@@ -151,7 +174,7 @@ else()
     pkg_check_modules(ENET libenet)
     if(ENET_FOUND)
         target_include_directories(cold_start PRIVATE ${ENET_INCLUDE_DIRS})
-        target_link_libraries(cold_start ${ENET_LIBRARIES})
+        target_link_libraries(cold_start PRIVATE ${ENET_LIBRARIES})
         message(STATUS "ENet: system package found")
     else()
         file(GLOB _ENET_C source/enet/*.c)
@@ -167,7 +190,7 @@ else()
         pkg_check_modules(MINIUPNPC miniupnpc)
         if(MINIUPNPC_FOUND)
             target_include_directories(cold_start PRIVATE ${MINIUPNPC_INCLUDE_DIRS})
-            target_link_libraries(cold_start ${MINIUPNPC_LIBRARIES})
+            target_link_libraries(cold_start PRIVATE ${MINIUPNPC_LIBRARIES})
             target_compile_definitions(cold_start PRIVATE HAS_UPNP=1)
             message(STATUS "miniupnpc: found - UPnP enabled")
         else()

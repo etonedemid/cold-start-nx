@@ -70,10 +70,18 @@ void Game::updatePlayer(float dt) {
             && state_ != GameState::LocalCoopPaused) {
             // Transition to the appropriate death state
             if (state_ == GameState::MultiplayerGame || state_ == GameState::MultiplayerPaused) {
-                // Check individual lives
-                if (currentRules_.lives > 0 && !currentRules_.sharedLives) {
-                    if (localLives_ > 0) localLives_--;
-                    if (localLives_ <= 0) {
+                // Check lives - both individual and shared modes can exhaust lives
+                if (currentRules_.lives > 0) {
+                    bool outOfLives = false;
+                    if (currentRules_.sharedLives) {
+                        // Host is authoritative; client decrements optimistically
+                        if (sharedLives_ > 0) sharedLives_--;
+                        outOfLives = (sharedLives_ <= 0);
+                    } else {
+                        if (localLives_ > 0) localLives_--;
+                        outOfLives = (localLives_ <= 0);
+                    }
+                    if (outOfLives) {
                         // Out of lives - become a spectator ghost
                         spectatorMode_ = true;
                         player_.dead   = false;
@@ -111,7 +119,7 @@ void Game::updatePlayer(float dt) {
         }
     }
 
-    // Movement — skip entirely when in a vehicle (vehicle owns position/velocity)
+    // Movement - skip entirely when in a vehicle (vehicle owns position/velocity)
     if (inVehicle_ && vehicleIdx_ >= 0 && vehicleIdx_ < (int)vehicles_.size()) {
         auto& veh = vehicles_[vehicleIdx_];
         p.pos = veh.pos;
@@ -1263,7 +1271,7 @@ void Game::enemyShoot(Enemy& e, float dt) {
         // so the bullet originates from where the gun is on the sprite.
         Vec2 eFwd   = Vec2::fromAngle(e.rotation);
         Vec2 eRight = {-eFwd.y, eFwd.x};
-        Vec2 muzzle = e.pos + eFwd * 14.0f + eRight * 14.0f;
+        Vec2 muzzle = e.pos + eFwd * 16.0f + eRight * 22.0f;
         float bulletSpeed = ENEMY_BULLET_SPEED;
         if (e.type == EnemyType::Sniper || e.type == EnemyType::BossSniper) {
             bulletSpeed *= SNIPER_BULLET_SPEED_MULTI;
@@ -3626,14 +3634,14 @@ void Game::updateVehicles(float dt) {
             }
         }
 
-        // Coast drag — constant decel on total speed
+        // Coast drag - constant decel on total speed
         speed = v.vel.length();
         if (speed > 0.0f) {
             float drag = fminf(speed, Vehicle::COAST_DRAG * dt);
             v.vel = v.vel * ((speed - drag) / speed);
         }
 
-        // Lateral grip — bleed lateral velocity each frame (lower GRIP = more drift)
+        // Lateral grip - bleed lateral velocity each frame (lower GRIP = more drift)
         fwdDir = {cosf(v.rotation), sinf(v.rotation)};
         latDir = {-fwdDir.y, fwdDir.x};
         float latSpd = latDir.dot(v.vel);
