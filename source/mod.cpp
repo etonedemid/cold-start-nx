@@ -369,6 +369,16 @@ void ModManager::scanMods() {
     dirs.push_back("romfs/mods");
 #  ifdef __SWITCH__
     dirs.push_back("romfs:/mods");
+    // Also scan with absolute path: opendir("mods") may silently fail on Switch
+    // when relative paths don't resolve through the sdmc: device layer.
+    {
+        char cwd[512] = {};
+        if (getcwd(cwd, sizeof(cwd)) && cwd[0]) {
+            std::string base(cwd);
+            if (base.back() != '/') base += '/';
+            dirs.push_back(base + "mods");
+        }
+    }
 #  endif
 #endif
 
@@ -382,6 +392,48 @@ void ModManager::scanMods() {
     });
 
     printf("ModManager: %zu mods found\n", mods_.size());
+
+#ifdef __SWITCH__
+    // Write diagnostic log so the contents can be read from the SD card
+    FILE* diagf = fopen("mods_scan.log", "w");
+    if (diagf) {
+        char cwd[512] = {};
+        getcwd(cwd, sizeof(cwd));
+        fprintf(diagf, "CWD: %s\n", cwd);
+        fprintf(diagf, "Scanned dirs:\n");
+        for (auto& d : dirs) {
+            DIR* td = opendir(d.c_str());
+            fprintf(diagf, "  '%s': %s\n", d.c_str(), td ? "OK" : "FAILED");
+            if (td) {
+                struct dirent* te;
+                while ((te = readdir(td)) != nullptr) {
+                    if (te->d_name[0] == '.') continue;
+                    std::string sub = d + "/" + te->d_name;
+                    std::string cfg = sub + "/mod.cfg";
+                    struct stat st;
+                    bool hasDir = (stat(sub.c_str(), &st) == 0 && S_ISDIR(st.st_mode));
+                    bool hasCfg = (stat(cfg.c_str(), &st) == 0);
+                    fprintf(diagf, "    %s  dir=%d cfg=%d\n", te->d_name, (int)hasDir, (int)hasCfg);
+                    if (hasCfg) {
+                        FILE* cf = fopen(cfg.c_str(), "r");
+                        if (cf) {
+                            char line[128];
+                            int lines = 0;
+                            while (fgets(line, sizeof(line), cf) && lines < 8) {
+                                fprintf(diagf, "      %s", line);
+                                lines++;
+                            }
+                            fclose(cf);
+                        }
+                    }
+                }
+                closedir(td);
+            }
+        }
+        fprintf(diagf, "Total mods loaded: %zu\n", mods_.size());
+        fclose(diagf);
+    }
+#endif
 }
 
 void ModManager::scanDirectory(const std::string& dir) {
