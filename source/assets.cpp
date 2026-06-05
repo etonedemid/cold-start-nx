@@ -1,6 +1,9 @@
 #include "assets.h"
 #include "mod.h"
 #include <cstdio>
+#include <cstring>
+#include <sstream>
+#include <vector>
 #include <sys/stat.h>
 #ifndef __SWITCH__
 #  ifndef PLATFORM_ANDROID
@@ -12,12 +15,123 @@
 #  endif
 #endif
 
+#ifdef PLATFORM_ANDROID
+#include <errno.h>
+static std::string g_androidRomfsPath; // set by androidInitRomfs()
+
+static void mkdirs(const std::string& path) {
+    for (size_t i = 1; i < path.size(); ++i) {
+        if (path[i] == '/') {
+            std::string sub = path.substr(0, i);
+            mkdir(sub.c_str(), 0755);
+        }
+    }
+    mkdir(path.c_str(), 0755);
+}
+
+static void extractFromApk(const std::string& destRoot) {
+    // Read the filelist bundled alongside romfs assets in the APK
+    SDL_RWops* fl = SDL_RWFromFile("romfs_filelist.txt", "r");
+    if (!fl) { printf("androidInitRomfs: romfs_filelist.txt missing from APK\n"); return; }
+
+    Sint64 sz = SDL_RWsize(fl);
+    std::string manifest(sz, '\0');
+    SDL_RWread(fl, &manifest[0], 1, sz);
+    SDL_RWclose(fl);
+
+    mkdirs(destRoot);
+
+    std::istringstream ss(manifest);
+    std::string rel;
+    int copied = 0, skipped = 0;
+    while (std::getline(ss, rel)) {
+        while (!rel.empty() && (rel.back() == '\r' || rel.back() == '\n')) rel.pop_back();
+        if (rel.empty()) continue;
+
+        std::string destPath = destRoot + "/" + rel;
+        // Skip if already exists
+        struct stat st;
+        if (stat(destPath.c_str(), &st) == 0) { skipped++; continue; }
+
+        // Ensure parent dir
+        std::string parent = destPath.substr(0, destPath.rfind('/'));
+        mkdirs(parent);
+
+        // Read from APK (SDL treats relative paths as APK assets on Android)
+        SDL_RWops* src = SDL_RWFromFile(rel.c_str(), "rb");
+        if (!src) { printf("androidInitRomfs: missing %s\n", rel.c_str()); continue; }
+        Sint64 fsz = SDL_RWsize(src);
+        std::vector<uint8_t> buf(fsz);
+        SDL_RWread(src, buf.data(), 1, fsz);
+        SDL_RWclose(src);
+
+        FILE* dst = fopen(destPath.c_str(), "wb");
+        if (dst) { fwrite(buf.data(), 1, fsz, dst); fclose(dst); copied++; }
+    }
+    printf("androidInitRomfs: extracted %d files, skipped %d existing\n", copied, skipped);
+}
+
+void Assets::androidInitRomfs() {
+    const char* intStorage = SDL_AndroidGetInternalStoragePath();
+    const char* extStorage = SDL_AndroidGetExternalStoragePath();
+
+    // Check for saved preference
+    std::string prefsFile = std::string(intStorage) + "/.romfs_location";
+    FILE* pf = fopen(prefsFile.c_str(), "r");
+    if (pf) {
+        char buf[1024] = {};
+        if (fgets(buf, sizeof(buf), pf)) {
+            std::string saved(buf);
+            while (!saved.empty() && (saved.back() == '\n' || saved.back() == '\r'))
+                saved.pop_back();
+            // Verify the extracted assets are present
+            struct stat st;
+            if (!saved.empty() && stat((saved + "/sprites").c_str(), &st) == 0) {
+                g_androidRomfsPath = saved + "/";
+                fclose(pf);
+                printf("androidInitRomfs: using saved path %s\n", saved.c_str());
+                return;
+            }
+        }
+        fclose(pf);
+    }
+
+    // Prompt user - offer Internal vs External storage
+    SDL_MessageBoxButtonData buttons[] = {
+        { SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 0, "Internal (Private)" },
+        { 0,                                       1, "External (SD / Shared)" },
+    };
+    SDL_MessageBoxData mbData = {};
+    mbData.flags   = SDL_MESSAGEBOX_INFORMATION;
+    mbData.title   = "Cold Start - First Run";
+    mbData.message = "Choose where to store game assets:\n\n"
+                     "Internal: private app folder (always available)\n"
+                     "External: shared storage (accessible via file manager)";
+    mbData.numbuttons = 2;
+    mbData.buttons    = buttons;
+    int chosen = 0;
+    SDL_ShowMessageBox(&mbData, &chosen);
+
+    std::string base = (chosen == 1 && extStorage) ? extStorage : intStorage;
+    std::string romfsRoot = base + "/romfs";
+
+    printf("androidInitRomfs: extracting to %s\n", romfsRoot.c_str());
+    extractFromApk(romfsRoot);
+
+    g_androidRomfsPath = romfsRoot + "/";
+
+    // Save the choice
+    pf = fopen(prefsFile.c_str(), "w");
+    if (pf) { fprintf(pf, "%s\n", romfsRoot.c_str()); fclose(pf); }
+}
+#endif // PLATFORM_ANDROID
+
 // Platform-specific asset root prefix
 static std::string assetPrefix() {
 #ifdef __SWITCH__
     return "romfs:/";
 #elif defined(PLATFORM_ANDROID)
-    return "";  // SDL_RWops handles Android assets
+    return g_androidRomfsPath; // set by androidInitRomfs()
 #else
     // Resolve romfs/ relative to the executable so the game works regardless
     // of the current working directory.

@@ -1,12 +1,12 @@
 
 <img width="848" height="204" alt="banner" src="https://github.com/user-attachments/assets/2a0af91e-a15e-462f-aa99-d2869a311675" />
 
-# COLD START  `v2.2.0`
+# COLD START  `v2.3.0`
 
 roguelike survival with bombs, upgrades, parrying and a console where you can spawn a car and run enemies over. 
 Runs on PC, Nintendo Switch homebrew, and Android.
 
-License: GNU GPL — except music; consult authors before distributing. Sounds from https://pixabay.com/
+License: GNU GPL - except music; consult authors before distributing. Sounds from https://pixabay.com/
 
 AI disclosure: code
 

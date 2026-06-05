@@ -14,7 +14,7 @@ android {
         minSdk = 21
         targetSdk = 34
         versionCode = 21
-        versionName = "2.1.0"
+        versionName = "2.3.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
@@ -59,13 +59,31 @@ android {
 
     sourceSets {
         getByName("main") {
-            // Include SDL2's Java activity classes
             java.srcDirs(
                 "src/main/java",
                 "jni/SDL2/android-project/app/src/main/java"
             )
-            // Game assets from romfs/
-            assets.srcDirs("../../romfs")
+            // Game assets from romfs/ + generated filelist
+            assets.srcDirs("../../romfs", "src/main/generated-assets")
         }
     }
 }
+
+// Generate romfs_filelist.txt so the C++ code can enumerate assets to extract
+tasks.register("generateRomfsFilelist") {
+    val romfsDir = file("../../romfs")
+    val outDir   = file("src/main/generated-assets")
+    val outFile  = outDir.resolve("romfs_filelist.txt")
+    inputs.dir(romfsDir)
+    outputs.file(outFile)
+    doLast {
+        outDir.mkdirs()
+        val lines = romfsDir.walkTopDown()
+            .filter { it.isFile }
+            .map  { it.relativeTo(romfsDir).path.replace("\\", "/") }
+            .sorted()
+        outFile.writeText(lines.joinToString("\n"))
+        println("Generated romfs_filelist.txt (${lines.count()} files)")
+    }
+}
+tasks.named("preBuild") { dependsOn("generateRomfsFilelist") }

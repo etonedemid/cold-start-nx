@@ -92,11 +92,23 @@ void Game::startPackLevel() {
     bombs_.clear(); explosions_.clear(); debris_.clear();
     blood_.clear(); tileBlood_.clear(); boxFragments_.clear();
     crates_.clear(); pickups_.clear();
+    vehicles_.clear(); inVehicle_ = false; vehicleIdx_ = -1;
     upgrades_.reset();
     sandboxMode_ = false;
     crateSpawnTimer_ = 20.0f;
 
+    // Clear layer images from any previous map
+    bgImageTex_   = customMap_.bgImagePath.empty()  ? nullptr : Assets::instance().loadRelTex(customMap_.bgImagePath);
+    topImageTex_  = customMap_.topImagePath.empty() ? nullptr : Assets::instance().loadRelTex(customMap_.topImagePath);
+    topLayerAlpha_ = 1.0f;
+    for (int _i = 0; _i < 8; _i++) {
+        customTileTextures_[_i] = nullptr;
+        if (!customMap_.customTilePaths[_i].empty())
+            customTileTextures_[_i] = Assets::instance().tex(customMap_.customTilePaths[_i]);
+    }
+
     waveNumber_ = 0; waveEnemiesLeft_ = 0; waveActive_ = false;
+    bossWaveActive_ = false; lastBossWaveNum_ = -1;
     wavePauseTimer_ = WAVE_PAUSE_BASE; waveSpawnTimer_ = 0;
 
     player_ = Player{};
@@ -218,9 +230,12 @@ void Game::startLocalCoopGame() {
     currentRules_.sharedLives   = lobbySettings_.livesShared;
     currentRules_.respawnTime    = 3.0f;
     
-    // Initialize lives tracking
+    // Initialize lives tracking.
+    // Non-shared: each player has their own pool of lives, tracked as a combined
+    // total (lives * playerCount) so every player gets their fair share.
+    // Shared: one explicit shared pool also sized lives * playerCount.
     if (currentRules_.lives > 0 && !currentRules_.sharedLives) {
-        localLives_ = currentRules_.lives;
+        localLives_ = currentRules_.lives * coopPlayerCount_;
     } else {
         localLives_ = -1;
     }
@@ -244,10 +259,7 @@ void Game::startLocalCoopGame() {
     invalidateMinimapCache();
     map_.findSpawnPoints();
 
-    // Viewport dimensions per player count (divide by SPLITSCREEN_ZOOM so camera sees more world)
     const int n  = coopPlayerCount_;
-    const int vw = (n >= 2) ? (int)((SCREEN_W/2) / SPLITSCREEN_ZOOM) : SCREEN_W;
-    const int vh = (n >= 3) ? (int)((SCREEN_H/2) / SPLITSCREEN_ZOOM) : (n >= 2) ? (int)(SCREEN_H / SPLITSCREEN_ZOOM) : SCREEN_H;
     const Vec2 base = {map_.worldWidth()/2.f, map_.worldHeight()/2.f};
     const Vec2 off[4] = {{-80,0},{80,0},{0,-80},{0,80}};
 
@@ -274,6 +286,11 @@ void Game::startLocalCoopGame() {
         coopSlots_[i].player.pos = sp;
         coopSlots_[i].respawnTimer = 0;
         coopSlots_[i].upgrades.reset();
+        // Per-slot camera dimensions: derive from the actual viewport rect so the
+        // 3-player layout (P3 gets a full-width bottom half) is handled correctly.
+        SDL_Rect vp = coopViewport(si, n);
+        int vw = (n > 1) ? (int)(vp.w / SPLITSCREEN_ZOOM) : SCREEN_W;
+        int vh = (n > 1) ? (int)(vp.h / SPLITSCREEN_ZOOM) : SCREEN_H;
         coopSlots_[i].camera.worldW = map_.worldWidth();
         coopSlots_[i].camera.worldH = map_.worldHeight();
         coopSlots_[i].camera.viewW  = vw;

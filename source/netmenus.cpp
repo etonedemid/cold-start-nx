@@ -1,6 +1,13 @@
 #include "game.h"
 #include "game_internal.h"
 #include <algorithm>
+#ifdef HAS_CURL
+#include <curl/curl.h>
+#endif
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
 // Shared toolbar/icon helpers (used across all four screens)
 
@@ -72,7 +79,12 @@ void Game::renderMultiplayerMenu() {
         }
         int tw=(int)(strlen(lbl)*10*0.60f);
         drawText(lbl, x+w/2-tw/2, TBY+TBH-14, 10, UI::W98::Black);
-        return hov && ui_.mouseClicked;
+        if (hov && ui_.mouseClicked) {
+            ui_.mouseClicked = false;
+            ui_.clickCooldownFrames = 3;
+            return true;
+        }
+        return false;
     };
     auto tbSep = [&](int x) {
         SDL_SetRenderDrawColor(renderer_, 128,128,128,255);
@@ -142,7 +154,7 @@ void Game::renderMultiplayerMenu() {
     }
 
     // Security settings strip (two checkboxes + notices)
-    const int SEC_H = 46;
+    const int SEC_H = 64;  // extra row for local mod sync checkbox
     const int SEC_Y = WY + WH - STRIP_H - SEC_H - 2;
     SDL_SetRenderDrawColor(renderer_, 212,208,200,255);
     SDL_Rect secBg={WX,SEC_Y,WW,SEC_H}; SDL_RenderFillRect(renderer_,&secBg);
@@ -178,20 +190,36 @@ void Game::renderMultiplayerMenu() {
         ui_.drawTextRight(upnpAvail ? "Opens a port on your router when hosting. Use on trusted networks only."
                                     : "Not supported by the current platform.",
                           WX+WW-10, cbY1+1, 10, upnpAvail ? SDL_Color{160,80,0,255} : UI::W98::Shadow);
-        // Row 2: Accept Mods
+        // Row 2a: Accept workshop mods (verified)
         ui_.drawWin98Bevel(cbX,cbY2,cbW,cbH,false);
         SDL_SetRenderDrawColor(renderer_,255,255,255,255);
         SDL_Rect inner2={cbX+2,cbY2+2,cbW-4,cbH-4}; SDL_RenderFillRect(renderer_,&inner2);
-        if (config_.acceptMods) {
+        if (config_.acceptWorkshopMods) {
             SDL_SetRenderDrawColor(renderer_,0,0,0,255);
             SDL_RenderDrawLine(renderer_,cbX+2,cbY2+6,cbX+5,cbY2+10);
             SDL_RenderDrawLine(renderer_,cbX+5,cbY2+10,cbX+11,cbY2+2);
         }
-        if (ui_.mouseClicked && ui_.pointInRect(ui_.mouseX,ui_.mouseY,cbX,cbY2,cbW+160,cbH)) {
-            config_.acceptMods = !config_.acceptMods; saveConfig();
+        if (ui_.mouseClicked && ui_.pointInRect(ui_.mouseX,ui_.mouseY,cbX,cbY2,cbW+180,cbH)) {
+            config_.acceptWorkshopMods = !config_.acceptWorkshopMods; saveConfig();
         }
-        drawText("Accept mods", cbX+cbW+6, cbY2, 12, UI::W98::Black);
-        ui_.drawTextRight("Hosts and other players may send mods that replace game content.", WX+WW-10, cbY2+1, 10, {160,80,0,255});
+        drawText("Workshop mod sync", cbX+cbW+6, cbY2, 12, UI::W98::Black);
+        ui_.drawTextRight("Receive verified Workshop mods.", WX+WW-10, cbY2+1, 10, {0,120,0,255});
+
+        // Row 2b: Accept local mods (unverified) - on a 3rd sub-row
+        const int cbY3 = cbY2 + 18;
+        ui_.drawWin98Bevel(cbX,cbY3,cbW,cbH,false);
+        SDL_SetRenderDrawColor(renderer_,255,255,255,255);
+        SDL_Rect inner3={cbX+2,cbY3+2,cbW-4,cbH-4}; SDL_RenderFillRect(renderer_,&inner3);
+        if (config_.acceptLocalMods) {
+            SDL_SetRenderDrawColor(renderer_,0,0,0,255);
+            SDL_RenderDrawLine(renderer_,cbX+2,cbY3+6,cbX+5,cbY3+10);
+            SDL_RenderDrawLine(renderer_,cbX+5,cbY3+10,cbX+11,cbY3+2);
+        }
+        if (ui_.mouseClicked && ui_.pointInRect(ui_.mouseX,ui_.mouseY,cbX,cbY3,cbW+180,cbH)) {
+            config_.acceptLocalMods = !config_.acceptLocalMods; saveConfig();
+        }
+        drawText("Local mod sync", cbX+cbW+6, cbY3, 12, UI::W98::Black);
+        ui_.drawTextRight("Receive unverified mods. Use if connecting to trusted servers only.", WX+WW-10, cbY3+1, 10, {160,80,0,255});
     }
 
     // Bottom strip (Discord notice)
@@ -256,7 +284,12 @@ void Game::renderHostSetup() {
         SDL_Rect sh={ix+1,iy+1,6,3}; SDL_RenderFillRect(renderer_,&sh);
         int tw=(int)(strlen(lbl)*10*0.60f);
         drawText(lbl, x+w/2-tw/2, TBY+TBH-14, 10, UI::W98::Black);
-        return hov&&ui_.mouseClicked;
+        if (hov && ui_.mouseClicked) {
+            ui_.mouseClicked = false;
+            ui_.clickCooldownFrames = 3;
+            return true;
+        }
+        return false;
     };
     auto tbSep=[&](int x){
         SDL_SetRenderDrawColor(renderer_, 128,128,128,255);
@@ -378,24 +411,8 @@ void Game::renderHostSetup() {
         ui_.drawTextRight(shown.c_str(),rightX+rightW-6,y+6,13,dim?UI::W98::Shadow:UI::W98::Black);
     };
 
-    // Auto-scroll
-    {
-        static const int ROW_REL_Y[]={20,52,84,116,162,194,226,258,290,322,354,400,444,486};
-        const int VIS_H=rowAreaBot-rowAreaTop;
-        constexpr int MAX_SCR=206;
-        if (hostSetupSelection_>=0&&hostSetupSelection_<14) {
-            int iy=ROW_REL_Y[hostSetupSelection_];
-            if (iy<hostSetupScrollY_) hostSetupScrollY_=iy;
-            if (iy+rowH>hostSetupScrollY_+VIS_H) hostSetupScrollY_=iy+rowH-VIS_H;
-            hostSetupScrollY_=std::max(0,std::min(206,hostSetupScrollY_));
-        }
-    }
-
-    // Clip rows
-    SDL_Rect prevClip; SDL_RenderGetClipRect(renderer_,&prevClip);
-    {SDL_Rect clip={rightX,rowAreaTop,rightW,rowAreaBot-rowAreaTop}; SDL_RenderSetClipRect(renderer_,&clip);}
-
-    int rowY=rowAreaTop-hostSetupScrollY_;
+    // Network rows only - no scroll needed
+    int rowY=rowAreaTop+4;
     sectionHeader("NETWORK",rowY); rowY+=18;
     drawOptionRow(0,rowY,"Max players",std::to_string(hostMaxPlayers_)); rowY+=rowH+rowGap;
     {
@@ -414,49 +431,6 @@ void Game::renderHostSetup() {
         else if (lobbyPassword_.empty()) pd="Open";
         else pd=std::string(lobbyPassword_.size(),'*');
         drawOptionRow(3,rowY,"Password",pd,false);
-    } rowY+=rowH+rowGap+8;
-
-    sectionHeader("MATCH",rowY); rowY+=18;
-    drawOptionRow(4,rowY,"Mode",       lobbySettings_.isPvp?"PvP":"PvE"); rowY+=rowH+rowGap;
-    drawOptionRow(5,rowY,"Map",        mapLabel);                         rowY+=rowH+rowGap;
-    drawOptionRow(6,rowY,"Teams",      teamSummary);                      rowY+=rowH+rowGap;
-    drawOptionRow(7,rowY,"Player HP",  std::to_string(lobbySettings_.playerMaxHp)); rowY+=rowH+rowGap;
-    drawOptionRow(8,rowY,"Lives",      livesSummary);                     rowY+=rowH+rowGap;
-    {
-        std::string obj;
-        if (lobbySettings_.isPvp) {
-            if (lobbySettings_.pvpMatchDuration<=0) obj="Unlimited";
-            else {char b[32]; snprintf(b,sizeof(b),"%d:%02d",(int)lobbySettings_.pvpMatchDuration/60,(int)lobbySettings_.pvpMatchDuration%60); obj=b;}
-        } else { obj=(lobbySettings_.waveCount==0)?"Endless":std::to_string(lobbySettings_.waveCount)+" waves"; }
-        drawOptionRow(9,rowY,lobbySettings_.isPvp?"Round timer":"Wave goal",obj);
-    } rowY+=rowH+rowGap;
-    {
-        bool ffForced=lobbySettings_.isPvp&&lobbySettings_.teamCount==0;
-        std::string ffLabel=ffForced?"Forced on":(lobbySettings_.friendlyFire?"On":"Off");
-        drawOptionRow(10,rowY,lobbySettings_.isPvp?"Friendly fire":"PvP damage",ffLabel,!ffForced,ffForced);
-    } rowY+=rowH+rowGap+8;
-
-    sectionHeader("PRESET",rowY); rowY+=18;
-    {
-        std::string pl=serverPresets_.empty()?"No presets saved":serverPresets_[presetSelection_%(int)serverPresets_.size()].name;
-        drawOptionRow(11,rowY,"Load preset",pl,!serverPresets_.empty(),serverPresets_.empty());
-    }
-
-    SDL_RenderSetClipRect(renderer_, prevClip.w>0?&prevClip:nullptr);
-
-    // Scrollbar
-    {
-        constexpr int CONT_H2=520; const int VIS_H=rowAreaBot-rowAreaTop; constexpr int MAX_SCR=206;
-        int sbX=rightX+rightW+2;
-        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
-        SDL_SetRenderDrawColor(renderer_,212,208,200,255);
-        SDL_Rect track={sbX,rowAreaTop,10,VIS_H}; SDL_RenderFillRect(renderer_,&track);
-        ui_.drawWin98Bevel(sbX,rowAreaTop,10,VIS_H,false);
-        int thumbH=std::max(16,VIS_H*VIS_H/CONT_H2);
-        int thumbY=rowAreaTop+(int)((long long)hostSetupScrollY_*(VIS_H-thumbH)/MAX_SCR);
-        SDL_SetRenderDrawColor(renderer_,212,208,200,255);
-        SDL_Rect thumb={sbX,thumbY,10,thumbH}; SDL_RenderFillRect(renderer_,&thumb);
-        ui_.drawWin98Bevel(sbX,thumbY,10,thumbH,true);
     }
 
     // Start/Back buttons (below row area)
@@ -514,7 +488,8 @@ void Game::renderJoinMenu() {
         SDL_Rect sh={ix+1,iy+1,6,3}; SDL_RenderFillRect(renderer_,&sh);
         int tw=(int)(strlen(lbl)*10*0.60f);
         drawText(lbl, x+TBW_BTN/2-tw/2, TBY+TBH_BTN-14, 10, UI::W98::Black);
-        return hov&&ui_.mouseClicked;
+        if (hov && ui_.mouseClicked) { ui_.mouseClicked=false; ui_.clickCooldownFrames=3; return true; }
+        return false;
     };
     auto tbSep=[&](int x){
         SDL_SetRenderDrawColor(renderer_, 128,128,128,255);
@@ -663,7 +638,8 @@ void Game::renderLobby() {
         SDL_Rect sh={ix+1,iy+1,6,3}; SDL_RenderFillRect(renderer_,&sh);
         int tw=(int)(strlen(lbl)*10*0.60f);
         drawText(lbl, x+w/2-tw/2, TBY+TBH_B-14, 10, UI::W98::Black);
-        return hov&&ui_.mouseClicked;
+        if (hov && ui_.mouseClicked) { ui_.mouseClicked=false; ui_.clickCooldownFrames=3; return true; }
+        return false;
     };
     auto tbSep=[&](int x){
         SDL_SetRenderDrawColor(renderer_, 128,128,128,255);
@@ -1035,8 +1011,20 @@ void Game::renderLobby() {
             ui_.drawWin98TextField(iX,botY,fieldW,inputH,disp.c_str(),chatTyping_,false,gameTime_);
             // Click field to start typing
             if (!chatTyping_&&ui_.pointInRect(ui_.mouseX,ui_.mouseY,iX,botY,fieldW,inputH)&&ui_.mouseClicked) {
+#ifdef __SWITCH__
+                {
+                    std::string chatStr(chatInputBuf_);
+                    softKB_.open(&chatStr, 254, [this, &chatStr](bool confirmed) {
+                        if (confirmed && !chatStr.empty()) {
+                            strncpy(chatInputBuf_, chatStr.c_str(), sizeof(chatInputBuf_)-1);
+                            chatInputBuf_[sizeof(chatInputBuf_)-1] = '\0';
+                            auto& net2 = NetworkManager::instance();
+                            if (net2.isOnline()) { net2.sendChat(chatStr); chatInputBuf_[0]='\0'; }
+                        }
+                    });
+                }
+#else
                 chatTyping_=true;
-#ifndef __SWITCH__
                 SDL_StartTextInput();
 #endif
             }
@@ -1952,7 +1940,7 @@ void Game::renderModMenu() {
     const int btnY = winY + winH - 42;
     auto& modsList = mm.mods();
 
-    // Toggle button (Mods tab only, enabled when a mod row is selected)
+    // Bottom buttons (Mods tab)
     if (modMenuTab_ == 0 && !modsList.empty() && modMenuSelection_ < (int)modsList.size()) {
         const char* togLbl = modsList[modMenuSelection_].enabled ? "Disable" : "Enable";
         if (ui_.win98Button(63, togLbl, winX + pad, btnY, 86, 26, false)) {
@@ -1960,14 +1948,863 @@ void Game::renderModMenu() {
             mm.setEnabled(id, !modsList[modMenuSelection_].enabled);
             applyModOverrides();
         }
+        if (ui_.win98Button(65, "Delete", winX + pad + 92, btnY, 86, 26, false)) {
+            modDeleteConfirm_ = true;
+            modDeleteName_    = modsList[modMenuSelection_].name;
+            modDeleteFolder_  = modsList[modMenuSelection_].folder;
+        }
     }
 
-    // Close button - uses backInput_ so it never accidentally toggles a mod
+    // Close button
     if (ui_.win98Button(62, "Close", winX + winW - pad - 86, btnY, 86, 26, false)) {
         backInput_ = true;
     }
 
     { UI::HintPair hints[] = { {UI::Action::Confirm, "Toggle"}, {UI::Action::Back, "Close"} };
       ui_.drawHintBar(hints, 2); }
+
+    // ── Delete confirmation dialog ────────────────────────────────────────────
+    if (modDeleteConfirm_) {
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 120);
+        SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
+        SDL_RenderFillRect(renderer_, &full);
+
+        const int cw = 360, ch = 110;
+        const int cx2 = (SCREEN_W - cw) / 2;
+        const int cy2 = (SCREEN_H - ch) / 2;
+        ui_.drawWin98Window(cx2, cy2, cw, ch, "Confirm Delete");
+
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Delete \"%s\"?", modDeleteName_.c_str());
+        ui_.drawText(msg, cx2 + 14, cy2 + UI::W98::TitleH + 12, 13, UI::W98::Black);
+        ui_.drawText("This will remove the mod folder from disk.", cx2 + 14, cy2 + UI::W98::TitleH + 28, 11, UI::W98::Shadow);
+
+        const int bby = cy2 + ch - 38;
+        const int bw  = 100;
+        if (ui_.win98Button(80, "Delete", cx2 + 14, bby, bw, 26, false)) {
+            deleteModFolder(modDeleteFolder_);
+        }
+        if (ui_.win98Button(81, "Cancel", cx2 + cw - 14 - bw, bby, bw, 26, false)) {
+            modDeleteConfirm_ = false;
+        }
+    }
+}
+
+// ============================================================================================
+// ONLINE WORKSHOP IMPLEMENTATION
+// ============================================================================================
+
+static std::vector<OnlineModInfo> parseModListJSON(const std::string& json) {
+    std::vector<OnlineModInfo> mods;
+    
+    size_t pos = 0;
+    while ((pos = json.find("{", pos)) != std::string::npos) {
+        OnlineModInfo mod;
+        
+        // Extract id
+        size_t id_start = json.find("\"id\":", pos);
+        if (id_start != std::string::npos) {
+            id_start = json.find("\"", id_start + 5);
+            if (id_start != std::string::npos) {
+                id_start++;
+                size_t id_end = json.find("\"", id_start);
+                if (id_end != std::string::npos) {
+                    mod.id = json.substr(id_start, id_end - id_start);
+                }
+            }
+        }
+        
+        // Extract name
+        size_t name_start = json.find("\"name\":", pos);
+        if (name_start != std::string::npos) {
+            name_start = json.find("\"", name_start + 6);
+            if (name_start != std::string::npos) {
+                name_start++;
+                size_t name_end = json.find("\"", name_start);
+                if (name_end != std::string::npos) {
+                    mod.name = json.substr(name_start, name_end - name_start);
+                }
+            }
+        }
+        
+        // Extract author
+        size_t author_start = json.find("\"author\":", pos);
+        if (author_start != std::string::npos) {
+            author_start = json.find("\"", author_start + 8);
+            if (author_start != std::string::npos) {
+                author_start++;
+                size_t author_end = json.find("\"", author_start);
+                if (author_end != std::string::npos) {
+                    mod.author = json.substr(author_start, author_end - author_start);
+                }
+            }
+        }
+        
+        // Extract version
+        size_t version_start = json.find("\"version\":", pos);
+        if (version_start != std::string::npos) {
+            version_start = json.find("\"", version_start + 9);
+            if (version_start != std::string::npos) {
+                version_start++;
+                size_t version_end = json.find("\"", version_start);
+                if (version_end != std::string::npos) {
+                    mod.version = json.substr(version_start, version_end - version_start);
+                }
+            }
+        }
+        
+        // Extract description
+        size_t desc_start = json.find("\"description\":", pos);
+        if (desc_start != std::string::npos) {
+            desc_start = json.find("\"", desc_start + 13);
+            if (desc_start != std::string::npos) {
+                desc_start++;
+                size_t desc_end = json.find("\"", desc_start);
+                if (desc_end != std::string::npos) {
+                    mod.description = json.substr(desc_start, desc_end - desc_start);
+                }
+            }
+        }
+        
+        // Extract short_description
+        size_t sd_start = json.find("\"short_description\":", pos);
+        if (sd_start != std::string::npos) {
+            sd_start = json.find("\"", sd_start + 20);
+            if (sd_start != std::string::npos) {
+                sd_start++;
+                size_t sd_end = json.find("\"", sd_start);
+                if (sd_end != std::string::npos)
+                    mod.short_description = json.substr(sd_start, sd_end - sd_start);
+            }
+        }
+
+        // Extract icon URL
+        size_t icon_start = json.find("\"icon\":", pos);
+        if (icon_start != std::string::npos) {
+            icon_start = json.find("\"", icon_start + 7);
+            if (icon_start != std::string::npos) {
+                icon_start++;
+                size_t icon_end = json.find("\"", icon_start);
+                if (icon_end != std::string::npos)
+                    mod.icon_url = json.substr(icon_start, icon_end - icon_start);
+            }
+        }
+
+        // Extract download_url
+        size_t url_start = json.find("\"download_url\":", pos);
+        if (url_start != std::string::npos) {
+            url_start = json.find("\"", url_start + 14);
+            if (url_start != std::string::npos) {
+                url_start++;
+                size_t url_end = json.find("\"", url_start);
+                if (url_end != std::string::npos) {
+                    mod.download_url = json.substr(url_start, url_end - url_start);
+                }
+            }
+        }
+
+        // Extract folder_id (the mod.cfg id used as install folder name)
+        size_t fid_start = json.find("\"folder_id\":", pos);
+        if (fid_start != std::string::npos) {
+            fid_start = json.find("\"", fid_start + 11);
+            if (fid_start != std::string::npos) {
+                fid_start++;
+                size_t fid_end = json.find("\"", fid_start);
+                if (fid_end != std::string::npos) {
+                    mod.folder_id = json.substr(fid_start, fid_end - fid_start);
+                }
+            }
+        }
+        // Fall back to uuid id if server doesn't provide folder_id yet
+        if (mod.folder_id.empty()) mod.folder_id = mod.id;
+
+        // Extract mod_type
+        size_t type_start = json.find("\"type\":", pos);
+        if (type_start != std::string::npos) {
+            type_start = json.find("\"", type_start + 6);
+            if (type_start != std::string::npos) {
+                type_start++;
+                size_t type_end = json.find("\"", type_start);
+                if (type_end != std::string::npos)
+                    mod.mod_type = json.substr(type_start, type_end - type_start);
+            }
+        }
+
+        // Extract numeric fields: upvotes, downvotes, score, downloads
+        auto parseNum = [&](const char* key) -> int {
+            size_t p = json.find(key, pos);
+            if (p == std::string::npos) return 0;
+            p += strlen(key);
+            while (p < json.size() && (json[p] == ' ' || json[p] == ':')) p++;
+            int sign = 1;
+            if (p < json.size() && json[p] == '-') { sign = -1; p++; }
+            int val = 0;
+            while (p < json.size() && json[p] >= '0' && json[p] <= '9')
+                val = val * 10 + (json[p++] - '0');
+            return sign * val;
+        };
+        mod.upvotes    = parseNum("\"upvotes\":");
+        mod.downvotes  = parseNum("\"downvotes\":");
+        mod.score      = parseNum("\"score\":");
+        mod.downloads  = parseNum("\"downloads\":");
+        mod.size_bytes = parseNum("\"size\":");
+        // Derive score from votes if not provided
+        if (mod.score == 0 && (mod.upvotes || mod.downvotes))
+            mod.score = mod.upvotes - mod.downvotes;
+
+        if (!mod.id.empty()) {
+            mods.push_back(mod);
+        }
+        
+        pos++;
+    }
+    
+    return mods;
+}
+// ── HTTP helpers (libcurl when available, no-op stubs otherwise) ──────────────
+
+#ifdef HAS_CURL
+static size_t curl_write_file(void* ptr, size_t size, size_t nmemb, FILE* stream) {
+    return fwrite(ptr, size, nmemb, stream);
+}
+static size_t curl_write_string(void* ptr, size_t size, size_t nmemb, std::string* s) {
+    s->append(static_cast<char*>(ptr), size * nmemb);
+    return size * nmemb;
+}
+
+static bool httpGetFile(const std::string& url, const std::string& path, int timeoutSec = 60) {
+    CURL* curl = curl_easy_init();
+    if (!curl) return false;
+    FILE* fp = fopen(path.c_str(), "wb");
+    if (!fp) { curl_easy_cleanup(curl); return false; }
+    curl_easy_setopt(curl, CURLOPT_URL,           url.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_file);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA,     fp);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION,1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER,0L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT,       (long)timeoutSec);
+    CURLcode res = curl_easy_perform(curl);
+    fclose(fp);
+    long code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+    curl_easy_cleanup(curl);
+    return (res == CURLE_OK && code >= 200 && code < 300);
+}
+
+static std::string httpGetString(const std::string& url, int timeoutSec = 15) {
+    CURL* curl = curl_easy_init();
+    if (!curl) return "";
+    std::string body;
+    curl_easy_setopt(curl, CURLOPT_URL,           url.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_string);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA,     &body);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION,1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER,0L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT,       (long)timeoutSec);
+    CURLcode res = curl_easy_perform(curl);
+    long code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+    curl_easy_cleanup(curl);
+    if (res != CURLE_OK || code < 200 || code >= 300) return "";
+    return body;
+}
+#else
+static bool httpGetFile(const std::string&, const std::string&, int = 60) { return false; }
+static std::string httpGetString(const std::string&, int = 15) { return ""; }
+#endif
+
+void Game::fetchOnlineModList() {
+    if (workshopFetchingMods_) return;
+    workshopFetchingMods_ = true;
+    workshopStatus_ = "Fetching mod list...";
+    workshopStatusTimer_ = 3.0f;
+    onlineModList_.clear();
+
+    // Run in background so the main thread (audio, rendering) never stalls
+    std::thread([this]() {
+        std::string json = httpGetString(std::string(WORKSHOP_URL) + "/api/v1/mods");
+        if (!json.empty()) {
+            onlineModList_ = parseModListJSON(json);
+            workshopStatus_ = "Fetched " + std::to_string(onlineModList_.size()) + " mods";
+            workshopStatusTimer_ = 2.0f;
+            fetchWorkshopIcons();
+        } else {
+            workshopStatus_ = "Error fetching mod list";
+            workshopStatusTimer_ = 3.0f;
+        }
+        workshopFetchingMods_ = false;
+    }).detach();
+}
+
+void Game::downloadAndInstallMod(const OnlineModInfo& mod) {
+    if (workshopDownloading_) return;
+    if (workshopDlThread_.joinable()) workshopDlThread_.join();
+
+    workshopDlName_ = mod.name;
+    workshopDlInstallId_ = mod.id;
+    workshopDlZipPath_ = "mods_download_" + workshopDlInstallId_ + ".zip";
+    workshopDownloading_ = true;
+    workshopDlDone_ = false;
+
+    std::string url = mod.download_url.empty()
+        ? std::string(WORKSHOP_URL) + "/api/v1/mods/" + mod.id + "/download"
+        : mod.download_url;
+    std::string path     = workshopDlZipPath_;
+    std::string modId    = mod.id;
+    std::string modType  = mod.mod_type;
+
+    workshopDlThread_ = std::thread([this, url, path, modId, modType]() {
+        bool ok = httpGetFile(url, path, 120);
+        if (ok) {
+            // Extract in background so the main thread (audio, rendering) never stalls
+            extractModZip(path, modId);
+            // Patch mod.cfg with workshop metadata
+            std::string modFolder = "mods/" + modId;
+            std::string cfgPath   = modFolder + "/mod.cfg";
+            FILE* cf = fopen(cfgPath.c_str(), "a");
+            if (cf) {
+                fprintf(cf, "workshop_id=%s\n", modId.c_str());
+                if (!modType.empty()) fprintf(cf, "type=%s\n", modType.c_str());
+                fclose(cf);
+            }
+            ModManager::writeWorkshopMeta(modFolder, modId, "");
+        }
+        workshopDlOk_   = ok;
+        workshopDlDone_ = true;
+    });
+}
+
+void Game::deleteModFolder(const std::string& folder) {
+    namespace fs = std::filesystem;
+    fs::remove_all(folder);
+    ModManager::instance().scanMods();
+    applyModOverrides();
+    modMenuSelection_ = 0;
+    modDeleteConfirm_ = false;
+}
+
+void Game::extractModZip(const std::string& zipPath, const std::string& modId) {
+    // Create target directory
+    std::string targetDir = "mods/" + modId;
+    
+#ifdef _WIN32
+    _mkdir(targetDir.c_str());
+#else
+    mkdir(targetDir.c_str(), 0755);
+#endif
+    
+    // Extract, then flatten one level of nesting if the zip has a single top-level folder
+    // (e.g. user zipped their mod folder so contents land in mods/UUID/modname/ not mods/UUID/)
+#ifdef _WIN32
+    {
+        std::string ps =
+            "$d='" + targetDir + "';"
+            "Expand-Archive -Path '" + zipPath + "' -DestinationPath $d -Force;"
+            "$sub=Get-ChildItem $d -Directory;"
+            "if($sub.Count -eq 1){"
+              "Get-ChildItem $sub[0].FullName | Move-Item -Destination $d -Force;"
+              "Remove-Item $sub[0].FullName -Recurse -Force"
+            "}";
+        std::string unzipCmd = "powershell -Command \"" + ps + "\"";
+        STARTUPINFOA si3 = {}; si3.cb = sizeof(si3);
+        PROCESS_INFORMATION pi3 = {};
+        char buf3[2048]; strncpy(buf3, unzipCmd.c_str(), sizeof(buf3)-1); buf3[sizeof(buf3)-1] = 0;
+        if (CreateProcessA(nullptr, buf3, nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si3, &pi3)) {
+            WaitForSingleObject(pi3.hProcess, 30000);
+            CloseHandle(pi3.hProcess); CloseHandle(pi3.hThread);
+        }
+    }
+#else
+    {
+        system(("unzip -o '" + zipPath + "' -d '" + targetDir + "' 2>/dev/null").c_str());
+        // Flatten if exactly one sub-dir
+        system(("sh -c 'sub=$(ls -d \"" + targetDir + "/*/\" 2>/dev/null | head -2); "
+                "cnt=$(ls -1 \"" + targetDir + "\" | wc -l); "
+                "if [ \"$cnt\" = \"1\" ] && [ -n \"$sub\" ]; then "
+                "  mv \"$sub\"* \"" + targetDir + "/\"; rmdir \"$sub\"; fi'").c_str());
+    }
+#endif
+    
+    // Clean up zip file
+    remove(zipPath.c_str());
+    // Caller is responsible for ModManager::instance().scanMods() + applyModOverrides()
+    // (those must run on the main thread)
+}
+
+// Parse all string values from a JSON array: ["url1","url2",...]
+static std::vector<std::string> parseStringArray(const std::string& json, const char* key) {
+    std::vector<std::string> out;
+    std::string search = std::string("\"") + key + "\":[";
+    size_t p = json.find(search);
+    if (p == std::string::npos) return out;
+    p += search.size();
+    while (p < json.size() && json[p] != ']') {
+        size_t q = json.find('"', p);
+        if (q == std::string::npos || q >= json.size()) break;
+        size_t e = json.find('"', q + 1);
+        if (e == std::string::npos) break;
+        out.push_back(json.substr(q + 1, e - q - 1));
+        p = e + 1;
+    }
+    return out;
+}
+
+void Game::clearDetailScreenshots() {
+    workshopDetailFetching_ = true; // signals thread to stop if watching flag
+    if (workshopDetailThread_.joinable()) workshopDetailThread_.join();
+    workshopDetailFetching_ = false;
+    for (auto t : workshopDetailSsTex_) SDL_DestroyTexture(t);
+    workshopDetailSsTex_.clear();
+    { std::lock_guard<std::mutex> lk(workshopDetailMutex_); workshopDetailSsReady_.clear(); }
+}
+
+void Game::fetchModDetail(const std::string& modId) {
+    clearDetailScreenshots();
+    workshopDetailModId_ = modId;
+    workshopDetailFetching_ = true;
+
+    workshopDetailThread_ = std::thread([this, modId]() {
+        std::string url  = std::string(WORKSHOP_URL) + "/api/v1/mods/" + modId;
+        std::string json = httpGetString(url);
+
+        auto urls = parseStringArray(json, "screenshots");
+        for (int i = 0; i < (int)urls.size(); i++) {
+            if (!workshopDetailFetching_) break;
+            std::string tmp = "ws_ss_" + modId + "_" + std::to_string(i) + ".png";
+            if (httpGetFile(urls[i], tmp, 15)) {
+                if (!workshopDetailFetching_) { remove(tmp.c_str()); break; }
+                std::lock_guard<std::mutex> lk(workshopDetailMutex_);
+                workshopDetailSsReady_.push_back(tmp);
+            }
+        }
+        workshopDetailFetching_ = false;
+    });
+}
+
+void Game::fetchWorkshopIcons() {
+    // Stop any in-flight icon thread
+    workshopIconStop_ = true;
+    if (workshopIconThread_.joinable()) workshopIconThread_.join();
+
+    // Destroy old cached textures
+    for (auto& kv : workshopIconCache_) SDL_DestroyTexture(kv.second);
+    workshopIconCache_.clear();
+    { std::lock_guard<std::mutex> lk(workshopIconMutex_); workshopIconsReady_.clear(); }
+
+    // Snapshot (id, icon_url) - safe to read here (main thread, after parse is done)
+    std::vector<std::pair<std::string,std::string>> pending;
+    for (auto& m : onlineModList_)
+        if (!m.icon_url.empty()) pending.push_back({m.id, m.icon_url});
+
+    if (pending.empty()) return;
+
+    workshopIconStop_ = false;
+    workshopIconThread_ = std::thread([this, pending = std::move(pending)]() {
+        for (auto& [id, url] : pending) {
+            if (workshopIconStop_) break;
+            std::string tmp = "ws_icon_" + id + ".png";
+            if (httpGetFile(url, tmp, 10)) {
+                if (workshopIconStop_) { remove(tmp.c_str()); break; }
+                std::lock_guard<std::mutex> lk(workshopIconMutex_);
+                workshopIconsReady_.push_back(id);
+            }
+        }
+    });
+}
+
+void Game::clearWorkshopIcons() {
+    workshopIconStop_ = true;
+    if (workshopIconThread_.joinable()) workshopIconThread_.join();
+    for (auto& kv : workshopIconCache_) SDL_DestroyTexture(kv.second);
+    workshopIconCache_.clear();
+    // Clean up any leftover temp files
+    for (auto& m : onlineModList_) remove(("ws_icon_" + m.id + ".png").c_str());
+}
+
+void Game::renderOnlineWorkshop() {
+    // ── Drain icon ready-queue (texture creation must be on main/render thread) ──
+    {
+        std::lock_guard<std::mutex> lk(workshopIconMutex_);
+        for (auto& id : workshopIconsReady_) {
+            if (workshopIconCache_.count(id)) continue;
+            std::string tmp = "ws_icon_" + id + ".png";
+            SDL_Surface* s = IMG_Load(tmp.c_str());
+            if (s) {
+                SDL_Texture* t = SDL_CreateTextureFromSurface(renderer_, s);
+                SDL_FreeSurface(s);
+                if (t) workshopIconCache_[id] = t;
+            }
+            remove(tmp.c_str());
+        }
+        workshopIconsReady_.clear();
+    }
+
+    // ── Drain screenshot ready-queue ──────────────────────────────────────────
+    {
+        std::lock_guard<std::mutex> lk(workshopDetailMutex_);
+        for (auto& path : workshopDetailSsReady_) {
+            SDL_Surface* s = IMG_Load(path.c_str());
+            if (s) {
+                SDL_Texture* t = SDL_CreateTextureFromSurface(renderer_, s);
+                SDL_FreeSurface(s);
+                if (t) workshopDetailSsTex_.push_back(t);
+            }
+            remove(path.c_str());
+        }
+        workshopDetailSsReady_.clear();
+    }
+
+    ui_.drawDesktop();
+
+    const int winW = 900, winH = 540;
+    const int winX = (SCREEN_W - winW) / 2;
+    const int winY = (SCREEN_H - winH) / 2;
+    ui_.drawWin98Window(winX, winY, winW, winH, "Online Workshop");
+
+    const int pad = 14;
+    int cx = winX + pad;
+    int cy = winY + UI::W98::TitleH + 8;
+
+    // ── Toolbar row: Refresh | Sort | Details ─────────────────────────────────
+    if (ui_.win98Button(100, "Refresh", cx, cy, 85, 24, false)) {
+        fetchOnlineModList();
+    }
+    static int workshopSort = 0;
+    const char* sortLabels[] = { "Sort: Newest", "Sort: Name", "Sort: Score" };
+    if (ui_.win98Button(103, sortLabels[workshopSort], cx + 88, cy, 140, 24, false)) {
+        workshopSort = (workshopSort + 1) % 3;
+        if (workshopSort == 1) {
+            std::sort(onlineModList_.begin(), onlineModList_.end(),
+                [](const OnlineModInfo& a, const OnlineModInfo& b){ return a.name < b.name; });
+        } else if (workshopSort == 2) {
+            std::sort(onlineModList_.begin(), onlineModList_.end(),
+                [](const OnlineModInfo& a, const OnlineModInfo& b){ return a.score > b.score; });
+        }
+    }
+
+    bool hasSelection = !onlineModList_.empty() && onlineWorkshopSelection_ >= 0
+                        && onlineWorkshopSelection_ < (int)onlineModList_.size();
+    if (hasSelection) {
+        if (ui_.win98Button(106, "Details", cx + 240, cy, 80, 24, false))
+            workshopDetailOpen_ = true;
+    }
+    cy += 32;
+
+    // ── Poll download completion ──────────────────────────────────────────────
+    if (workshopDownloading_ && workshopDlDone_) {
+        if (workshopDlThread_.joinable()) workshopDlThread_.join();
+        if (workshopDlOk_) {
+            // Download + extraction + mod.cfg patching already done in thread.
+            // scanMods must run on the main thread (touches game state).
+            ModManager::instance().scanMods();
+            applyModOverrides();
+            workshopStatus_ = "Installed: " + workshopDlName_;
+            workshopStatusTimer_ = 3.0f;
+        } else {
+            workshopStatus_ = "Failed to download " + workshopDlName_;
+            workshopStatusTimer_ = 3.0f;
+        }
+        workshopDownloading_ = false;
+        workshopDlDone_      = false;
+    }
+
+    // ── Status bar ────────────────────────────────────────────────────────────
+    bool hasStatus = workshopFetchingMods_ || !workshopStatus_.empty();
+    if (workshopFetchingMods_) {
+        ui_.drawText("Fetching mods...", cx, cy, 12, UI::W98::Navy);
+        cy += 18;
+    } else if (!workshopStatus_.empty()) {
+        ui_.drawText(workshopStatus_.c_str(), cx, cy, 12, UI::W98::Black);
+        cy += 18;
+    }
+
+    // ── Mod list ──────────────────────────────────────────────────────────────
+    const int contentH = winH - UI::W98::TitleH - 8 - 32 - (hasStatus ? 18 : 0) - 46;
+    ui_.drawWin98Bevel(cx, cy, winW - 2*pad, contentH, false);
+
+    const int listX = cx + 3;
+    const int listY = cy + 3;
+    const int listW = winW - 2*pad - 6;
+    const int listH = contentH - 6;
+
+    const int rowH     = 54;
+    const int iconSize = 36;
+    const int iconPadX = 6;
+    const int textX    = listX + iconPadX + iconSize + 6;
+
+    int maxVisible = listH / rowH;
+    if (maxVisible < 2) maxVisible = 2;
+
+    SDL_Rect clip = {listX, listY, listW, listH};
+    SDL_RenderSetClipRect(renderer_, &clip);
+
+    if (workshopFetchingMods_) {
+        SDL_RenderSetClipRect(renderer_, nullptr);
+        ui_.drawText("Fetching mod list from server...", listX + 8, listY + listH/2 - 8, 12, UI::W98::Shadow);
+    } else if (onlineModList_.empty()) {
+        SDL_RenderSetClipRect(renderer_, nullptr);
+        ui_.drawText("Not ready yet", listX + 8, listY + listH/2 - 8, 12, UI::W98::Shadow);
+    } else {
+        int scrollOff = std::max(0, onlineWorkshopSelection_ - maxVisible + 1);
+
+        for (int i = scrollOff; i < (int)onlineModList_.size() && (i - scrollOff) < maxVisible; i++) {
+            auto& mod = onlineModList_[i];
+            int ry = listY + (i - scrollOff) * rowH;
+            bool sel = (i == onlineWorkshopSelection_);
+
+            bool hovered = ui_.pointInRect(ui_.mouseX, ui_.mouseY, listX, ry, listW, rowH);
+            if (hovered && !usingGamepad_) { onlineWorkshopSelection_ = i; sel = true; }
+            if (hovered) {
+                ui_.hoveredItem = i % 60;
+                if (ui_.mouseClicked) workshopDetailOpen_ = true;
+            }
+
+            if (sel) {
+                SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+                SDL_SetRenderDrawColor(renderer_, UI::W98::Navy.r, UI::W98::Navy.g, UI::W98::Navy.b, 255);
+                SDL_Rect row = {listX, ry, listW, rowH};
+                SDL_RenderFillRect(renderer_, &row);
+            }
+
+            SDL_Color textC = sel ? UI::W98::White : UI::W98::Black;
+            SDL_Color dimC  = sel ? UI::W98::Silver : UI::W98::Shadow;
+
+            // Icon thumbnail or placeholder
+            int iy = ry + (rowH - iconSize) / 2;
+            auto iconIt = workshopIconCache_.find(mod.id);
+            if (iconIt != workshopIconCache_.end()) {
+                SDL_Rect dst = {listX + iconPadX, iy, iconSize, iconSize};
+                SDL_RenderCopy(renderer_, iconIt->second, nullptr, &dst);
+            } else {
+                SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+                SDL_SetRenderDrawColor(renderer_, sel ? 100 : 180, sel ? 100 : 180, sel ? 140 : 180, 255);
+                SDL_Rect ph = {listX + iconPadX, iy, iconSize, iconSize};
+                SDL_RenderFillRect(renderer_, &ph);
+            }
+
+            // Name + version + author
+            char modLine[512];
+            snprintf(modLine, sizeof(modLine), "%s  v%s  by %s",
+                mod.name.c_str(), mod.version.c_str(), mod.author.c_str());
+            ui_.drawText(modLine, textX, ry + 5, 13, textC);
+
+            // Short description
+            const std::string& desc = mod.short_description.empty() ? mod.description : mod.short_description;
+            ui_.drawText(desc.c_str(), textX, ry + 21, 11, dimC);
+
+            // Type + votes
+            char metaLine[256];
+            snprintf(metaLine, sizeof(metaLine), "%s  ^%d  v%d%s",
+                mod.mod_type.c_str(), mod.upvotes, mod.downvotes, mod.voted ? "  (voted)" : "");
+            ui_.drawText(metaLine, textX, ry + 37, 10, dimC);
+        }
+
+        // Scrollbar
+        if ((int)onlineModList_.size() > maxVisible) {
+            float ratio      = (float)maxVisible / (float)onlineModList_.size();
+            float scrollRatio = (onlineModList_.size() > 1)
+                ? (float)scrollOff / (float)(onlineModList_.size() - maxVisible) : 0.f;
+            int sbH = std::max(20, (int)(listH * ratio));
+            int sbY = listY + (int)((listH - sbH) * scrollRatio);
+            SDL_SetRenderDrawColor(renderer_, UI::W98::Shadow.r, UI::W98::Shadow.g, UI::W98::Shadow.b, 255);
+            SDL_Rect sb = {listX + listW - 5, sbY, 4, sbH};
+            SDL_RenderFillRect(renderer_, &sb);
+        }
+    }
+
+    SDL_RenderSetClipRect(renderer_, nullptr);
+
+    // ── Bottom buttons ────────────────────────────────────────────────────────
+    const int btnY = winY + winH - 38;
+
+    if (hasSelection) {
+        if (ui_.win98Button(101, "Download", cx, btnY, 100, 26, false))
+            downloadAndInstallMod(onlineModList_[onlineWorkshopSelection_]);
+    }
+
+    if (ui_.win98Button(102, "Back", winX + winW - pad - 86, btnY, 86, 26, false))
+        backInput_ = true;
+
+    if (workshopDetailOpen_) {
+        { UI::HintPair hints[] = { {UI::Action::Confirm, "Download"}, {UI::Action::Back, "Close"} };
+          ui_.drawHintBar(hints, 2); }
+    } else {
+        { UI::HintPair hints[] = { {UI::Action::Confirm, "Details"}, {UI::Action::Back, "Back"} };
+          ui_.drawHintBar(hints, 2); }
+    }
+
+    // ── Detail panel modal ────────────────────────────────────────────────────
+    if (workshopDetailOpen_ && hasSelection && !workshopDownloading_) {
+        const auto& mod = onlineModList_[onlineWorkshopSelection_];
+
+        // Kick off detail fetch when a new mod is opened
+        if (workshopDetailModId_ != mod.id) {
+            fetchModDetail(mod.id);
+        }
+
+        // Dim background
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 120);
+        SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
+        SDL_RenderFillRect(renderer_, &full);
+
+        const int dw = 560, dh = 460;
+        const int dx = (SCREEN_W - dw) / 2;
+        const int dy = (SCREEN_H - dh) / 2;
+        ui_.drawWin98Window(dx, dy, dw, dh, mod.name.c_str());
+
+        int bx = dx + 12;
+        int by = dy + UI::W98::TitleH + 10;
+
+        // Icon (64x64)
+        const int detIconSize = 64;
+        auto iconIt = workshopIconCache_.find(mod.id);
+        if (iconIt != workshopIconCache_.end()) {
+            SDL_Rect dst = {bx, by, detIconSize, detIconSize};
+            SDL_RenderCopy(renderer_, iconIt->second, nullptr, &dst);
+        } else {
+            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+            SDL_SetRenderDrawColor(renderer_, 180, 180, 180, 255);
+            SDL_Rect ph = {bx, by, detIconSize, detIconSize};
+            SDL_RenderFillRect(renderer_, &ph);
+        }
+
+        // Metadata table to the right of the icon
+        int tx = bx + detIconSize + 14;
+        int ty = by;
+        const int lineH = 16;
+        const int labelW = 88;
+
+        char sizeStr[32], scoreStr[64];
+        if (mod.size_bytes <= 0)              snprintf(sizeStr, sizeof(sizeStr), "-");
+        else if (mod.size_bytes < 1024)       snprintf(sizeStr, sizeof(sizeStr), "%d B", mod.size_bytes);
+        else if (mod.size_bytes < 1024*1024)  snprintf(sizeStr, sizeof(sizeStr), "%.1f KB", mod.size_bytes / 1024.f);
+        else                                   snprintf(sizeStr, sizeof(sizeStr), "%.2f MB", mod.size_bytes / (1024.f*1024.f));
+        snprintf(scoreStr, sizeof(scoreStr), "^%d  v%d  score: %d", mod.upvotes, mod.downvotes, mod.score);
+
+        struct Row { const char* label; std::string val; };
+        Row rows[] = {
+            {"Name",       mod.name},
+            {"Author",     mod.author},
+            {"Version",    "v" + mod.version},
+            {"Type",       mod.mod_type},
+            {"Folder ID",  mod.folder_id},
+            {"Size",       sizeStr},
+            {"Downloads",  std::to_string(mod.downloads)},
+            {"Score",      scoreStr},
+        };
+        for (auto& row : rows) {
+            ui_.drawText(row.label, tx, ty, 11, UI::W98::Shadow);
+            ui_.drawText(row.val.c_str(), tx + labelW, ty, 11, UI::W98::Black);
+            ty += lineH;
+        }
+
+        // Screenshots strip
+        int ssY = std::max(by + detIconSize, ty) + 8;
+        const int ssH = 90;
+        const int ssBodyW = dw - 24;
+        ui_.drawWin98Bevel(bx, ssY, ssBodyW, ssH, false);
+
+        if (workshopDetailSsTex_.empty()) {
+            const char* msg = workshopDetailFetching_ ? "Loading screenshots..." : "No screenshots.";
+            ui_.drawText(msg, bx + 6, ssY + ssH/2 - 6, 11, UI::W98::Shadow);
+        } else {
+            SDL_Rect ssClip = {bx + 2, ssY + 2, ssBodyW - 4, ssH - 4};
+            SDL_RenderSetClipRect(renderer_, &ssClip);
+            int sx = bx + 4;
+            for (auto* tex : workshopDetailSsTex_) {
+                int tw = 0, th = 0;
+                SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+                int drawH = ssH - 8;
+                int drawW = (th > 0) ? (tw * drawH / th) : drawH;
+                SDL_Rect dst = {sx, ssY + 4, drawW, drawH};
+                SDL_RenderCopy(renderer_, tex, nullptr, &dst);
+                sx += drawW + 4;
+                if (sx >= bx + ssBodyW - 4) break;
+            }
+            SDL_RenderSetClipRect(renderer_, nullptr);
+        }
+
+        // Description box
+        int descY = ssY + ssH + 8;
+        int descH  = dy + dh - 46 - descY;
+        if (descH < 24) descH = 24;
+        ui_.drawWin98Bevel(bx, descY, ssBodyW, descH, false);
+        const std::string& descTxt = mod.description.empty() ? mod.short_description : mod.description;
+        ui_.drawText(descTxt.c_str(), bx + 5, descY + 5, 11, UI::W98::Black);
+
+        // Footer buttons
+        int fbY = dy + dh - 36;
+        if (ui_.win98Button(120, "Download", bx, fbY, 100, 26, false)) {
+            downloadAndInstallMod(onlineModList_[onlineWorkshopSelection_]);
+            workshopDetailOpen_ = false;
+        }
+        auto& selMod = onlineModList_[onlineWorkshopSelection_];
+        char upLbl[24], dnLbl[24];
+        snprintf(upLbl, sizeof(upLbl), "^ %d", selMod.upvotes);
+        snprintf(dnLbl, sizeof(dnLbl), "v %d", selMod.downvotes);
+        if (ui_.win98Button(121, upLbl, bx + 108, fbY, 68, 26, false)) {
+            if (!selMod.voted) { selMod.upvotes++; selMod.score++; selMod.voted = true; }
+        }
+        if (ui_.win98Button(122, dnLbl, bx + 180, fbY, 68, 26, false)) {
+            if (!selMod.voted) { selMod.downvotes++; selMod.score--; selMod.voted = true; }
+        }
+        if (ui_.win98Button(123, "Close", dx + dw - 12 - 86, fbY, 86, 26, false))
+            workshopDetailOpen_ = false;
+    }
+
+    // ── Download progress overlay ─────────────────────────────────────────────
+    if (workshopDownloading_) {
+        // Dim the background
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 100);
+        SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
+        SDL_RenderFillRect(renderer_, &full);
+
+        const int dw = 380, dh = 100;
+        const int dx = (SCREEN_W - dw) / 2;
+        const int dy = (SCREEN_H - dh) / 2;
+        ui_.drawWin98Window(dx, dy, dw, dh, "Downloading...");
+
+        // Mod name
+        char label[256];
+        snprintf(label, sizeof(label), "Downloading: %s", workshopDlName_.c_str());
+        ui_.drawText(label, dx + 12, dy + UI::W98::TitleH + 10, 12, UI::W98::Black);
+
+        // File size indicator
+        long long bytesDown = 0;
+#ifdef _WIN32
+        {
+            HANDLE hf = CreateFileA(workshopDlZipPath_.c_str(), GENERIC_READ,
+                FILE_SHARE_WRITE | FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+            if (hf != INVALID_HANDLE_VALUE) {
+                LARGE_INTEGER sz; GetFileSizeEx(hf, &sz);
+                bytesDown = (long long)sz.QuadPart;
+                CloseHandle(hf);
+            }
+        }
+#endif
+        char sizeStr[64];
+        if (bytesDown < 1024)
+            snprintf(sizeStr, sizeof(sizeStr), "%lld B", bytesDown);
+        else if (bytesDown < 1024*1024)
+            snprintf(sizeStr, sizeof(sizeStr), "%.1f KB", bytesDown / 1024.0);
+        else
+            snprintf(sizeStr, sizeof(sizeStr), "%.2f MB", bytesDown / (1024.0*1024.0));
+        ui_.drawText(sizeStr, dx + 12, dy + UI::W98::TitleH + 26, 11, UI::W98::Shadow);
+
+        // Marquee progress bar
+        const int barX = dx + 12, barY = dy + UI::W98::TitleH + 46;
+        const int barW = dw - 24, barH = 16;
+        ui_.drawWin98Bevel(barX, barY, barW, barH, false);
+        const int marqW = barW / 4;
+        Uint32 ticks = SDL_GetTicks();
+        int marqX = barX + 2 + (int)((ticks / 8) % (barW - 4 - marqW));
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+        SDL_SetRenderDrawColor(renderer_, UI::W98::Navy.r, UI::W98::Navy.g, UI::W98::Navy.b, 255);
+        SDL_Rect marq = {marqX, barY + 2, marqW, barH - 4};
+        SDL_RenderFillRect(renderer_, &marq);
+    }
 }
 
