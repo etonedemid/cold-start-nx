@@ -1,7 +1,10 @@
 #include "game.h"
 #include "game_internal.h"
-
-
+#include <iterator>
+#include <list>
+#include <random>
+#include <vector>
+#include <iostream>
 void Game::render() {
     bool gameplayView =
         state_ == GameState::Playing || state_ == GameState::Paused || state_ == GameState::Dead ||
@@ -52,6 +55,7 @@ void Game::render() {
         break;
     case GameState::Playing:
     case GameState::Paused:
+    case GameState::Workshop:
     case GameState::Dead:
         renderMap();
         renderDecals();
@@ -230,8 +234,9 @@ void Game::render() {
         renderShadingPass();
         renderUI();
 
-        if (state_ == GameState::Paused) renderPauseMenu();
-        if (state_ == GameState::Dead)   renderDeathScreen();
+        if (state_ == GameState::Paused)   renderPauseMenu();
+        if (state_ == GameState::Workshop) renderWorkshopMenu();
+        if (state_ == GameState::Dead)     renderDeathScreen();
         break;
 
     case GameState::EditorConfig:
@@ -668,6 +673,10 @@ void Game::render() {
 
     case GameState::ModMenu:
         renderModMenu();
+        break;
+
+    case GameState::OnlineWorkshop:
+        renderOnlineWorkshop();
         break;
 
     case GameState::LocalCoopLobby:
@@ -2149,6 +2158,17 @@ void Game::renderBiosIntro() {
     }
 }
 
+
+std::string getrandomhint() {
+    std::vector<std::string> hints = {"also try hotline miami!", "we hit 100 downloads!", "have a good day", "never stop trying", "i hate this codebase", "trololo"};
+    std::random_device  rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<std::size_t> dist(0, hints.size() - 1);
+    std::size_t randomIndex = dist(gen);
+    return hints[randomIndex];
+}
+
+std::string hint = "Hint: " + getrandomhint() ;
 // Login Screen
 
 void Game::renderLoginScreen() {
@@ -2174,7 +2194,7 @@ void Game::renderLoginScreen() {
     // Instructional text
     ui_.drawText("Enter your network username and password.", contentX, cy, 12, UI::W98::Black);
     cy += 22;
-    ui_.drawText("Hint: trololo", contentX, cy, 11, UI::W98::Shadow);
+    ui_.drawText(hint.c_str(), contentX, cy, 11, UI::W98::Shadow);
     cy += 28;
 
     // Username row - clicking field switches focus and opens keyboard
@@ -2390,13 +2410,6 @@ void Game::renderMainMenu() {
     ui_.drawWin98Bevel(ipX + 4, iy, ipW - 8, 2, false);
     iy += 10;
 
-    // Character
-    if (selectedChar_ >= 0 && selectedChar_ < (int)availableChars_.size()) {
-        ui_.drawText("Character:", ipX + 6, iy, 11, UI::W98::Shadow);
-        iy += 14;
-        ui_.drawText(availableChars_[selectedChar_].name.c_str(), ipX + 6, iy, 12, UI::W98::Black);
-        iy += 18;
-    }
 
     // User
     ui_.drawText("Welcome", ipX + 6, iy, 11, UI::W98::Shadow);
@@ -2500,7 +2513,11 @@ void Game::renderMainMenu() {
         if (totalNewsH <= 0.0f) totalNewsH = 1.0f; // guard against zero-divide
         float scrollOff = fmodf(SDL_GetTicks() * 0.001f * 10.f, totalNewsH);
 
-        const int clipH = 138;
+        // Reserve space below the news box for the weather widget
+        // (separator 9 + label 13 + temp 14 + condition 13 + wind 12 + margin 4 = 65px)
+        const int weatherReserve = 65;
+        int clipH = (ipY + ipH) - iy - weatherReserve;
+        if (clipH < 40) clipH = 40;
         SDL_Rect clip = { ipX + 4, iy, ipW - 8, clipH };
         SDL_RenderSetClipRect(renderer_, &clip);
 
@@ -3200,6 +3217,19 @@ void Game::renderMainMenu() {
         if (ui_.hoveredItem == 90 && !usingGamepad_) menuSelection_ = 90;
         if (ui_.hoveredItem == 91 && !usingGamepad_) menuSelection_ = 91;
     }
+
+    // Disconnect reason popup
+    if (!disconnectReason_.empty()) {
+        ui_.drawDarkOverlay(160);
+        const int dw = 360, dh = 100;
+        const int dx = (SCREEN_W - dw) / 2, dy = (SCREEN_H - dh) / 2;
+        ui_.drawWin98Window(dx, dy, dw, dh, "Disconnected");
+        ui_.drawText(disconnectReason_.c_str(), dx + 14, dy + UI::W98::TitleH + 14, 13, UI::W98::Black);
+        int btnW = 80, btnY2 = dy + dh - 36;
+        if (ui_.win98Button(700, "OK", dx + dw/2 - btnW/2, btnY2, btnW, 26, false)) {
+            disconnectReason_.clear();
+        }
+    }
 }
 
 void Game::renderPlayModeMenu() {
@@ -3716,6 +3746,149 @@ void Game::renderPauseMenu() {
     }
 }
 
+void Game::renderWorkshopMenu() {
+    // Keep gameplay visible underneath with a dark tint
+    ui_.drawDarkOverlay(140, 4, 6, 14);
+
+    // Full-screen workshop browser mirroring the web layout
+    const int winW = 860, winH = 520;
+    const int winX = (SCREEN_W - winW) / 2;
+    const int winY = (SCREEN_H - winH) / 2;
+    const int pad  = 12;
+    ui_.drawWin98Window(winX, winY, winW, winH, "Workshop");
+
+    // ── Menubar ───────────────────────────────────────────────────────────────
+    const int mbY = winY + UI::W98::TitleH;
+    const int mbH = 20;
+    SDL_SetRenderDrawColor(renderer_, 212,208,200,255);
+    SDL_Rect mbBg = {winX, mbY, winW, mbH};
+    SDL_RenderFillRect(renderer_, &mbBg);
+    ui_.drawText("Browse", winX + 8, mbY + 3, 11, UI::W98::Black);
+    ui_.drawText("Forge / Salvage", winX + 70, mbY + 3, 11, UI::W98::Shadow);
+
+    // ── Toolbar row (filter buttons mirroring web) ────────────────────────────
+    static int wsFilter = 0; // 0=all,1=map,2=pack,3=character,4=item
+    const char* filterKeys[] = { "", "map", "pack", "character", "item" };
+    const char* filterLabels[] = { "All", "Maps", "Packs", "Characters", "Items" };
+    const int tbY = mbY + mbH + 2;
+    const int tbH = 26;
+    SDL_SetRenderDrawColor(renderer_, 212,208,200,255);
+    SDL_Rect tbBg = {winX, tbY, winW, tbH};
+    SDL_RenderFillRect(renderer_, &tbBg);
+    int tbx = winX + 4;
+    for (int fi = 0; fi < 5; fi++) {
+        bool active = (wsFilter == fi);
+        if (ui_.win98Button(200 + fi, filterLabels[fi], tbx, tbY + 1, 80, tbH - 2, active)) {
+            wsFilter = fi;
+        }
+        tbx += 84;
+    }
+    // Resume button on the right side of toolbar
+    if (ui_.win98Button(210, "Resume Game", winX + winW - pad - 100, tbY + 1, 100, tbH - 2, false)) {
+        menuSelection_ = 0; confirmInput_ = true;
+    }
+
+    // ── Installed mods list ───────────────────────────────────────────────────
+    const int contentY = tbY + tbH + 2;
+    const int statusH  = 20;
+    const int contentH = winH - (contentY - winY) - statusH - 2;
+    ui_.drawWin98Bevel(winX + pad, contentY, winW - 2*pad, contentH, false);
+
+    const int listX = winX + pad + 3;
+    const int listY = contentY + 3;
+    const int listW = winW - 2*pad - 6;
+    const int listH = contentH - 6;
+
+    // Filter & gather installed mods
+    const auto& allMods = ModManager::instance().mods();
+    std::vector<const Mod*> filtered;
+    for (auto& m : allMods) {
+        if (!m.enabled) continue;
+        const std::string& ft = filterKeys[wsFilter];
+        if (!ft.empty()) {
+            // Match type by content flags
+            if (ft == "map"       && !m.content.maps)       continue;
+            if (ft == "pack"      && !m.content.packs)      continue;
+            if (ft == "character" && !m.content.characters) continue;
+            if (ft == "item"      && !m.content.items)      continue;
+        }
+        filtered.push_back(&m);
+    }
+
+    SDL_Rect clip = {listX, listY, listW, listH};
+    SDL_RenderSetClipRect(renderer_, &clip);
+
+    static int wsScroll = 0;
+    const int rowH = 48;
+    int maxVis = listH / rowH;
+    if (maxVis < 1) maxVis = 1;
+    if (wsScroll > std::max(0, (int)filtered.size() - maxVis))
+        wsScroll = std::max(0, (int)filtered.size() - maxVis);
+
+    if (filtered.empty()) {
+        SDL_RenderSetClipRect(renderer_, nullptr);
+        const char* msg = allMods.empty()
+            ? "No mods installed. Use Online Workshop to download mods."
+            : "No mods match this filter.";
+        ui_.drawText(msg, listX + 8, listY + listH/2 - 8, 12, UI::W98::Shadow);
+    } else {
+        for (int i = wsScroll; i < (int)filtered.size() && (i - wsScroll) < maxVis; i++) {
+            const Mod* m = filtered[i];
+            int ry = listY + (i - wsScroll) * rowH;
+            bool sel = (menuSelection_ == i + 10);
+            bool hov = ui_.pointInRect(ui_.mouseX, ui_.mouseY, listX, ry, listW, rowH);
+            if (hov && !usingGamepad_) { menuSelection_ = i + 10; sel = true; }
+            if (hov) ui_.hoveredItem = (i + 10) % 60;
+
+            if (sel) {
+                SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+                SDL_SetRenderDrawColor(renderer_, UI::W98::Navy.r, UI::W98::Navy.g, UI::W98::Navy.b, 255);
+                SDL_Rect row = {listX, ry, listW, rowH};
+                SDL_RenderFillRect(renderer_, &row);
+            }
+
+            SDL_Color tc = sel ? UI::W98::White : UI::W98::Black;
+            SDL_Color dc = sel ? UI::W98::Silver : UI::W98::Shadow;
+
+            char line1[256], line2[256];
+            snprintf(line1, sizeof(line1), "%s  v%s  by %s", m->name.c_str(), m->version.c_str(), m->author.c_str());
+            snprintf(line2, sizeof(line2), "[%s]  chars:%zu  maps:%zu  packs:%zu",
+                m->id.c_str(), m->characterPaths.size(), m->mapPaths.size(), m->packPaths.size());
+            ui_.drawText(line1, listX + 6, ry + 6, 13, tc);
+            ui_.drawText(m->description.empty() ? "(no description)" : m->description.c_str(), listX + 6, ry + 22, 11, dc);
+            ui_.drawText(line2, listX + 6, ry + 34, 10, dc);
+        }
+
+        // Scrollbar
+        if ((int)filtered.size() > maxVis) {
+            float ratio = (float)maxVis / (float)filtered.size();
+            float sRatio = (filtered.size() > 1) ? (float)wsScroll / (float)(filtered.size() - maxVis) : 0.f;
+            int sbH = std::max(20, (int)(listH * ratio));
+            int sbY = listY + (int)((listH - sbH) * sRatio);
+            SDL_SetRenderDrawColor(renderer_, UI::W98::Shadow.r, UI::W98::Shadow.g, UI::W98::Shadow.b, 255);
+            SDL_Rect sb = {listX + listW - 5, sbY, 4, sbH};
+            SDL_RenderFillRect(renderer_, &sb);
+        }
+    }
+
+    SDL_RenderSetClipRect(renderer_, nullptr);
+
+    // Scroll on mouse wheel
+    if (ui_.mouseWheelY != 0 && ui_.pointInRect(ui_.mouseX, ui_.mouseY, listX, listY, listW, listH)) {
+        wsScroll = std::max(0, std::min(wsScroll - ui_.mouseWheelY,
+                             std::max(0, (int)filtered.size() - maxVis)));
+    }
+
+    // ── Statusbar ─────────────────────────────────────────────────────────────
+    const int sbY2 = winY + winH - statusH;
+    char countMsg[80];
+    snprintf(countMsg, sizeof(countMsg), "%d mod%s installed", (int)filtered.size(), filtered.size() != 1 ? "s" : "");
+    ui_.drawWin98StatusBar(sbY2, countMsg);
+
+    { UI::HintPair hints[] = { {UI::Action::Back, "Resume"} };
+      ui_.drawHintBar(hints, 1); }
+}
+
 void Game::renderDeathScreen() {
     ui_.drawDarkOverlay(160, 30, 4, 4);
 
@@ -3834,6 +4007,7 @@ void Game::startCustomMap(const std::string& path, int modeOverride) {
     boxFragments_.clear();
     crates_.clear();
     pickups_.clear();
+    vehicles_.clear(); inVehicle_ = false; vehicleIdx_ = -1;
     upgrades_.reset();
     crateSpawnTimer_ = 0;
 
@@ -3846,6 +4020,8 @@ void Game::startCustomMap(const std::string& path, int modeOverride) {
     waveNumber_ = 0;
     waveEnemiesLeft_ = 0;
     waveActive_ = false;
+    bossWaveActive_ = false;
+    lastBossWaveNum_ = -1;
     wavePauseTimer_ = WAVE_PAUSE_BASE;
     waveSpawnTimer_ = 0;
 
@@ -3968,14 +4144,18 @@ void Game::startCustomMapMultiplayer(const std::string& path) {
     boxFragments_.clear();
     crates_.clear();
     pickups_.clear();
+    vehicles_.clear(); inVehicle_ = false; vehicleIdx_ = -1;
     upgrades_.reset();
     crateSpawnTimer_ = 0;
     sandboxMode_ = false;
+    customEnemiesTotal_ = 0;
 
     // Reset wave state
     waveNumber_ = 0;
     waveEnemiesLeft_ = 0;
     waveActive_ = false;
+    bossWaveActive_ = false;
+    lastBossWaveNum_ = -1;
     wavePauseTimer_ = WAVE_PAUSE_BASE;
     waveSpawnTimer_ = 0;
 

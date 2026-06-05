@@ -39,7 +39,7 @@ static const int KROW_NCOLS[5] = {13, 13, 14, 12, 3};
 void Game::SoftKeyboard::open(std::string* tgt, int max,
                               std::function<void(bool)> done) {
 #ifdef __SWITCH__
-    // Use the Switch system keyboard applet — blocks until the user confirms or cancels.
+    // Use the Switch system keyboard applet - blocks until the user confirms or cancels.
     SwkbdConfig kbd;
     swkbdCreate(&kbd, 0);
     swkbdConfigSetType(&kbd, SwkbdType_Normal);
@@ -55,7 +55,7 @@ void Game::SoftKeyboard::open(std::string* tgt, int max,
     } else {
         if (done) done(false);
     }
-    // active stays false — no custom keyboard overlay needed
+    // active stays false - no custom keyboard overlay needed
 #else
     active = true; target = tgt; maxLen = max; onDone = done;
     shiftOn = false; heldNav = -1; repeatAt = 0;
@@ -383,6 +383,13 @@ void Game::renderSoftKB() {
 
 
 void Game::handleInput() {
+    // 3-frame cooldown: suppress confirmInput_ after state transitions to prevent
+    // double-fires when the new state has buttons at the same screen position.
+    if (confirmCooldown_ > 0) {
+        --confirmCooldown_;
+        confirmInput_ = false;
+    }
+
     // Carry over inputs set by render() buttons in the previous frame
     // (they would be wiped by the reset below before the state machine can see them)
     bool renderConfirm = confirmInput_;
@@ -443,7 +450,20 @@ void Game::handleInput() {
 
         // Pass events to editor if active
         if ((state_ == GameState::Editor || state_ == GameState::EditorConfig) && editor_.isActive()) {
+#ifdef __SWITCH__
+            bool wasEditing = editor_.getConfig().textEditing;
+#endif
             editor_.handleInput(e);
+#ifdef __SWITCH__
+            // If the editor just started text editing, open the system keyboard instead
+            // of the custom char-palette (which can't receive input on Switch anyway).
+            EditorConfig& ecfg = editor_.getConfig();
+            if (!wasEditing && ecfg.textEditing && (ecfg.field == 3 || ecfg.field == 4)) {
+                ecfg.textEditing = false;
+                std::string* t = (ecfg.field == 3) ? &ecfg.mapName : &ecfg.creator;
+                softKB_.open(t, 64, nullptr);
+            }
+#endif
         }
 
         // Dev console intercepts events when open (single-player only)
@@ -782,7 +802,7 @@ void Game::handleInput() {
                 // Consume unconditionally in gameplay (when overlay is visible) so
                 // stick drags never accidentally fire UI buttons.
                 bool inGameplay = (state_ == GameState::Playing         || state_ == GameState::Paused        ||
-                                   state_ == GameState::Dead             || state_ == GameState::LocalCoopGame ||
+                                   state_ == GameState::Workshop        || state_ == GameState::Dead             || state_ == GameState::LocalCoopGame ||
                                    state_ == GameState::LocalCoopPaused  || state_ == GameState::LocalCoopDead ||
                                    state_ == GameState::MultiplayerGame  || state_ == GameState::MultiplayerPaused ||
                                    state_ == GameState::MultiplayerDead  || state_ == GameState::MultiplayerSpectator ||
@@ -847,7 +867,7 @@ void Game::handleInput() {
     // Auto-show overlay when gameplay begins
     {
         bool isGameplay = (state_ == GameState::Playing         || state_ == GameState::Paused        ||
-                           state_ == GameState::Dead             || state_ == GameState::LocalCoopGame ||
+                           state_ == GameState::Workshop        || state_ == GameState::Dead             || state_ == GameState::LocalCoopGame ||
                            state_ == GameState::LocalCoopPaused  || state_ == GameState::LocalCoopDead ||
                            state_ == GameState::MultiplayerGame  || state_ == GameState::MultiplayerPaused ||
                            state_ == GameState::MultiplayerDead  || state_ == GameState::MultiplayerSpectator ||
@@ -936,7 +956,7 @@ void Game::handleInput() {
     // Analog-stick menu navigation (non-gameplay states)
     {
         bool inGameplay = (state_ == GameState::Playing  || state_ == GameState::Paused ||
-            state_ == GameState::Dead            || state_ == GameState::LocalCoopGame  ||
+            state_ == GameState::Workshop       || state_ == GameState::Dead            || state_ == GameState::LocalCoopGame  ||
             state_ == GameState::LocalCoopPaused || state_ == GameState::LocalCoopDead ||
             state_ == GameState::MultiplayerGame  || state_ == GameState::MultiplayerPaused ||
             state_ == GameState::MultiplayerDead  || state_ == GameState::MultiplayerSpectator ||
@@ -1009,7 +1029,7 @@ void Game::handleInput() {
 
         // Determine whether we are in an active gameplay state
         bool tcInGameplay = (state_ == GameState::Playing         || state_ == GameState::Paused        ||
-                             state_ == GameState::Dead             || state_ == GameState::LocalCoopGame ||
+                             state_ == GameState::Workshop        || state_ == GameState::Dead             || state_ == GameState::LocalCoopGame ||
                              state_ == GameState::LocalCoopPaused  || state_ == GameState::LocalCoopDead ||
                              state_ == GameState::MultiplayerGame  || state_ == GameState::MultiplayerPaused ||
                              state_ == GameState::MultiplayerDead  || state_ == GameState::MultiplayerSpectator ||
@@ -1084,6 +1104,7 @@ void Game::handleInput() {
             state_ == GameState::LocalCoopGame        ||
             state_ == GameState::MultiplayerSpectator ||
             state_ == GameState::Paused               ||
+            state_ == GameState::Workshop             ||
             state_ == GameState::CustomPaused         ||
             state_ == GameState::PackPaused           ||
             state_ == GameState::MultiplayerPaused    ||
@@ -1105,6 +1126,16 @@ void Game::handleInput() {
             loginField_  = 0;
             loginBlinkT_ = 0;
             state_ = GameState::LoginScreen;
+#ifdef __SWITCH__
+            softKB_.open(&loginUsername_, 32, [this](bool confirmed) {
+                if (!confirmed) loginUsername_ = config_.username;
+                config_.username = loginUsername_.empty() ? "Player" : loginUsername_;
+                saveConfig();
+                state_ = GameState::MainMenu;
+                menuSelection_ = 0;
+                playMenuMusic();
+            });
+#endif
         }
     }
     else if (state_ == GameState::LoginScreen) {
@@ -1135,6 +1166,14 @@ void Game::handleInput() {
         }
     }
     else if (state_ == GameState::MainMenu) {
+        // Dismiss disconnect reason popup on any confirm/click
+        if (!disconnectReason_.empty()) {
+            if (confirmInput_ || backInput_ || ui_.mouseClicked) {
+                disconnectReason_.clear();
+                confirmInput_ = false;
+                return;
+            }
+        }
         // Log-off confirmation dialog intercept
         // Must run before the clamp so menuSelection_ 90/91 aren't wiped.
         if (logOffConfirm_) {
@@ -1144,24 +1183,24 @@ void Game::handleInput() {
             if (confirmInput_) {
                 if (menuSelection_ == 90) { running_ = false; }
 #ifdef __SWITCH__
-                else { logOffConfirm_ = false; menuSelection_ = 10; }
-#else
                 else { logOffConfirm_ = false; menuSelection_ = 11; }
+#else
+                else { logOffConfirm_ = false; menuSelection_ = 12; }
 #endif
             }
 #ifdef __SWITCH__
-            if (backInput_) { logOffConfirm_ = false; menuSelection_ = 10; backInput_ = false; }
-#else
             if (backInput_) { logOffConfirm_ = false; menuSelection_ = 11; backInput_ = false; }
+#else
+            if (backInput_) { logOffConfirm_ = false; menuSelection_ = 12; backInput_ = false; }
 #endif
             return; // block all other menu input while dialog is open
         }
 
         if (menuSelection_ < 0) menuSelection_ = 0;
 #ifdef __SWITCH__
-        if (menuSelection_ > 10) menuSelection_ = 10;
-#else
         if (menuSelection_ > 11) menuSelection_ = 11;
+#else
+        if (menuSelection_ > 12) menuSelection_ = 12;
 #endif
 
         if (confirmInput_) {
@@ -1189,6 +1228,7 @@ void Game::handleInput() {
                 state_ = GameState::MapSelect;
                 mapSelectIdx_ = 0;
                 menuSelection_ = 0;
+                confirmCooldown_ = 3;
             }
             else if (menuSelection_ == 4) {
                 scanMapPacks();
@@ -1208,6 +1248,9 @@ void Game::handleInput() {
                 charCreator_ = CharCreatorState{};
                 state_ = GameState::CharCreator;
                 menuSelection_ = 0;
+                // CharCreator layout needs at least 1280px wide; force it
+                SCREEN_W = 1280; SCREEN_H = 720;
+                if (renderer_) SDL_RenderSetLogicalSize(renderer_, 1280, 720);
             }
             else if (menuSelection_ == 7) {
                 // Mods
@@ -1230,6 +1273,12 @@ void Game::handleInput() {
                 creditsOpen_ = !creditsOpen_;
             }
             else if (menuSelection_ == 11) {
+                // Workshop - open online workshop menu
+                state_ = GameState::OnlineWorkshop;
+                onlineWorkshopSelection_ = 0;
+                fetchOnlineModList();
+            }
+            else if (menuSelection_ == 12) {
                 logOffConfirm_ = true;
                 menuSelection_ = 91; // pre-select "No" (safe default)
             }
@@ -1238,6 +1287,11 @@ void Game::handleInput() {
                 creditsOpen_ = !creditsOpen_;
             }
             else if (menuSelection_ == 10) {
+                state_ = GameState::OnlineWorkshop;
+                onlineWorkshopSelection_ = 0;
+                fetchOnlineModList();
+            }
+            else if (menuSelection_ == 11) {
                 logOffConfirm_ = true;
                 menuSelection_ = 91;
             }
@@ -1259,8 +1313,8 @@ void Game::handleInput() {
             if (rightInput_) value = std::min(maxV, value + step);
         };
 
-        if      (playModeSelection_ == 3) adjustIntPM  (config_.mapWidth,        20,   120, 2);
-        else if (playModeSelection_ == 4) adjustIntPM  (config_.mapHeight,        14,    80, 2);
+        if      (playModeSelection_ == 3) adjustIntPM  (config_.mapWidth,        20,   1000, 2);
+        else if (playModeSelection_ == 4) adjustIntPM  (config_.mapHeight,        14,    1000, 2);
         else if (playModeSelection_ == 5) adjustIntPM  (config_.playerMaxHp,       1,    20, 1);
         else if (playModeSelection_ == 6) adjustFloatPM(config_.spawnRateScale,  0.3f,  3.0f, 0.1f);
         else if (playModeSelection_ == 7) adjustFloatPM(config_.enemyHpScale,    0.3f,  3.0f, 0.1f);
@@ -1275,6 +1329,7 @@ void Game::handleInput() {
                 state_ = GameState::MapSelect;
                 mapSelectIdx_ = 0;
                 menuSelection_ = 0;
+                confirmCooldown_ = 3;
             } else if (playModeSelection_ == 2) {
                 scanMapPacks();
                 prevMenuState_ = GameState::PlayModeMenu;
@@ -1418,7 +1473,6 @@ void Game::handleInput() {
         if (menuSelection_ > 3) menuSelection_ = 3;
 #endif
         if (pauseInput_) { state_ = GameState::Playing; }
-        // Volume adjustment with left/right
         if (menuSelection_ == 1) {
             if (leftInput_) config_.musicVolume = std::max(0, config_.musicVolume - 8);
             if (rightInput_) config_.musicVolume = std::min(128, config_.musicVolume + 8);
@@ -1460,6 +1514,35 @@ void Game::handleInput() {
                 }
             }
 #endif
+        }
+    }
+    else if (state_ == GameState::Workshop) {
+        // Workshop menu input handling
+        if (menuSelection_ < 0) menuSelection_ = 0;
+        if (menuSelection_ > 3) menuSelection_ = 3; // 0=Resume, 1=Forge, 2=Salvage, 3=Close/Back
+        
+        // Go back to pause menu
+        if (pauseInput_ || backInput_) {
+            state_ = GameState::Paused;
+            menuSelection_ = 0;
+        }
+        
+        // Handle item selection
+        if (confirmInput_) {
+            if (menuSelection_ == 0) {
+                // Resume - go back to playing
+                state_ = GameState::Playing;
+            } else if (menuSelection_ == 1) {
+                // Forge - would open crafting interface
+                // TODO: Implement item forging/crafting
+            } else if (menuSelection_ == 2) {
+                // Salvage - would open salvage interface
+                // TODO: Implement item salvaging
+            } else if (menuSelection_ == 3) {
+                // Close/Back to pause menu
+                state_ = GameState::Paused;
+                menuSelection_ = 0;
+            }
         }
     }
     else if (state_ == GameState::Playing) {
@@ -1759,6 +1842,7 @@ void Game::handleInput() {
                 cc.clearPreviews(renderer_);
                 state_ = GameState::MainMenu;
                 menuSelection_ = 0;
+                updateAspectMode();
             }
         }
         // Status timer
@@ -1768,6 +1852,7 @@ void Game::handleInput() {
             cc.clearPreviews(renderer_);
             state_ = GameState::MainMenu;
             menuSelection_ = 0;
+            updateAspectMode();
         }
     }
     // Map Pack states
@@ -1839,7 +1924,7 @@ void Game::handleInput() {
 #else
             else if (menuSelection_ == 3) {
 #endif
-                playMenuMusic(); menuSelection_ = 0; playingPack_ = false;
+                playMenuMusic(); menuSelection_ = 0; playingPack_ = false; playingCustomMap_ = false;
                 packCharDef_.unload();
                 state_ = GameState::MainMenu;
             }
@@ -1849,14 +1934,14 @@ void Game::handleInput() {
         if (menuSelection_ < 0) menuSelection_ = 0;
         if (menuSelection_ > 1) menuSelection_ = 1;
         if (backInput_) {
-            playMenuMusic(); menuSelection_ = 0; playingPack_ = false;
+            playMenuMusic(); menuSelection_ = 0; playingPack_ = false; playingCustomMap_ = false;
             packCharDef_.unload(); state_ = GameState::MainMenu;
         }
         if (confirmInput_) {
             if (menuSelection_ == 0) {
                 startPackLevel();
             } else {
-                playMenuMusic(); menuSelection_ = 0; playingPack_ = false;
+                playMenuMusic(); menuSelection_ = 0; playingPack_ = false; playingCustomMap_ = false;
                 packCharDef_.unload();
                 state_ = GameState::MainMenu;
             }
@@ -1866,14 +1951,14 @@ void Game::handleInput() {
         if (menuSelection_ < 0) menuSelection_ = 0;
         if (menuSelection_ > 1) menuSelection_ = 1;
         if (backInput_) {
-            playMenuMusic(); menuSelection_ = 0; playingPack_ = false;
+            playMenuMusic(); menuSelection_ = 0; playingPack_ = false; playingCustomMap_ = false;
             packCharDef_.unload(); state_ = GameState::MainMenu;
         }
         if (confirmInput_) {
             if (menuSelection_ == 0) {
                 advancePackLevel();
             } else {
-                playMenuMusic(); menuSelection_ = 0; playingPack_ = false;
+                playMenuMusic(); menuSelection_ = 0; playingPack_ = false; playingCustomMap_ = false;
                 packCharDef_.unload();
                 state_ = GameState::MainMenu;
             }
@@ -1881,7 +1966,7 @@ void Game::handleInput() {
     }
     else if (state_ == GameState::PackComplete) {
         if (backInput_ || confirmInput_) {
-            playMenuMusic(); menuSelection_ = 0; playingPack_ = false;
+            playMenuMusic(); menuSelection_ = 0; playingPack_ = false; playingCustomMap_ = false;
             packCharDef_.unload();
             state_ = GameState::MainMenu;
         }
@@ -1900,9 +1985,11 @@ void Game::handleInput() {
                 scanMapFiles();
                 state_ = GameState::HostSetup;
                 hostSetupSelection_ = 0;
+                menuSelection_      = 0;
                 hostSetupScrollY_   = 0;
                 gamemodeSelectIdx_ = 0;
                 hostMapSelectIdx_ = 0;
+                confirmCooldown_ = 3;
                 lobbySettings_.isPvp            = false;
                 lobbySettings_.friendlyFire     = false;
                 lobbySettings_.pvpEnabled       = false;
@@ -1955,7 +2042,7 @@ void Game::handleInput() {
         if (mpUsernameTyping_ || portTyping_ || hostPasswordTyping_) {
             // Editing consumes events; nothing else to do
         } else {
-        constexpr int HOST_SETUP_ITEMS = 14;
+        constexpr int HOST_SETUP_ITEMS = 14; // items 0-3 = network, 12 = start, 13 = back
         auto syncHostSetupRules = [this]() {
             lobbySettings_.maxPlayers = hostMaxPlayers_;
             if (lobbySettings_.isPvp) {
@@ -1982,6 +2069,9 @@ void Game::handleInput() {
 
         if (menuSelection_ < 0) menuSelection_ = 0;
         if (menuSelection_ >= HOST_SETUP_ITEMS) menuSelection_ = HOST_SETUP_ITEMS - 1;
+        // Skip removed match/preset rows (4-11): jump to Start Hosting or Password
+        if (menuSelection_ > 3 && menuSelection_ < 12)
+            menuSelection_ = (hostSetupSelection_ <= 3) ? 12 : 3;
         hostSetupSelection_ = menuSelection_;
 
         if (backInput_ || pauseInput_) { state_ = GameState::MultiplayerMenu; multiMenuSelection_ = 0; menuSelection_ = 0; }
@@ -2661,6 +2751,11 @@ void Game::handleInput() {
     else if (state_ == GameState::ModMenu) {
         auto& mm = ModManager::instance();
 
+        if (modDeleteConfirm_) {
+            if (backInput_ || pauseInput_) { modDeleteConfirm_ = false; backInput_ = false; }
+            return;
+        }
+
         // Tab switch with left/right
         if (leftInput_)  { modMenuTab_ = (modMenuTab_ + 3) % 4; modMenuSelection_ = 0; menuSelection_ = 0; }
         if (rightInput_) { modMenuTab_ = (modMenuTab_ + 1) % 4; modMenuSelection_ = 0; menuSelection_ = 0; }
@@ -2709,6 +2804,38 @@ void Game::handleInput() {
                 mm.saveModConfig();
                 state_ = GameState::MainMenu;
                 menuSelection_ = 0;
+            }
+        }
+    }
+    else if (state_ == GameState::OnlineWorkshop) {
+        int numMods = (int)onlineModList_.size();
+
+        if (workshopDownloading_) return;
+
+        if (workshopDetailOpen_) {
+            // Detail panel open: Back/Escape closes it, Confirm downloads
+            if (backInput_ || pauseInput_) {
+                workshopDetailOpen_ = false;
+                backInput_ = false;
+            }
+            if (confirmInput_ && numMods > 0 && onlineWorkshopSelection_ < numMods) {
+                downloadAndInstallMod(onlineModList_[onlineWorkshopSelection_]);
+                workshopDetailOpen_ = false;
+            }
+        } else {
+            if (backInput_ || pauseInput_) {
+                workshopIconStop_ = true;
+                clearDetailScreenshots();
+                workshopDetailModId_.clear();
+                state_ = GameState::ModMenu;
+                modMenuSelection_ = 0;
+                menuSelection_ = 0;
+            }
+            if (numMods > 0) {
+                if (moveInput_.y < -0.5f) onlineWorkshopSelection_ = std::max(0, onlineWorkshopSelection_ - 1);
+                if (moveInput_.y >  0.5f) onlineWorkshopSelection_ = std::min(numMods - 1, onlineWorkshopSelection_ + 1);
+                if (confirmInput_ && onlineWorkshopSelection_ >= 0 && onlineWorkshopSelection_ < numMods)
+                    workshopDetailOpen_ = true;
             }
         }
     }

@@ -28,6 +28,30 @@
 #include <set>
 #include <functional>
 #include <unordered_map>
+#include <thread>
+#include <atomic>
+#include <filesystem>
+#include <mutex>
+
+// Online Workshop mod info (from API)
+struct OnlineModInfo {
+    std::string id;               // UUID from backend
+    std::string folder_id;        // mod.cfg id (folder name used for install)
+    std::string name;
+    std::string author;
+    std::string version;
+    std::string description;
+    std::string short_description;
+    std::string icon_url;
+    std::string mod_type;         // "map", "character", "pack", etc.
+    std::string download_url;     // Direct download link to .zip
+    int  upvotes   = 0;
+    int  downvotes = 0;
+    int  score     = 0;           // upvotes - downvotes
+    int  downloads = 0;
+    int  size_bytes = 0;
+    bool voted     = false;       // player already voted this session
+};
 
 enum class GameState {
     BiosIntro,    // Fake BIOS
@@ -37,6 +61,7 @@ enum class GameState {
     ConfigMenu,
     Playing,
     Paused,
+    Workshop,        // Workshop menu (from pause)
     Dead,
     EditorConfig,    // Editor setup screen (new/load map, size, name)
     Editor,          // Map editor
@@ -67,6 +92,7 @@ enum class GameState {
     WinLoss,             // Win/Loss result screen (shown before Scoreboard)
     // Mod management
     ModMenu,         // Enable/disable mods
+    OnlineWorkshop,  // Download mods from online workshop
     // Local Co-op (splitscreen, up to 4 players)
     LocalCoopLobby,  // players join by pressing a button
     LocalCoopGame,   // active splitscreen game
@@ -92,8 +118,9 @@ struct GameConfig {
     bool shaderGlitch = true;
     bool shaderNeonEdge = true;
     bool  saveIncomingModsPermanently = false;
-    bool  enableUpnp    = true;   // auto-forward port via UPnP when hosting
-    bool  acceptMods    = true;   // receive mod payloads from multiplayer host
+    bool  enableUpnp           = true;  // auto-forward port via UPnP when hosting
+    bool  acceptWorkshopMods   = true;  // receive workshop mods (hash-verified against API) from host
+    bool  acceptLocalMods      = false; // receive unverified locally-created mods from host
     float uiScale   = 1.0f;   // HUD + touch controls scale multiplier
     float shakeScale = 1.0f;  // screen shake intensity  0=off  1=full
 };
@@ -306,6 +333,8 @@ private:
     bool renderRight_ = false;
     bool tabInput_   = false;  // Y button / Tab - kick-mode toggle in lobby
     int  menuSelection_ = 0;
+    int  confirmCooldown_ = 0;   // frames to suppress confirmInput_ after a state transition
+    std::string disconnectReason_; // shown as popup on main menu when non-empty
     int  configSelection_ = 0;
     int  lobbyKickCursor_ = -1;  // -1 = not in player-kick mode; >=0 = player index
     std::set<uint8_t> bannedPlayerIds_;  // session ban list (host only)
@@ -642,6 +671,7 @@ private:
     void renderPlayModeMenu();
     void renderConfigMenu();
     void renderPauseMenu();
+    void renderWorkshopMenu();
     void renderDeathScreen();
     void drawText(const char* text, int x, int y, int size, SDL_Color color);
     void drawTextCentered(const char* text, int y, int size, SDL_Color color);
@@ -784,6 +814,48 @@ private:
     int  modMenuTab_       = 0;  // 0=Mods 1=Characters 2=Maps 3=Playlists
     bool lobbyReady_ = false;
 
+    // Online Workshop
+    std::vector<OnlineModInfo> onlineModList_;  // Fetched from API
+    std::string workshopSearchQuery_ = "";      // Current search filter
+    int onlineWorkshopSelection_ = 0;           // Selected mod in list
+    int onlineWorkshopScrollOffset_ = 0;        // Scroll position
+    bool workshopFetchingMods_ = false;
+    std::string workshopStatus_ = "";
+    float workshopStatusTimer_ = 0;
+    bool workshopDetailOpen_ = false;           // Detail panel modal open
+    std::string workshopDetailModId_;           // Which mod's detail is loaded
+
+    // Detail screenshots
+    std::vector<SDL_Texture*> workshopDetailSsTex_;
+    std::mutex workshopDetailMutex_;
+    std::vector<std::string> workshopDetailSsReady_;  // temp file paths ready to load
+    std::thread workshopDetailThread_;
+    std::atomic<bool> workshopDetailFetching_{false};
+
+    // Icon cache
+    std::unordered_map<std::string, SDL_Texture*> workshopIconCache_;
+    std::mutex workshopIconMutex_;
+    std::vector<std::string> workshopIconsReady_;  // IDs whose temp files are ready to load
+    std::thread workshopIconThread_;
+    std::atomic<bool> workshopIconStop_{false};
+
+    // Download thread state
+    std::atomic<bool> workshopDownloading_{false};
+    std::atomic<bool> workshopDlDone_{false};
+    std::atomic<bool> workshopDlOk_{false};
+    std::string       workshopDlName_;
+    std::string       workshopDlZipPath_;
+    std::string       workshopDlInstallId_;
+    std::thread       workshopDlThread_;
+
+    // Mod delete confirm
+    bool        modDeleteConfirm_ = false;
+    std::string modDeleteName_;
+    std::string modDeleteFolder_;
+
+    // Workshop menu (pause)
+    int  workshopSelection_ = 0;  // Current selected item in workshop
+
     // Lobby settings (host-controlled)
     LobbySettings lobbySettings_;           // synced from host to clients
     int  lobbySettingsSel_   = 0;           // which settings row is selected (host)
@@ -887,6 +959,15 @@ private:
     void renderTeamSelect();
     void renderAdminMenu();
     void renderModMenu();
+    void renderOnlineWorkshop();
+    void fetchOnlineModList();
+    void fetchWorkshopIcons();
+    void clearWorkshopIcons();
+    void fetchModDetail(const std::string& modId);
+    void clearDetailScreenshots();
+    void downloadAndInstallMod(const OnlineModInfo& mod);
+    void extractModZip(const std::string& zipPath, const std::string& modId);
+    void deleteModFolder(const std::string& folder);
     void renderRemotePlayers();
     void setupNetworkCallbacks();
     void clearSyncedCharacters();

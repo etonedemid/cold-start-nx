@@ -1117,8 +1117,7 @@ void Game::setupNetworkCallbacks() {
             for (int i = 0; i < 4; i++) if (coopSlots_[i].joined) joined++;
             coopPlayerCount_ = joined;
             if (coopPlayerCount_ > 1) {
-                const int vw = (coopPlayerCount_ >= 2) ? (int)((SCREEN_W/2) / SPLITSCREEN_ZOOM) : SCREEN_W;
-                const int vh = (coopPlayerCount_ >= 3) ? (int)((SCREEN_H/2) / SPLITSCREEN_ZOOM) : (coopPlayerCount_ >= 2) ? (int)(SCREEN_H / SPLITSCREEN_ZOOM) : SCREEN_H;
+                const int n2 = coopPlayerCount_;
                 const Vec2 off[4] = {{-80,0},{80,0},{0,-80},{0,80}};
                 int si = 0;
                 for (int i = 0; i < 4; i++) {
@@ -1140,12 +1139,15 @@ void Game::setupNetworkCallbacks() {
                     coopSlots_[i].kills  = 0;
                     coopSlots_[i].deaths = 0;
                     coopSlots_[i].respawnTimer = 0;
+                    SDL_Rect vp2 = coopViewport(si, n2);
+                    int vw2 = (int)(vp2.w / SPLITSCREEN_ZOOM);
+                    int vh2 = (int)(vp2.h / SPLITSCREEN_ZOOM);
                     coopSlots_[i].camera.worldW = map_.worldWidth();
                     coopSlots_[i].camera.worldH = map_.worldHeight();
-                    coopSlots_[i].camera.viewW  = vw;
-                    coopSlots_[i].camera.viewH  = vh;
-                    coopSlots_[i].camera.pos    = {coopSlots_[i].player.pos.x - vw/2.f,
-                                                    coopSlots_[i].player.pos.y - vh/2.f};
+                    coopSlots_[i].camera.viewW  = vw2;
+                    coopSlots_[i].camera.viewH  = vh2;
+                    coopSlots_[i].camera.pos    = {coopSlots_[i].player.pos.x - vw2/2.f,
+                                                    coopSlots_[i].player.pos.y - vh2/2.f};
                     si++;
                 }
             }
@@ -1267,14 +1269,16 @@ void Game::setupNetworkCallbacks() {
     };
 
     net.onModSyncReceived = [this](const std::vector<uint8_t>& modData) {
-        // Client received mod data from host — only install if the user allows it
-        if (!config_.acceptMods) {
-            printf("Game: Mod sync skipped (acceptMods=false)\n");
+        // Client received mod data from host - gate by per-type user settings
+        if (!config_.acceptWorkshopMods && !config_.acceptLocalMods) {
+            printf("Game: Mod sync skipped (both workshop and local mods disabled)\n");
             return;
         }
-        printf("Game: Received mod sync from host, installing...\n");
+        printf("Game: Received mod sync from host (workshop=%d local=%d)\n",
+               (int)config_.acceptWorkshopMods, (int)config_.acceptLocalMods);
         auto& mm = ModManager::instance();
-        mm.deserializeAndInstallMods(modData, config_.saveIncomingModsPermanently);
+        mm.deserializeAndInstallMods(modData, config_.saveIncomingModsPermanently,
+                                     config_.acceptWorkshopMods, config_.acceptLocalMods);
         applyModOverrides();
         printf("Game: Mod sync complete\n");
     };
@@ -1283,9 +1287,9 @@ void Game::setupNetworkCallbacks() {
     net.onAdminKicked = [this](uint8_t targetId) {
         auto& net2 = NetworkManager::instance();
         if (targetId == net2.localPlayerId()) {
-            // We were kicked - return to main menu
             net2.disconnect();
             playMenuMusic();
+            disconnectReason_ = "You were kicked from the server.";
             state_         = GameState::MainMenu;
             menuSelection_ = 0;
             spectatorMode_ = false;
@@ -1355,6 +1359,7 @@ void Game::updateMultiplayer(float dt) {
             state_ == GameState::MultiplayerSpectator) {
             printf("Lost connection to host, returning to menu\n");
             playMenuMusic();
+            disconnectReason_ = "Connection to host lost.";
             state_ = GameState::MainMenu;
             menuSelection_ = 0;
         }
@@ -1711,7 +1716,10 @@ void Game::startMultiplayerGame() {
         localLives_ = -1;
     }
     if (currentRules_.lives > 0 && currentRules_.sharedLives) {
-        sharedLives_ = currentRules_.lives * (int)net.players().size();
+        // net.players() counts network slots (1 per machine); add local sub-players
+        // so splitscreen players on this machine each contribute to the shared pool.
+        int totalPlayers = (int)net.players().size() + std::max(0, coopPlayerCount_ - 1);
+        sharedLives_ = currentRules_.lives * totalPlayers;
     } else {
         sharedLives_ = -1;
     }
@@ -1727,12 +1735,20 @@ void Game::startMultiplayerGame() {
         return;
     }
 
-    // Send enabled mod data to all clients before starting the game
+    // Send enabled mod data to all clients before starting the game.
+    // Workshop mods (hash-verified) and local mods are sent as separate blobs
+    // so the receiving client can gate each type independently.
     {
         auto& mm = ModManager::instance();
-        auto modBlob = mm.serializeEnabledMods();
-        if (!modBlob.empty()) {
-            net.sendModSync(modBlob);
+        // Workshop mods - always send if any are enabled (clients verify hashes)
+        auto workshopBlob = mm.serializeEnabledMods(ModSource::Workshop);
+        if (!workshopBlob.empty()) {
+            net.sendModSync(workshopBlob);
+        }
+        // Local mods - only send if host has them and they're relevant
+        auto localBlob = mm.serializeEnabledMods(ModSource::Local);
+        if (!localBlob.empty()) {
+            net.sendModSync(localBlob);
         }
     }
 
@@ -1764,8 +1780,7 @@ void Game::startMultiplayerGame() {
                 for (int i = 0; i < 4; i++) if (coopSlots_[i].joined) joined++;
                 coopPlayerCount_ = joined;
                 if (coopPlayerCount_ > 1) {
-                    const int vw = (coopPlayerCount_ >= 2) ? (int)((SCREEN_W/2) / SPLITSCREEN_ZOOM) : SCREEN_W;
-                    const int vh = (coopPlayerCount_ >= 3) ? (int)((SCREEN_H/2) / SPLITSCREEN_ZOOM) : (coopPlayerCount_ >= 2) ? (int)(SCREEN_H / SPLITSCREEN_ZOOM) : SCREEN_H;
+                    const int n2 = coopPlayerCount_;
                     const Vec2 off[4] = {{-80,0},{80,0},{0,-80},{0,80}};
                     int si = 0;
                     for (int i = 0; i < 4; i++) {
@@ -1787,12 +1802,15 @@ void Game::startMultiplayerGame() {
                         coopSlots_[i].kills  = 0;
                         coopSlots_[i].deaths = 0;
                         coopSlots_[i].respawnTimer = 0;
+                        SDL_Rect vp2 = coopViewport(si, n2);
+                        int vw2 = (int)(vp2.w / SPLITSCREEN_ZOOM);
+                        int vh2 = (int)(vp2.h / SPLITSCREEN_ZOOM);
                         coopSlots_[i].camera.worldW = map_.worldWidth();
                         coopSlots_[i].camera.worldH = map_.worldHeight();
-                        coopSlots_[i].camera.viewW  = vw;
-                        coopSlots_[i].camera.viewH  = vh;
-                        coopSlots_[i].camera.pos    = {coopSlots_[i].player.pos.x - vw/2.f,
-                                                        coopSlots_[i].player.pos.y - vh/2.f};
+                        coopSlots_[i].camera.viewW  = vw2;
+                        coopSlots_[i].camera.viewH  = vh2;
+                        coopSlots_[i].camera.pos    = {coopSlots_[i].player.pos.x - vw2/2.f,
+                                                        coopSlots_[i].player.pos.y - vh2/2.f};
                         si++;
                     }
                 }
@@ -1825,8 +1843,7 @@ void Game::startMultiplayerGame() {
         for (int i = 0; i < 4; i++) if (coopSlots_[i].joined) joined++;
         coopPlayerCount_ = joined;
         if (coopPlayerCount_ > 1) {
-            const int vw = (coopPlayerCount_ >= 2) ? (int)((SCREEN_W/2) / SPLITSCREEN_ZOOM) : SCREEN_W;
-            const int vh = (coopPlayerCount_ >= 3) ? (int)((SCREEN_H/2) / SPLITSCREEN_ZOOM) : (coopPlayerCount_ >= 2) ? (int)(SCREEN_H / SPLITSCREEN_ZOOM) : SCREEN_H;
+            const int n2 = coopPlayerCount_;
             const Vec2 off[4] = {{-80,0},{80,0},{0,-80},{0,80}};
             int si = 0;
             for (int i = 0; i < 4; i++) {
@@ -1849,12 +1866,15 @@ void Game::startMultiplayerGame() {
                 coopSlots_[i].kills  = 0;
                 coopSlots_[i].deaths = 0;
                 coopSlots_[i].respawnTimer = 0;
+                SDL_Rect vp2 = coopViewport(si, n2);
+                int vw2 = (int)(vp2.w / SPLITSCREEN_ZOOM);
+                int vh2 = (int)(vp2.h / SPLITSCREEN_ZOOM);
                 coopSlots_[i].camera.worldW = map_.worldWidth();
                 coopSlots_[i].camera.worldH = map_.worldHeight();
-                coopSlots_[i].camera.viewW  = vw;
-                coopSlots_[i].camera.viewH  = vh;
-                coopSlots_[i].camera.pos    = {coopSlots_[i].player.pos.x - vw/2.f,
-                                                coopSlots_[i].player.pos.y - vh/2.f};
+                coopSlots_[i].camera.viewW  = vw2;
+                coopSlots_[i].camera.viewH  = vh2;
+                coopSlots_[i].camera.pos    = {coopSlots_[i].player.pos.x - vw2/2.f,
+                                                coopSlots_[i].player.pos.y - vh2/2.f};
                 si++;
             }
         }

@@ -25,6 +25,10 @@ public:
     // Returns the romfs base path (e.g. "/path/to/exe/romfs/" or "romfs:/")
     static std::string prefix();
 
+    // Android only: prompt user for storage location, extract assets from APK.
+    // Must be called after SDL_Init, before any assets are loaded.
+    static void androidInitRomfs();
+
     // Load a texture from a path relative to the romfs root (caches by relPath)
     SDL_Texture* loadRelTex(const std::string& relPath);
 

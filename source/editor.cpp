@@ -2083,12 +2083,6 @@ void MapEditor::renderToolbar(SDL_Renderer* renderer) {
     // Center: map info
     int centerX = gridX + 274;
     int rightEdge = screenW_ - PALETTE_W - 230;
-    if (centerX < rightEdge) {
-        char info[128];
-        snprintf(info, sizeof(info), "%s  %dx%d", map_.name.c_str(), map_.width, map_.height);
-        ui_->drawText(info, centerX, 8, 12, UI::W98::Navy);
-        ui_->drawText("Scroll:zoom  MMB:pan  G:grid  TAB:ui  [/]:brush  F:fill", centerX, 26, 9, UI::W98::Shadow);
-    }
 
     // Save / Play buttons
     if (ui_->win98Button(110, "Save", screenW_ - PALETTE_W - 228, 4, 110, toolBtnH, false))
