@@ -17,7 +17,33 @@
 
 #ifdef PLATFORM_ANDROID
 #include <errno.h>
+#include <jni.h>
 static std::string g_androidRomfsPath; // set by androidInitRomfs()
+
+// Invoke ColdStartActivity.browseFolder() via JNI; blocks until the user
+// picks a folder or cancels.  Returns "" on cancel / incompatible URI.
+static std::string androidBrowseFolder() {
+    JNIEnv* env = (JNIEnv*)SDL_AndroidGetJNIEnv();
+    if (!env) return "";
+    jobject act = (jobject)SDL_AndroidGetActivity();
+    if (!act) return "";
+    jclass cls = env->GetObjectClass(act);
+    if (!cls) { env->DeleteLocalRef(act); return ""; }
+    jmethodID mid = env->GetMethodID(cls, "browseFolder", "()Ljava/lang/String;");
+    if (!mid) {
+        env->ExceptionClear();
+        env->DeleteLocalRef(cls); env->DeleteLocalRef(act);
+        return "";
+    }
+    jstring jres = (jstring)env->CallObjectMethod(act, mid);
+    env->DeleteLocalRef(cls); env->DeleteLocalRef(act);
+    if (!jres || env->ExceptionCheck()) { env->ExceptionClear(); return ""; }
+    const char* raw = env->GetStringUTFChars(jres, nullptr);
+    std::string out = raw ? raw : "";
+    env->ReleaseStringUTFChars(jres, raw);
+    env->DeleteLocalRef(jres);
+    return out;
+}
 
 static void mkdirs(const std::string& path) {
     for (size_t i = 1; i < path.size(); ++i) {
@@ -74,8 +100,10 @@ static void extractFromApk(const std::string& destRoot) {
 void Assets::androidInitRomfs() {
     const char* intStorage = SDL_AndroidGetInternalStoragePath();
     const char* extStorage = SDL_AndroidGetExternalStoragePath();
+    bool extWritable = extStorage &&
+        (SDL_AndroidGetExternalStorageState() & SDL_ANDROID_EXTERNAL_STORAGE_WRITE);
 
-    // Check for saved preference
+    // ── Check for saved preference ───────────────────────────────────────────
     std::string prefsFile = std::string(intStorage) + "/.romfs_location";
     FILE* pf = fopen(prefsFile.c_str(), "r");
     if (pf) {
@@ -84,7 +112,6 @@ void Assets::androidInitRomfs() {
             std::string saved(buf);
             while (!saved.empty() && (saved.back() == '\n' || saved.back() == '\r'))
                 saved.pop_back();
-            // Verify the extracted assets are present
             struct stat st;
             if (!saved.empty() && stat((saved + "/sprites").c_str(), &st) == 0) {
                 g_androidRomfsPath = saved + "/";
@@ -96,41 +123,75 @@ void Assets::androidInitRomfs() {
         fclose(pf);
     }
 
-    // Prompt user - offer Internal vs External storage
+    // ── First-run folder picker ──────────────────────────────────────────────
+    // Options: External (default if available) | Internal | Browse for folder
     SDL_MessageBoxButtonData buttons[] = {
-        { SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 0, "Internal (Private)" },
-        { 0,                                       1, "External (SD / Shared)" },
+        { SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT,
+          0, extWritable ? "External (Shared)" : "Internal (Private)" },
+        { 0, 1, extWritable ? "Internal (Private)" : "Browse for folder..." },
+        { 0, 2, extWritable ? "Browse for folder..." : "" },
     };
+    int numButtons = extWritable ? 3 : 2;
+
+    char promptMsg[1024];
+    if (extWritable) {
+        snprintf(promptMsg, sizeof(promptMsg),
+            "Choose where to store game assets and mods:\n\n"
+            "External (Shared): %s/romfs\n"
+            "  Accessible via file manager - recommended for adding mods.\n\n"
+            "Internal (Private): %s/romfs\n"
+            "  Private app storage - not browseable from file manager.\n\n"
+            "Browse: pick any folder on your device.",
+            extStorage, intStorage);
+    } else {
+        snprintf(promptMsg, sizeof(promptMsg),
+            "Choose where to store game assets and mods:\n\n"
+            "Internal (Private): %s/romfs\n\n"
+            "Browse: pick any folder on your device.",
+            intStorage);
+    }
+
     SDL_MessageBoxData mbData = {};
-    mbData.flags   = SDL_MESSAGEBOX_INFORMATION;
-    mbData.title   = "Cold Start - First Run";
-    mbData.message = "Choose where to store game assets:\n\n"
-                     "Internal: private app folder (always available)\n"
-                     "External: shared storage (accessible via file manager)";
-    mbData.numbuttons = 2;
+    mbData.flags      = SDL_MESSAGEBOX_INFORMATION;
+    mbData.title      = "Cold Start - First Run";
+    mbData.message    = promptMsg;
+    mbData.numbuttons = numButtons;
     mbData.buttons    = buttons;
     int chosen = 0;
     SDL_ShowMessageBox(&mbData, &chosen);
 
-    std::string base;
-    if (chosen == 1) {
-        if (extStorage && SDL_AndroidGetExternalStorageState() & SDL_ANDROID_EXTERNAL_STORAGE_WRITE) {
-            base = extStorage;
+    std::string romfsRoot;
+
+    // Map choice index back to an action regardless of extWritable layout
+    int action = chosen; // 0=default, 1=secondary, 2=browse
+    if (!extWritable && chosen == 1) action = 2; // second button is Browse when no external
+
+    if (action == 2) {
+        // SAF folder picker
+        std::string picked = androidBrowseFolder();
+        if (!picked.empty()) {
+            romfsRoot = picked + "/ColdStart/romfs";
         } else {
-            // External unavailable - tell the user and fall back
             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING,
-                "External Storage Unavailable",
-                "External storage is not accessible on this device.\n"
+                "Folder Picker",
+                "Could not map the selected folder to a filesystem path.\n"
                 "Falling back to internal storage.",
                 nullptr);
-            base = intStorage;
+            romfsRoot = std::string(intStorage) + "/romfs";
         }
+    } else if (action == 1) {
+        // Secondary button: Internal when external was default, or External when internal was default
+        romfsRoot = extWritable
+            ? std::string(intStorage) + "/romfs"
+            : std::string(extStorage ? extStorage : intStorage) + "/romfs";
     } else {
-        base = intStorage;
+        // Default button
+        romfsRoot = extWritable
+            ? std::string(extStorage) + "/romfs"
+            : std::string(intStorage) + "/romfs";
     }
-    std::string romfsRoot = base + "/romfs";
 
-    // Show extraction destination so the user knows where files land
+    // Confirm
     {
         char msg[512];
         snprintf(msg, sizeof(msg), "Extracting game assets to:\n%s", romfsRoot.c_str());
@@ -142,11 +203,17 @@ void Assets::androidInitRomfs() {
 
     g_androidRomfsPath = romfsRoot + "/";
 
-    // Save the choice
+    // Save choice so future launches skip this prompt
     pf = fopen(prefsFile.c_str(), "w");
     if (pf) { fprintf(pf, "%s\n", romfsRoot.c_str()); fclose(pf); }
 }
+std::string Assets::androidRomfsRoot() { return g_androidRomfsPath; }
+
 #endif // PLATFORM_ANDROID
+
+#ifndef PLATFORM_ANDROID
+std::string Assets::androidRomfsRoot() { return ""; }
+#endif
 
 // Platform-specific asset root prefix
 static std::string assetPrefix() {
