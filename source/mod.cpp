@@ -361,21 +361,11 @@ ModManager& ModManager::instance() {
 void ModManager::scanMods() {
     mods_.clear();
 
-    // Scan directories.
-    // "mods" (CWD-relative) is the writable user mod folder on all platforms.
-    // On Android the CWD is SDL internal storage; we also scan the user's
-    // chosen asset root so mods placed there are discovered automatically.
+    // CWD is the user-chosen data directory on Android (set by androidInitRomfs/chdir).
+    // On other platforms CWD is the executable directory with romfs/ alongside it.
     std::vector<std::string> dirs = { "mods" };
 
-#ifdef PLATFORM_ANDROID
-    {
-        std::string romfsBase = Assets::androidRomfsRoot(); // ends with '/'
-        if (!romfsBase.empty()) {
-            // <chosen_root>/mods — mods placed next to the romfs assets
-            dirs.push_back(romfsBase + "mods");
-        }
-    }
-#else
+#ifndef PLATFORM_ANDROID
     dirs.push_back("romfs/mods");
 #  ifdef __SWITCH__
     dirs.push_back("romfs:/mods");
