@@ -5,6 +5,10 @@
 #ifdef HAS_CURL
 #include <curl/curl.h>
 #endif
+#ifdef __SWITCH__
+#include <minizip/unzip.h>
+#include <unistd.h>
+#endif
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -2292,6 +2296,18 @@ static bool httpGetFile(const std::string&, const std::string&, int = 60) { retu
 static std::string httpGetString(const std::string&, int = 15) { return ""; }
 #endif
 
+// Return an absolute path for a workshop temp file.
+// On Android, Java's FileOutputStream resolves relative paths against user.dir ("/"),
+// not the native chdir(base) CWD, so downloads silently fail.  Use internal storage.
+static std::string wsTmpPath(const std::string& name) {
+#ifdef PLATFORM_ANDROID
+    const char* s = SDL_AndroidGetInternalStoragePath();
+    return std::string(s ? s : ".") + "/" + name;
+#else
+    return name;
+#endif
+}
+
 void Game::fetchOnlineModList() {
     if (workshopFetchingMods_) return;
 
@@ -2307,6 +2323,22 @@ void Game::fetchOnlineModList() {
     workshopStatusTimer_ = 3.0f;
     onlineModList_.clear();
 
+#ifdef __SWITCH__
+    // Switch: run synchronously — std::thread is unreliable with -fno-exceptions/libnx
+    {
+        std::string json = httpGetString(std::string(WORKSHOP_URL) + "/api/v1/mods");
+        if (!json.empty()) {
+            onlineModList_ = parseModListJSON(json);
+            workshopStatus_ = "Fetched " + std::to_string(onlineModList_.size()) + " mods";
+            workshopStatusTimer_ = 2.0f;
+            workshopListReady_ = true;
+        } else {
+            workshopStatus_ = "Error fetching mod list";
+            workshopStatusTimer_ = 3.0f;
+        }
+        workshopFetchingMods_ = false;
+    }
+#else
     // Run in background so the main thread (audio, rendering) never stalls
     std::thread([this]() {
         std::string json = httpGetString(std::string(WORKSHOP_URL) + "/api/v1/mods");
@@ -2314,13 +2346,14 @@ void Game::fetchOnlineModList() {
             onlineModList_ = parseModListJSON(json);
             workshopStatus_ = "Fetched " + std::to_string(onlineModList_.size()) + " mods";
             workshopStatusTimer_ = 2.0f;
-            fetchWorkshopIcons();
+            workshopListReady_ = true; // main thread picks this up and calls fetchWorkshopIcons()
         } else {
             workshopStatus_ = "Error fetching mod list";
             workshopStatusTimer_ = 3.0f;
         }
         workshopFetchingMods_ = false;
     }).detach();
+#endif
 }
 
 void Game::downloadAndInstallMod(const OnlineModInfo& mod) {
@@ -2340,6 +2373,15 @@ void Game::downloadAndInstallMod(const OnlineModInfo& mod) {
         workshopDlZipPath_ = std::string(intStor ? intStor : ".") +
                              "/mods_dl_" + workshopDlInstallId_ + ".zip";
     }
+#elif defined(__SWITCH__)
+    // Use absolute paths on Switch — relative opendir/rename may silently fail
+    {
+        char cwd[512] = {};
+        const char* cp = (getcwd(cwd, sizeof(cwd)) && cwd[0]) ? cwd : "sdmc:/switch/COLDSTART";
+        std::string b(cp);
+        if (b.back() != '/') b += '/';
+        workshopDlZipPath_ = b + "mods_download_" + workshopDlInstallId_ + ".zip";
+    }
 #else
     workshopDlZipPath_ = "mods_download_" + workshopDlInstallId_ + ".zip";
 #endif
@@ -2355,8 +2397,33 @@ void Game::downloadAndInstallMod(const OnlineModInfo& mod) {
     std::string modType = mod.mod_type;
 
     // CWD is set to the user's chosen data directory by androidInitRomfs().
+#ifdef __SWITCH__
+    // modsBase must be absolute to match the absolute targetDir in extractModZip
+    std::string modsBase = path.substr(0, path.rfind("mods_download_"));
+    modsBase += "mods/";
+#else
     std::string modsBase = "mods/";
+#endif
 
+#ifdef __SWITCH__
+    {
+        bool ok = httpGetFile(url, path, 120);
+        if (ok) {
+            extractModZip(path, modId);
+            std::string modFolder = modsBase + modId;
+            std::string cfgPath   = modFolder + "/mod.cfg";
+            FILE* cf = fopen(cfgPath.c_str(), "a");
+            if (cf) {
+                fprintf(cf, "workshop_id=%s\n", modId.c_str());
+                if (!modType.empty()) fprintf(cf, "type=%s\n", modType.c_str());
+                fclose(cf);
+            }
+            ModManager::writeWorkshopMeta(modFolder, modId, "");
+        }
+        workshopDlOk_   = ok;
+        workshopDlDone_ = true;
+    }
+#else
     workshopDlThread_ = std::thread([this, url, path, modId, modType, modsBase]() {
         bool ok = httpGetFile(url, path, 120);
         if (ok) {
@@ -2374,6 +2441,7 @@ void Game::downloadAndInstallMod(const OnlineModInfo& mod) {
         workshopDlOk_   = ok;
         workshopDlDone_ = true;
     });
+#endif
 }
 
 void Game::deleteModFolder(const std::string& folder) {
@@ -2387,10 +2455,24 @@ void Game::deleteModFolder(const std::string& folder) {
 
 void Game::extractModZip(const std::string& zipPath, const std::string& modId) {
     // CWD is the user's chosen data directory (set by androidInitRomfs / chdir).
+    // On Switch use absolute paths: opendir/rename with relative paths can silently
+    // fail on some firmware versions while fopen happens to work.
+#ifdef __SWITCH__
+    std::string targetDir;
+    {
+        char cwd[512] = {};
+        const char* base = (getcwd(cwd, sizeof(cwd)) && cwd[0]) ? cwd : "sdmc:/switch/COLDSTART";
+        std::string b(base);
+        if (b.back() != '/') b += '/';
+        mkdir((b + "mods").c_str(), 0755);
+        targetDir = b + "mods/" + modId;
+        mkdir(targetDir.c_str(), 0755);
+    }
+#elif defined(_WIN32)
     std::string targetDir = "mods/" + modId;
-#ifdef _WIN32
     _mkdir("mods"); _mkdir(targetDir.c_str());
 #else
+    std::string targetDir = "mods/" + modId;
     mkdir("mods", 0755); mkdir(targetDir.c_str(), 0755);
 #endif
     
@@ -2419,10 +2501,75 @@ void Game::extractModZip(const std::string& zipPath, const std::string& modId) {
     // Android: use Java ZipInputStream via JNI (system() + unzip not available)
     androidExtractZip(zipPath, targetDir);
 #elif defined(__SWITCH__)
-    // Switch homebrew: system() is a no-op and no shell unzip exists.
-    // The directory is created above; extraction is skipped.
-    // Mods downloaded on Switch must be extracted externally via an FTP/USB transfer tool.
-    printf("Workshop: zip extraction not supported on Switch; dir created at %s\n", targetDir.c_str());
+    {
+        unzFile zf = unzOpen(zipPath.c_str());
+        if (zf) {
+            unz_global_info gi;
+            unzGetGlobalInfo(zf, &gi);
+            for (uLong i = 0; i < gi.number_entry; i++) {
+                char fname[512];
+                unz_file_info fi;
+                unzGetCurrentFileInfo(zf, &fi, fname, sizeof(fname), nullptr, 0, nullptr, 0);
+                std::string outPath = targetDir + "/" + fname;
+                if (outPath.back() == '/') {
+                    mkdir(outPath.c_str(), 0755);
+                } else {
+                    size_t slash = outPath.rfind('/');
+                    if (slash != std::string::npos) {
+                        std::string dir = outPath.substr(0, slash);
+                        mkdir(dir.c_str(), 0755);
+                    }
+                    unzOpenCurrentFile(zf);
+                    FILE* out = fopen(outPath.c_str(), "wb");
+                    if (out) {
+                        char buf[4096]; int n;
+                        while ((n = unzReadCurrentFile(zf, buf, sizeof(buf))) > 0)
+                            fwrite(buf, 1, n, out);
+                        fclose(out);
+                    }
+                    unzCloseCurrentFile(zf);
+                }
+                if (i + 1 < gi.number_entry) unzGoToNextFile(zf);
+            }
+            unzClose(zf);
+        }
+        // Flatten: if exactly one subdirectory was created, move its contents up
+        {
+            DIR* d = opendir(targetDir.c_str());
+            if (d) {
+                std::string onlySubDir;
+                int count = 0;
+                struct dirent* ent;
+                while ((ent = readdir(d)) != nullptr) {
+                    if (ent->d_name[0] == '.') continue;
+                    struct stat st;
+                    std::string full = targetDir + "/" + ent->d_name;
+                    if (stat(full.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
+                        onlySubDir = full;
+                        count++;
+                    } else {
+                        count = 2; // has files at top level, no need to flatten
+                        break;
+                    }
+                }
+                closedir(d);
+                if (count == 1 && !onlySubDir.empty()) {
+                    // Move everything from the one subdir into targetDir
+                    DIR* d2 = opendir(onlySubDir.c_str());
+                    if (d2) {
+                        while ((ent = readdir(d2)) != nullptr) {
+                            if (ent->d_name[0] == '.') continue;
+                            std::string src = onlySubDir + "/" + ent->d_name;
+                            std::string dst = targetDir + "/" + ent->d_name;
+                            rename(src.c_str(), dst.c_str());
+                        }
+                        closedir(d2);
+                        rmdir(onlySubDir.c_str());
+                    }
+                }
+            }
+        }
+    }
 #else
     {
         system(("unzip -o '" + zipPath + "' -d '" + targetDir + "' 2>/dev/null").c_str());
@@ -2472,6 +2619,22 @@ void Game::fetchModDetail(const std::string& modId) {
     workshopDetailModId_ = modId;
     workshopDetailFetching_ = true;
 
+#ifdef __SWITCH__
+    // Switch: run synchronously to avoid std::thread issues with -fno-exceptions/libnx
+    {
+        std::string url  = std::string(WORKSHOP_URL) + "/api/v1/mods/" + modId;
+        std::string json = httpGetString(url);
+        auto urls = parseStringArray(json, "screenshots");
+        for (int i = 0; i < (int)urls.size() && workshopDetailFetching_; i++) {
+            std::string tmp = wsTmpPath("ws_ss_" + modId + "_" + std::to_string(i) + ".png");
+            if (httpGetFile(urls[i], tmp, 15)) {
+                std::lock_guard<std::mutex> lk(workshopDetailMutex_);
+                workshopDetailSsReady_.push_back(tmp);
+            }
+        }
+        workshopDetailFetching_ = false;
+    }
+#else
     workshopDetailThread_ = std::thread([this, modId]() {
         std::string url  = std::string(WORKSHOP_URL) + "/api/v1/mods/" + modId;
         std::string json = httpGetString(url);
@@ -2479,7 +2642,7 @@ void Game::fetchModDetail(const std::string& modId) {
         auto urls = parseStringArray(json, "screenshots");
         for (int i = 0; i < (int)urls.size(); i++) {
             if (!workshopDetailFetching_) break;
-            std::string tmp = "ws_ss_" + modId + "_" + std::to_string(i) + ".png";
+            std::string tmp = wsTmpPath("ws_ss_" + modId + "_" + std::to_string(i) + ".png");
             if (httpGetFile(urls[i], tmp, 15)) {
                 if (!workshopDetailFetching_) { remove(tmp.c_str()); break; }
                 std::lock_guard<std::mutex> lk(workshopDetailMutex_);
@@ -2488,6 +2651,7 @@ void Game::fetchModDetail(const std::string& modId) {
         }
         workshopDetailFetching_ = false;
     });
+#endif
 }
 
 void Game::fetchWorkshopIcons() {
@@ -2508,10 +2672,19 @@ void Game::fetchWorkshopIcons() {
     if (pending.empty()) return;
 
     workshopIconStop_ = false;
+#ifdef __SWITCH__
+    for (auto& [id, url] : pending) {
+        std::string tmp = wsTmpPath("ws_icon_" + id + ".png");
+        if (httpGetFile(url, tmp, 10)) {
+            std::lock_guard<std::mutex> lk(workshopIconMutex_);
+            workshopIconsReady_.push_back(id);
+        }
+    }
+#else
     workshopIconThread_ = std::thread([this, pending = std::move(pending)]() {
         for (auto& [id, url] : pending) {
             if (workshopIconStop_) break;
-            std::string tmp = "ws_icon_" + id + ".png";
+            std::string tmp = wsTmpPath("ws_icon_" + id + ".png");
             if (httpGetFile(url, tmp, 10)) {
                 if (workshopIconStop_) { remove(tmp.c_str()); break; }
                 std::lock_guard<std::mutex> lk(workshopIconMutex_);
@@ -2519,6 +2692,7 @@ void Game::fetchWorkshopIcons() {
             }
         }
     });
+#endif
 }
 
 void Game::clearWorkshopIcons() {
@@ -2527,16 +2701,20 @@ void Game::clearWorkshopIcons() {
     for (auto& kv : workshopIconCache_) SDL_DestroyTexture(kv.second);
     workshopIconCache_.clear();
     // Clean up any leftover temp files
-    for (auto& m : onlineModList_) remove(("ws_icon_" + m.id + ".png").c_str());
+    for (auto& m : onlineModList_) remove(wsTmpPath("ws_icon_" + m.id + ".png").c_str());
 }
 
 void Game::renderOnlineWorkshop() {
+    // ── Start icon fetch once mod list arrives (must run on main thread) ──────
+    if (workshopListReady_.exchange(false))
+        fetchWorkshopIcons();
+
     // ── Drain icon ready-queue (texture creation must be on main/render thread) ──
     {
         std::lock_guard<std::mutex> lk(workshopIconMutex_);
         for (auto& id : workshopIconsReady_) {
             if (workshopIconCache_.count(id)) continue;
-            std::string tmp = "ws_icon_" + id + ".png";
+            std::string tmp = wsTmpPath("ws_icon_" + id + ".png");
             SDL_Surface* s = IMG_Load(tmp.c_str());
             if (s) {
                 SDL_Texture* t = SDL_CreateTextureFromSurface(renderer_, s);
