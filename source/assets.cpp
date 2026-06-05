@@ -173,6 +173,9 @@ void Assets::androidInitRomfs() {
 
     printf("androidInitRomfs: extracting to %s\n", romfsRoot.c_str());
     mkdirs(base);
+    mkdirs(base + "/mods");
+    mkdirs(base + "/maps");
+    mkdirs(base + "/characters");
     extractFromApk(romfsRoot);
 
     androidApplyDataPath(base, romfsRoot);
