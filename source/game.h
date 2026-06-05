@@ -819,6 +819,7 @@ private:
     std::string workshopSearchQuery_ = "";      // Current search filter
     int onlineWorkshopSelection_ = 0;           // Selected mod in list
     int onlineWorkshopScrollOffset_ = 0;        // Scroll position
+    int workshopSort_ = 0;                      // 0=Newest 1=Name 2=Score (was static local)
     bool workshopFetchingMods_ = false;
     std::string workshopStatus_ = "";
     float workshopStatusTimer_ = 0;

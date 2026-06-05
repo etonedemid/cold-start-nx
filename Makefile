@@ -20,7 +20,7 @@ ROMFS		:=	romfs
 
 APP_TITLE	:=	COLD START
 APP_AUTHOR	:=	etonedemid
-APP_VERSION	:=	2.3.0
+APP_VERSION	:=	2.3.1
 
 #---------------------------------------------------------------------------------
 # Compiler flags
