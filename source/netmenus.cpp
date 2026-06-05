@@ -1,5 +1,6 @@
 #include "game.h"
 #include "game_internal.h"
+#include "assets.h"
 #include <algorithm>
 #ifdef HAS_CURL
 #include <curl/curl.h>
@@ -2162,9 +2163,86 @@ static std::vector<OnlineModInfo> parseModListJSON(const std::string& json) {
     
     return mods;
 }
-// ── HTTP helpers (libcurl when available, no-op stubs otherwise) ──────────────
+// ── HTTP helpers ──────────────────────────────────────────────────────────────
+// Priority: Android JNI  >  libcurl (PC/Switch)  >  no-op stubs
 
-#ifdef HAS_CURL
+#ifdef __ANDROID__
+// Android: delegate to Java HttpURLConnection via JNI.
+// SDL_AndroidGetJNIEnv() attaches the calling thread to the JVM automatically.
+// SDL_AndroidGetActivity() returns a GlobalRef; GetObjectClass on it avoids the
+// background-thread ClassLoader issue that makes FindClass unreliable.
+#include <jni.h>
+
+static std::string androidHttpGetString(const std::string& url, int timeoutSec) {
+    JNIEnv* env = (JNIEnv*)SDL_AndroidGetJNIEnv();
+    if (!env) return "";
+    jobject act = (jobject)SDL_AndroidGetActivity();
+    if (!act) return "";
+    jclass cls = env->GetObjectClass(act);
+    env->DeleteLocalRef(act);
+    if (!cls) return "";
+    jmethodID mid = env->GetStaticMethodID(cls, "httpFetchBytes", "(Ljava/lang/String;I)[B");
+    if (!mid) { env->ExceptionClear(); env->DeleteLocalRef(cls); return ""; }
+    jstring jurl = env->NewStringUTF(url.c_str());
+    jbyteArray arr = (jbyteArray)env->CallStaticObjectMethod(cls, mid, jurl, (jint)(timeoutSec * 1000));
+    env->DeleteLocalRef(jurl);
+    env->DeleteLocalRef(cls);
+    if (!arr || env->ExceptionCheck()) { env->ExceptionClear(); if (arr) env->DeleteLocalRef(arr); return ""; }
+    jsize len = env->GetArrayLength(arr);
+    std::string out(len, '\0');
+    env->GetByteArrayRegion(arr, 0, len, (jbyte*)&out[0]);
+    env->DeleteLocalRef(arr);
+    return out;
+}
+
+static bool androidHttpGetFile(const std::string& url, const std::string& path, int timeoutSec) {
+    JNIEnv* env = (JNIEnv*)SDL_AndroidGetJNIEnv();
+    if (!env) return false;
+    jobject act = (jobject)SDL_AndroidGetActivity();
+    if (!act) return false;
+    jclass cls = env->GetObjectClass(act);
+    env->DeleteLocalRef(act);
+    if (!cls) return false;
+    jmethodID mid = env->GetStaticMethodID(cls, "httpFetchFile", "(Ljava/lang/String;Ljava/lang/String;I)Z");
+    if (!mid) { env->ExceptionClear(); env->DeleteLocalRef(cls); return false; }
+    jstring jurl  = env->NewStringUTF(url.c_str());
+    jstring jpath = env->NewStringUTF(path.c_str());
+    jboolean ok = env->CallStaticBooleanMethod(cls, mid, jurl, jpath, (jint)(timeoutSec * 1000));
+    env->DeleteLocalRef(jurl);
+    env->DeleteLocalRef(jpath);
+    env->DeleteLocalRef(cls);
+    if (env->ExceptionCheck()) { env->ExceptionClear(); return false; }
+    return ok == JNI_TRUE;
+}
+
+static bool androidExtractZip(const std::string& zipPath, const std::string& destDir) {
+    JNIEnv* env = (JNIEnv*)SDL_AndroidGetJNIEnv();
+    if (!env) return false;
+    jobject act = (jobject)SDL_AndroidGetActivity();
+    if (!act) return false;
+    jclass cls = env->GetObjectClass(act);
+    env->DeleteLocalRef(act);
+    if (!cls) return false;
+    jmethodID mid = env->GetStaticMethodID(cls, "extractZip", "(Ljava/lang/String;Ljava/lang/String;)Z");
+    if (!mid) { env->ExceptionClear(); env->DeleteLocalRef(cls); return false; }
+    jstring jzip  = env->NewStringUTF(zipPath.c_str());
+    jstring jdest = env->NewStringUTF(destDir.c_str());
+    jboolean ok = env->CallStaticBooleanMethod(cls, mid, jzip, jdest);
+    env->DeleteLocalRef(jzip);
+    env->DeleteLocalRef(jdest);
+    env->DeleteLocalRef(cls);
+    if (env->ExceptionCheck()) { env->ExceptionClear(); return false; }
+    return ok == JNI_TRUE;
+}
+
+static bool httpGetFile(const std::string& url, const std::string& path, int timeoutSec = 60) {
+    return androidHttpGetFile(url, path, timeoutSec);
+}
+static std::string httpGetString(const std::string& url, int timeoutSec = 15) {
+    return androidHttpGetString(url, timeoutSec);
+}
+
+#elif defined(HAS_CURL)
 static size_t curl_write_file(void* ptr, size_t size, size_t nmemb, FILE* stream) {
     return fwrite(ptr, size, nmemb, stream);
 }
@@ -2216,6 +2294,14 @@ static std::string httpGetString(const std::string&, int = 15) { return ""; }
 
 void Game::fetchOnlineModList() {
     if (workshopFetchingMods_) return;
+
+#ifdef HAS_CURL
+    // curl_global_init is not thread-safe; call it once from the main thread
+    // before spawning any background fetch threads.
+    static std::once_flag s_curlInitOnce;
+    std::call_once(s_curlInitOnce, []{ curl_global_init(CURL_GLOBAL_ALL); });
+#endif
+
     workshopFetchingMods_ = true;
     workshopStatus_ = "Fetching mod list...";
     workshopStatusTimer_ = 3.0f;
@@ -2241,26 +2327,46 @@ void Game::downloadAndInstallMod(const OnlineModInfo& mod) {
     if (workshopDownloading_) return;
     if (workshopDlThread_.joinable()) workshopDlThread_.join();
 
-    workshopDlName_ = mod.name;
+    workshopDlName_      = mod.name;
     workshopDlInstallId_ = mod.id;
+
+    // On Android the CWD is SDL internal storage which is always writable —
+    // use it for the temp zip.  Mods are installed into the user-chosen romfs
+    // root so they coexist with the game assets and are visible to file managers
+    // when external storage was chosen.
+#ifdef PLATFORM_ANDROID
+    {
+        const char* intStor = SDL_AndroidGetInternalStoragePath();
+        workshopDlZipPath_ = std::string(intStor ? intStor : ".") +
+                             "/mods_dl_" + workshopDlInstallId_ + ".zip";
+    }
+#else
     workshopDlZipPath_ = "mods_download_" + workshopDlInstallId_ + ".zip";
+#endif
+
     workshopDownloading_ = true;
-    workshopDlDone_ = false;
+    workshopDlDone_      = false;
 
     std::string url = mod.download_url.empty()
         ? std::string(WORKSHOP_URL) + "/api/v1/mods/" + mod.id + "/download"
         : mod.download_url;
-    std::string path     = workshopDlZipPath_;
-    std::string modId    = mod.id;
-    std::string modType  = mod.mod_type;
+    std::string path    = workshopDlZipPath_;
+    std::string modId   = mod.id;
+    std::string modType = mod.mod_type;
 
-    workshopDlThread_ = std::thread([this, url, path, modId, modType]() {
+    // Resolve the install base before the thread starts (Assets::prefix() is
+    // main-thread-safe but we don't want to call it from inside the thread).
+#ifdef PLATFORM_ANDROID
+    std::string modsBase = Assets::androidRomfsRoot() + "mods/";
+#else
+    std::string modsBase = "mods/";
+#endif
+
+    workshopDlThread_ = std::thread([this, url, path, modId, modType, modsBase]() {
         bool ok = httpGetFile(url, path, 120);
         if (ok) {
-            // Extract in background so the main thread (audio, rendering) never stalls
             extractModZip(path, modId);
-            // Patch mod.cfg with workshop metadata
-            std::string modFolder = "mods/" + modId;
+            std::string modFolder = modsBase + modId;
             std::string cfgPath   = modFolder + "/mod.cfg";
             FILE* cf = fopen(cfgPath.c_str(), "a");
             if (cf) {
@@ -2285,13 +2391,18 @@ void Game::deleteModFolder(const std::string& folder) {
 }
 
 void Game::extractModZip(const std::string& zipPath, const std::string& modId) {
-    // Create target directory
-    std::string targetDir = "mods/" + modId;
-    
-#ifdef _WIN32
-    _mkdir(targetDir.c_str());
-#else
+    // Install into the user-chosen romfs root on Android so mods live alongside
+    // the game assets and are visible to file managers on external storage.
+#ifdef PLATFORM_ANDROID
+    std::string targetDir = Assets::androidRomfsRoot() + "mods/" + modId;
     mkdir(targetDir.c_str(), 0755);
+#else
+    std::string targetDir = "mods/" + modId;
+#  ifdef _WIN32
+    _mkdir(targetDir.c_str());
+#  else
+    mkdir(targetDir.c_str(), 0755);
+#  endif
 #endif
     
     // Extract, then flatten one level of nesting if the zip has a single top-level folder
@@ -2315,6 +2426,14 @@ void Game::extractModZip(const std::string& zipPath, const std::string& modId) {
             CloseHandle(pi3.hProcess); CloseHandle(pi3.hThread);
         }
     }
+#elif defined(__ANDROID__)
+    // Android: use Java ZipInputStream via JNI (system() + unzip not available)
+    androidExtractZip(zipPath, targetDir);
+#elif defined(__SWITCH__)
+    // Switch homebrew: system() is a no-op and no shell unzip exists.
+    // The directory is created above; extraction is skipped.
+    // Mods downloaded on Switch must be extracted externally via an FTP/USB transfer tool.
+    printf("Workshop: zip extraction not supported on Switch; dir created at %s\n", targetDir.c_str());
 #else
     {
         system(("unzip -o '" + zipPath + "' -d '" + targetDir + "' 2>/dev/null").c_str());
@@ -2470,14 +2589,13 @@ void Game::renderOnlineWorkshop() {
     if (ui_.win98Button(100, "Refresh", cx, cy, 85, 24, false)) {
         fetchOnlineModList();
     }
-    static int workshopSort = 0;
     const char* sortLabels[] = { "Sort: Newest", "Sort: Name", "Sort: Score" };
-    if (ui_.win98Button(103, sortLabels[workshopSort], cx + 88, cy, 140, 24, false)) {
-        workshopSort = (workshopSort + 1) % 3;
-        if (workshopSort == 1) {
+    if (ui_.win98Button(103, sortLabels[workshopSort_], cx + 88, cy, 140, 24, false)) {
+        workshopSort_ = (workshopSort_ + 1) % 3;
+        if (workshopSort_ == 1) {
             std::sort(onlineModList_.begin(), onlineModList_.end(),
                 [](const OnlineModInfo& a, const OnlineModInfo& b){ return a.name < b.name; });
-        } else if (workshopSort == 2) {
+        } else if (workshopSort_ == 2) {
             std::sort(onlineModList_.begin(), onlineModList_.end(),
                 [](const OnlineModInfo& a, const OnlineModInfo& b){ return a.score > b.score; });
         }

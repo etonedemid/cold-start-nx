@@ -1,6 +1,6 @@
 #!/bin/bash
 set -e
-VER=2.3.0
+VER=2.3.1
 ROOT=/mnt/z/cold-start-nx
 OUT=$ROOT/release-out
 mkdir -p $OUT

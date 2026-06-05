@@ -13,8 +13,8 @@ android {
         applicationId = "com.coldstart.game"
         minSdk = 21
         targetSdk = 34
-        versionCode = 23
-        versionName = "2.3.0"
+        versionCode = 24
+        versionName = "2.3.1"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
