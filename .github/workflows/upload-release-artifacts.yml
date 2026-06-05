@@ -1,0 +1,123 @@
+name: Upload v2.3.1 Artifacts
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            build-essential cmake pkg-config \
+            libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev libsdl2-mixer-dev \
+            libcurl4-openssl-dev libenet-dev \
+            mingw-w64 zip unzip
+
+      - name: Download SDL2 MinGW dev packages
+        run: |
+          curl -L -o /tmp/sdl2-mingw.tar.gz \
+            https://github.com/libsdl-org/SDL/releases/download/release-2.30.0/SDL2-devel-2.30.0-mingw.tar.gz
+          curl -L -o /tmp/sdl2_image-mingw.tar.gz \
+            https://github.com/libsdl-org/SDL_image/releases/download/release-2.8.2/SDL2_image-devel-2.8.2-mingw.tar.gz
+          curl -L -o /tmp/sdl2_ttf-mingw.tar.gz \
+            https://github.com/libsdl-org/SDL_ttf/releases/download/release-2.22.0/SDL2_ttf-devel-2.22.0-mingw.tar.gz
+          curl -L -o /tmp/sdl2_mixer-mingw.tar.gz \
+            https://github.com/libsdl-org/SDL_mixer/releases/download/release-2.8.0/SDL2_mixer-devel-2.8.0-mingw.tar.gz
+
+      - name: Install SDL2 MinGW libraries
+        run: |
+          MINGW=/usr/x86_64-w64-mingw32
+          for f in sdl2-mingw sdl2_image-mingw sdl2_ttf-mingw sdl2_mixer-mingw; do
+            tar xf /tmp/${f}.tar.gz -C /tmp/
+          done
+          sudo cp -r /tmp/SDL2-2.30.0/x86_64-w64-mingw32/include/*       $MINGW/include/
+          sudo cp -r /tmp/SDL2_image-2.8.2/x86_64-w64-mingw32/include/*  $MINGW/include/
+          sudo cp -r /tmp/SDL2_mixer-2.8.0/x86_64-w64-mingw32/include/*  $MINGW/include/
+          sudo cp -r /tmp/SDL2_ttf-2.22.0/x86_64-w64-mingw32/include/*   $MINGW/include/
+          sudo cp /tmp/SDL2-2.30.0/x86_64-w64-mingw32/lib/libSDL2*.a        $MINGW/lib/
+          sudo cp /tmp/SDL2_image-2.8.2/x86_64-w64-mingw32/lib/libSDL2_image.a $MINGW/lib/
+          sudo cp /tmp/SDL2_mixer-2.8.0/x86_64-w64-mingw32/lib/libSDL2_mixer.a $MINGW/lib/
+          sudo cp /tmp/SDL2_ttf-2.22.0/x86_64-w64-mingw32/lib/libSDL2_ttf.a    $MINGW/lib/
+          sudo cp -r /tmp/SDL2-2.30.0/x86_64-w64-mingw32/lib/cmake            $MINGW/lib/
+          sudo cp -r /tmp/SDL2_image-2.8.2/x86_64-w64-mingw32/lib/cmake/SDL2_image $MINGW/lib/cmake/
+          sudo cp -r /tmp/SDL2_mixer-2.8.0/x86_64-w64-mingw32/lib/cmake/SDL2_mixer $MINGW/lib/cmake/
+          sudo cp -r /tmp/SDL2_ttf-2.22.0/x86_64-w64-mingw32/lib/cmake/SDL2_ttf    $MINGW/lib/cmake/
+          sudo mkdir -p $MINGW/static/lib
+          sudo cp /tmp/SDL2-2.30.0/x86_64-w64-mingw32/lib/libSDL2.a        $MINGW/static/lib/
+          sudo cp /tmp/SDL2-2.30.0/x86_64-w64-mingw32/lib/libSDL2main.a    $MINGW/static/lib/
+
+      - name: Set up curl for MinGW
+        run: |
+          MINGW=/usr/x86_64-w64-mingw32
+          curl -L -o /tmp/curl-mingw.zip \
+            https://curl.se/windows/dl-8.20.0_5/curl-8.20.0_5-win64-mingw.zip
+          unzip -p /tmp/curl-mingw.zip "curl-8.20.0_5-win64-mingw/bin/libcurl-x64.def" \
+            > /tmp/libcurl-x64.def
+          x86_64-w64-mingw32-dlltool -d /tmp/libcurl-x64.def -l /tmp/libcurl.dll.a
+          sudo cp /tmp/libcurl.dll.a $MINGW/lib/
+          sudo mkdir -p $MINGW/include/curl
+          sudo cp /usr/include/x86_64-linux-gnu/curl/*.h $MINGW/include/curl/
+
+      - name: Build Linux
+        run: |
+          cmake -B build-pc -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-pc -j$(nproc)
+
+      - name: Bundle Linux
+        run: cd build-pc && bash bundle.sh
+
+      - name: Package Linux zip
+        run: |
+          cd build-pc/dist
+          zip -r /tmp/linux.zip . -x '*.log'
+
+      - name: Configure Windows cross-compile
+        run: |
+          MINGW=/usr/x86_64-w64-mingw32
+          cmake -B build-win \
+            -DCMAKE_TOOLCHAIN_FILE=toolchain-windows.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSDL2_DIR=$MINGW/lib/cmake/SDL2 \
+            -DSDL2_image_DIR=$MINGW/lib/cmake/SDL2_image \
+            -DSDL2_ttf_DIR=$MINGW/lib/cmake/SDL2_ttf \
+            -DSDL2_mixer_DIR=$MINGW/lib/cmake/SDL2_mixer \
+            -DCURL_INCLUDE_DIR=$MINGW/include \
+            -DCURL_LIBRARY=$MINGW/lib/libcurl.dll.a
+
+      - name: Build Windows exe
+        run: cmake --build build-win -j$(nproc)
+
+      - name: Strip Windows exe
+        run: x86_64-w64-mingw32-strip build-win/cold_start.exe
+
+      - name: Download v2.2.0 DLLs
+        run: |
+          curl -L -o /tmp/win220.zip \
+            https://github.com/etonedemid/cold-start-nx/releases/download/v2.2.0/windows.zip
+          mkdir -p /tmp/dlls
+          unzip -j /tmp/win220.zip "*.dll" -d /tmp/dlls/
+
+      - name: Package Windows zip
+        run: |
+          mkdir -p /tmp/win_stage
+          cp build-win/cold_start.exe /tmp/win_stage/
+          cp -r romfs /tmp/win_stage/
+          cp /tmp/dlls/*.dll /tmp/win_stage/
+          cd /tmp/win_stage
+          zip -r /tmp/windows.zip . -x '*.log'
+
+      - name: Upload artifacts to v2.3.1 release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2.3.1
+          files: |
+            /tmp/windows.zip
+            /tmp/linux.zip
