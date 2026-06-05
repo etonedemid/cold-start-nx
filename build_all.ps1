@@ -56,16 +56,39 @@ if (-not $SkipWin) {
     cmake --build build-win -- -j4
     if ($LASTEXITCODE -ne 0) { Fail "Windows build failed" }
 
-    # Collect: exe + romfs + DLLs (exclude build artifacts)
+    # Collect: exe + romfs + all needed DLLs
     $winStage = "$env:TEMP\cs_win_stage"
     Remove-Item $winStage -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path $winStage | Out-Null
     Copy-Item "$ROOT\build-win\cold_start.exe" $winStage
     Copy-Item "$ROOT\romfs" "$winStage\romfs" -Recurse
-    Get-ChildItem "$ROOT\build-win\*.dll" | Copy-Item -Destination $winStage
-    # Include miniupnpc dll if present
-    $upnpDll = "C:\msys64\mingw64\bin\miniupnpc.dll"
-    if (Test-Path $upnpDll) { Copy-Item $upnpDll $winStage }
+
+    # Bundle all DLLs required to run on a clean Windows install
+    $mingw = "C:\msys64\mingw64\bin"
+    $neededDlls = @(
+        # GCC/MinGW runtime
+        "libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll",
+        # SDL2 family
+        "SDL2.dll", "SDL2_image.dll", "SDL2_mixer.dll", "SDL2_ttf.dll",
+        # SDL2_image deps
+        "libjpeg-8.dll", "libpng16-16.dll", "zlib1.dll",
+        "libwebp-7.dll", "libwebpdecoder-3.dll", "libwebpdemux-2.dll", "libwebpmux-3.dll",
+        # SDL2_mixer deps
+        "libogg-0.dll", "libvorbis-0.dll", "libvorbisfile-3.dll",
+        # SDL2_ttf deps
+        "libfreetype-6.dll",
+        # Workshop (curl)
+        "libcurl-4.dll",
+        # Multiplayer (miniupnpc)
+        "miniupnpc.dll"
+    )
+    foreach ($dll in $neededDlls) {
+        $src = Join-Path $mingw $dll
+        if (Test-Path $src) { Copy-Item $src $winStage }
+        else { Write-Host "    WARN: $dll not found (skipping)" -ForegroundColor Yellow }
+    }
+    # Also pick up any DLLs the build placed next to the exe
+    Get-ChildItem "$ROOT\build-win\*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination $winStage
 
     Zip-Dir $winStage $WIN_ZIP
     Remove-Item $winStage -Recurse -Force
