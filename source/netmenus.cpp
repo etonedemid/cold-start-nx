@@ -2354,13 +2354,8 @@ void Game::downloadAndInstallMod(const OnlineModInfo& mod) {
     std::string modId   = mod.id;
     std::string modType = mod.mod_type;
 
-    // Resolve the install base before the thread starts (Assets::prefix() is
-    // main-thread-safe but we don't want to call it from inside the thread).
-#ifdef PLATFORM_ANDROID
-    std::string modsBase = Assets::androidRomfsRoot() + "mods/";
-#else
+    // CWD is set to the user's chosen data directory by androidInitRomfs().
     std::string modsBase = "mods/";
-#endif
 
     workshopDlThread_ = std::thread([this, url, path, modId, modType, modsBase]() {
         bool ok = httpGetFile(url, path, 120);
@@ -2391,18 +2386,12 @@ void Game::deleteModFolder(const std::string& folder) {
 }
 
 void Game::extractModZip(const std::string& zipPath, const std::string& modId) {
-    // Install into the user-chosen romfs root on Android so mods live alongside
-    // the game assets and are visible to file managers on external storage.
-#ifdef PLATFORM_ANDROID
-    std::string targetDir = Assets::androidRomfsRoot() + "mods/" + modId;
-    mkdir(targetDir.c_str(), 0755);
-#else
+    // CWD is the user's chosen data directory (set by androidInitRomfs / chdir).
     std::string targetDir = "mods/" + modId;
-#  ifdef _WIN32
-    _mkdir(targetDir.c_str());
-#  else
-    mkdir(targetDir.c_str(), 0755);
-#  endif
+#ifdef _WIN32
+    _mkdir("mods"); _mkdir(targetDir.c_str());
+#else
+    mkdir("mods", 0755); mkdir(targetDir.c_str(), 0755);
 #endif
     
     // Extract, then flatten one level of nesting if the zip has a single top-level folder
