@@ -1210,21 +1210,41 @@ void Game::renderMultiplayerPause() {
     }
 
     // Normal menu items
+    const int arrowW = 22;
+    const int labelW = 54;
     int bx = winX + padX;
     int by = winY + UI::W98::TitleH + 14;
     for (int i = 0; i < itemCount; i++) {
         bool sel = (menuSelection_ == items[i].idx);
-        const char* displayLabel = items[i].label;
-        char tmp[80];
-        if (sel && items[i].isVolume) {
-            snprintf(tmp, sizeof(tmp), "< %s >", items[i].label);
-            displayLabel = tmp;
+        if (items[i].isVolume) {
+            bool isMus = (items[i].idx == 1);
+            const char* rowLabel = isMus ? "Music:" : "SFX:";
+            char valBuf[16];
+            int vol = isMus ? config_.musicVolume : config_.sfxVolume;
+            snprintf(valBuf, sizeof(valBuf), "%d%%", vol * 100 / 128);
+            const int fx  = bx + labelW;
+            const int fwA = winW - padX * 2 - labelW - arrowW * 2 - 4;
+            int decId = 200 + items[i].idx;
+            int incId = 210 + items[i].idx;
+            ui_.drawText(rowLabel, bx, by + (btnH - 12) / 2, 12, UI::W98::Black);
+            if (ui_.win98Button(decId, "<", fx, by, arrowW, btnH, false)) {
+                if (isMus) { config_.musicVolume = std::max(0, config_.musicVolume - 8); Mix_VolumeMusic(config_.musicVolume); }
+                else        config_.sfxVolume = std::max(0, config_.sfxVolume - 8);
+            }
+            ui_.drawWin98TextField(fx + arrowW + 2, by, fwA, btnH, valBuf, sel, false, 0.f);
+            if (ui_.win98Button(incId, ">", fx + arrowW + 2 + fwA + 2, by, arrowW, btnH, false)) {
+                if (isMus) { config_.musicVolume = std::min(128, config_.musicVolume + 8); Mix_VolumeMusic(config_.musicVolume); }
+                else        config_.sfxVolume = std::min(128, config_.sfxVolume + 8);
+            }
+            if (!usingGamepad_ && ui_.pointInRect(ui_.mouseX, ui_.mouseY, bx, by, winW - padX * 2, btnH))
+                menuSelection_ = items[i].idx;
+        } else {
+            if (ui_.win98Button(items[i].idx, items[i].label, bx, by, winW - padX * 2, btnH, sel)) {
+                menuSelection_ = items[i].idx;
+                confirmInput_ = true;
+            }
+            if (ui_.hoveredItem == items[i].idx && !usingGamepad_) menuSelection_ = items[i].idx;
         }
-        if (ui_.win98Button(items[i].idx, displayLabel, bx, by, winW - padX * 2, btnH, sel)) {
-            menuSelection_ = items[i].idx;
-            confirmInput_ = true;
-        }
-        if (ui_.hoveredItem == items[i].idx && !usingGamepad_) menuSelection_ = items[i].idx;
         by += btnH + btnGap;
     }
 

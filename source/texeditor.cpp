@@ -493,6 +493,13 @@ void TextureEditor::canvasToScreen(int cx, int cy, int& sx, int& sy) const {
     sy = canvasOriginY() + (int)(cy * zoom_);
 }
 
+void TextureEditor::physToLogical(int& x, int& y) const {
+    float fx, fy;
+    SDL_RenderWindowToLogical(renderer_, x, y, &fx, &fy);
+    x = (int)fx;
+    y = (int)fy;
+}
+
 void TextureEditor::selHandlePos(int i, int& cx, int& cy) const {
     // 0=top-left 1=top-right 2=bottom-right 3=bottom-left
     // 4=top-mid  5=right-mid 6=bottom-mid  7=left-mid
@@ -846,6 +853,7 @@ void TextureEditor::handleConfigInput(const SDL_Event& e) {
     else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
         if (config_.textEditing) { config_.textEditing = false; return; }
         int mx = e.button.x, my = e.button.y;
+        physToLogical(mx, my);
 
         // Mirror renderConfig layout
         const int pw = 560;
@@ -1057,6 +1065,7 @@ void TextureEditor::handleEditingInput(const SDL_Event& e) {
     }
     else if (e.type == SDL_MOUSEBUTTONDOWN) {
         int mx = e.button.x, my = e.button.y;
+        physToLogical(mx, my);
 
         // Frame strip band (full width, just above the status bar)
         int stripY = screenH_ - STATUS_H - FRAME_STRIP_H;
@@ -1150,7 +1159,8 @@ void TextureEditor::handleEditingInput(const SDL_Event& e) {
         if (e.button.button == SDL_BUTTON_LEFT) {
             if (shapeStarted_) {
                 int cx, cy;
-                if (screenToCanvas(e.button.x, e.button.y, cx, cy)) {
+                int bux = e.button.x, buy = e.button.y; physToLogical(bux, buy);
+                if (screenToCanvas(bux, buy, cx, cy)) {
                     pushUndo();
                     switch (currentTool_) {
                         case TexTool::Line:
@@ -1178,6 +1188,7 @@ void TextureEditor::handleEditingInput(const SDL_Event& e) {
     else if (e.type == SDL_MOUSEMOTION) {
         if (currentTool_ == TexTool::Select && selDragMode_ != 0) {
             int smx = e.motion.x, smy = e.motion.y;
+            physToLogical(smx, smy);
             int cx2, cy2;
             screenToCanvas(smx, smy, cx2, cy2);
             cx2 = std::max(0, std::min(canvasW_ - 1, cx2));
@@ -1218,7 +1229,8 @@ void TextureEditor::handleEditingInput(const SDL_Event& e) {
         }
         if (drawing_) {
             int cx, cy;
-            if (screenToCanvas(e.motion.x, e.motion.y, cx, cy)) {
+            int mmx = e.motion.x, mmy = e.motion.y; physToLogical(mmx, mmy);
+            if (screenToCanvas(mmx, mmy, cx, cy)) {
                 applyToolAtPixel(cx, cy);
                 updateCanvasTexture();
             }
@@ -1304,6 +1316,7 @@ void TextureEditor::handleColorPickerInput(const SDL_Event& e) {
     }
     else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
         int mx = e.button.x, my = e.button.y;
+        physToLogical(mx, my);
         if (mx >= svX && mx < svX + svSize && my >= svY && my < svY + svSize) {
             cpDragMode_ = 1;
         } else if (mx >= hueX && mx < hueX + hueW && my >= hueY && my < hueY + hueH) {
@@ -1324,6 +1337,7 @@ void TextureEditor::handleColorPickerInput(const SDL_Event& e) {
     if ((e.type == SDL_MOUSEMOTION || e.type == SDL_MOUSEBUTTONDOWN) && cpDragMode_ > 0) {
         int mx, my;
         SDL_GetMouseState(&mx, &my);
+        physToLogical(mx, my);
         if (cpDragMode_ == 1) {
             sat_ = std::max(0.0f, std::min(1.0f, (float)(mx - svX) / svSize));
             val_ = std::max(0.0f, std::min(1.0f, 1.0f - (float)(my - svY) / svSize));
@@ -1753,8 +1767,7 @@ void TextureEditor::renderCanvas() {
 
     // Shape preview (line/rect/circle rubber-band)
     if (shapeStarted_) {
-        int mx, my;
-        SDL_GetMouseState(&mx, &my);
+        int mx = ui_ ? ui_->mouseX : 0, my = ui_ ? ui_->mouseY : 0;
         int sx0, sy0, sx1, sy1;
         canvasToScreen(shapeX0_, shapeY0_, sx0, sy0);
         sx1 = mx; sy1 = my;
@@ -2095,8 +2108,7 @@ void TextureEditor::renderStatusBar() {
     snprintf(buf, sizeof(buf), "Zoom: %.0f%%", zoom_ * 100.0f / 8.0f);
     ui_->drawText(buf, 100, y + 6, 13, UI::W98::Black);
 
-    int mx, my;
-    SDL_GetMouseState(&mx, &my);
+    int mx = ui_->mouseX, my = ui_->mouseY;
     int cx, cy;
     if (screenToCanvas(mx, my, cx, cy)) {
         snprintf(buf, sizeof(buf), "Pixel: %d, %d", cx, cy);
@@ -2164,7 +2176,8 @@ void TextureEditor::renderCursor() {
         mx = (int)cursorX_;
         my = (int)cursorY_;
     } else {
-        SDL_GetMouseState(&mx, &my);
+        mx = ui_ ? ui_->mouseX : 0;
+        my = ui_ ? ui_->mouseY : 0;
     }
 
     // Hide system cursor over the canvas; the custom crosshair replaces it

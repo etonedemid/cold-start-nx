@@ -1189,24 +1189,64 @@ void Game::handleInput() {
             if (confirmInput_) {
                 if (menuSelection_ == 90) { running_ = false; }
 #ifdef __SWITCH__
-                else { logOffConfirm_ = false; menuSelection_ = 11; }
+                else { logOffConfirm_ = false; menuSelection_ = 10; }
 #else
-                else { logOffConfirm_ = false; menuSelection_ = 12; }
+                else { logOffConfirm_ = false; menuSelection_ = 11; }
 #endif
             }
 #ifdef __SWITCH__
-            if (backInput_) { logOffConfirm_ = false; menuSelection_ = 11; backInput_ = false; }
+            if (backInput_) { logOffConfirm_ = false; menuSelection_ = 10; backInput_ = false; }
 #else
-            if (backInput_) { logOffConfirm_ = false; menuSelection_ = 12; backInput_ = false; }
+            if (backInput_) { logOffConfirm_ = false; menuSelection_ = 11; backInput_ = false; }
 #endif
             return; // block all other menu input while dialog is open
         }
 
+        // Tools submenu
+        if (mainMenuSub_ == 1) {
+            if (menuSelection_ < 0) menuSelection_ = 0;
+            if (menuSelection_ > 2) menuSelection_ = 2;
+            if (backInput_) { mainMenuSub_ = 0; menuSelection_ = 2; backInput_ = false; }
+            if (confirmInput_) {
+                if (menuSelection_ == 0) {
+                    // Map Editor
+                    mainMenuSub_ = 0;
+                    state_ = GameState::EditorConfig;
+                    editor_.setActive(true);
+                    editor_.showConfig();
+                    menuSelection_ = 0;
+                }
+                else if (menuSelection_ == 1) {
+                    // Character Editor
+                    mainMenuSub_ = 0;
+                    scanCharacters();
+                    charCreator_ = CharCreatorState{};
+                    state_ = GameState::CharCreator;
+                    menuSelection_ = 0;
+                    SCREEN_W = 1280; SCREEN_H = 720;
+                    if (renderer_) SDL_RenderSetLogicalSize(renderer_, 1280, 720);
+                }
+                else if (menuSelection_ == 2) {
+                    // Sprite Editor
+                    mainMenuSub_ = 0;
+                    state_ = GameState::SpriteEditor;
+                    texEditor_.setActive(true);
+                    texEditor_.setScreenSize(SCREEN_W, SCREEN_H);
+                    texEditor_.config().canvasW = 64;
+                    texEditor_.config().canvasH = 64;
+                    texEditor_.config().tmpl    = TexTemplate::Sprite64;
+                    texEditor_.showConfig();
+                    menuSelection_ = 0;
+                }
+            }
+            return;
+        }
+
         if (menuSelection_ < 0) menuSelection_ = 0;
 #ifdef __SWITCH__
-        if (menuSelection_ > 12) menuSelection_ = 12;
+        if (menuSelection_ > 10) menuSelection_ = 10;
 #else
-        if (menuSelection_ > 13) menuSelection_ = 13;
+        if (menuSelection_ > 11) menuSelection_ = 11;
 #endif
 
         if (confirmInput_) {
@@ -1222,10 +1262,8 @@ void Game::handleInput() {
                 menuSelection_ = 0;
             }
             else if (menuSelection_ == 2) {
-                // Open editor config screen first
-                state_ = GameState::EditorConfig;
-                editor_.setActive(true);
-                editor_.showConfig();
+                // Tools submenu
+                mainMenuSub_ = 1;
                 menuSelection_ = 0;
             }
             else if (menuSelection_ == 3) {
@@ -1249,74 +1287,49 @@ void Game::handleInput() {
                 menuSelection_ = 0;
             }
             else if (menuSelection_ == 6) {
-                // Create Character - scan first so we can edit existing ones
-                scanCharacters();
-                charCreator_ = CharCreatorState{};
-                state_ = GameState::CharCreator;
-                menuSelection_ = 0;
-                // CharCreator layout needs at least 1280px wide; force it
-                SCREEN_W = 1280; SCREEN_H = 720;
-                if (renderer_) SDL_RenderSetLogicalSize(renderer_, 1280, 720);
-            }
-            else if (menuSelection_ == 7) {
                 // Mods
                 ModManager::instance().scanMods();
                 state_ = GameState::ModMenu;
                 modMenuSelection_ = 0;
                 menuSelection_ = 0;
             }
-            else if (menuSelection_ == 8) {
+            else if (menuSelection_ == 7) {
                 state_ = GameState::ConfigMenu;
                 configSelection_ = 0;
                 menuSelection_ = 0;
             }
 #ifndef __SWITCH__
-            else if (menuSelection_ == 9) {
+            else if (menuSelection_ == 8) {
                 // UPDATE - open release page
                 SDL_OpenURL("https://github.com/etonedemid/cold-start-nx/releases/latest");
             }
-            else if (menuSelection_ == 10) {
+            else if (menuSelection_ == 9) {
                 creditsOpen_ = !creditsOpen_;
             }
-            else if (menuSelection_ == 11) {
+            else if (menuSelection_ == 10) {
                 // Workshop - open online workshop menu
                 state_ = GameState::OnlineWorkshop;
                 onlineWorkshopSelection_ = 0;
                 fetchOnlineModList();
             }
-            else if (menuSelection_ == 12) {
+            else if (menuSelection_ == 11) {
                 logOffConfirm_ = true;
                 menuSelection_ = 91; // pre-select "No" (safe default)
             }
 #else
-            else if (menuSelection_ == 9) {
+            else if (menuSelection_ == 8) {
                 creditsOpen_ = !creditsOpen_;
             }
-            else if (menuSelection_ == 10) {
+            else if (menuSelection_ == 9) {
                 state_ = GameState::OnlineWorkshop;
                 onlineWorkshopSelection_ = 0;
                 fetchOnlineModList();
             }
-            else if (menuSelection_ == 11) {
+            else if (menuSelection_ == 10) {
                 logOffConfirm_ = true;
                 menuSelection_ = 91;
             }
 #endif
-#ifndef __SWITCH__
-            else if (menuSelection_ == 13) {
-#else
-            else if (menuSelection_ == 12) {
-#endif
-                // Sprite Editor - standalone in-app pixel editor (64x64 default)
-                state_ = GameState::SpriteEditor;
-                texEditor_.setActive(true);
-                texEditor_.setScreenSize(SCREEN_W, SCREEN_H);
-                texEditor_.config().canvasW = 64;
-                texEditor_.config().canvasH = 64;
-                texEditor_.config().tmpl    = TexTemplate::Sprite64;
-                texEditor_.showConfig();
-                menuSelection_ = 0;
-            }
         }
     }
     else if (state_ == GameState::PlayModeMenu) {

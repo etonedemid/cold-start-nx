@@ -2312,39 +2312,35 @@ void Game::renderMainMenu() {
     struct Item { const char* label; bool enabled; };
 #ifdef __SWITCH__
     Item items[] = {
-        {"Play"},             // 0
-        {"Multiplayer"},      // 1
-        {"Editor"},           // 2
-        {"Maps"},             // 3
-        {"Packs"},            // 4
-        {"Character"},        // 5
-        {"Character Editor"}, // 6
-        {"Mods"},             // 7
-        {"Config"},           // 8
-        {"Credits"},          // 9
-        {"Workshop"},         // 10
-        {"Log Off"},          // 11
-        {"Sprite Editor"},    // 12
+        {"Play"},         // 0
+        {"Multiplayer"},  // 1
+        {"Tools"},        // 2
+        {"Maps"},         // 3
+        {"Packs"},        // 4
+        {"Character"},    // 5
+        {"Mods"},         // 6
+        {"Config"},       // 7
+        {"Credits"},      // 8
+        {"Workshop"},     // 9
+        {"Log Off"},      // 10
     };
-    constexpr int count = 13;
+    constexpr int count = 11;
 #else
     Item items[] = {
-        {"Play"},             // 0
-        {"Multiplayer"},      // 1
-        {"Editor"},           // 2
-        {"Maps"},             // 3
-        {"Packs"},            // 4
-        {"Character"},        // 5
-        {"Character Editor"}, // 6
-        {"Mods"},             // 7
-        {"Config"},           // 8
-        {updateAvailable_ ? "Update (available!)" : "Update", true}, // 9
-        {"Credits"},          // 10
-        {"Workshop"},         // 11
-        {"Log Off"},          // 12
-        {"Sprite Editor"},    // 13
+        {"Play"},         // 0
+        {"Multiplayer"},  // 1
+        {"Tools"},        // 2
+        {"Maps"},         // 3
+        {"Packs"},        // 4
+        {"Character"},    // 5
+        {"Mods"},         // 6
+        {"Config"},       // 7
+        {updateAvailable_ ? "Update (available!)" : "Update", true}, // 8
+        {"Credits"},      // 9
+        {"Workshop"},     // 10
+        {"Log Off"},      // 11
     };
-    constexpr int count = 14;
+    constexpr int count = 12;
 #endif
 
     // Window sizing: fit all buttons
@@ -3236,6 +3232,44 @@ void Game::renderMainMenu() {
             disconnectReason_.clear();
         }
     }
+
+    if (mainMenuSub_ == 1) renderToolsMenu();
+}
+
+void Game::renderToolsMenu() {
+    const int padX   = 14;
+    const int btnH   = 26;
+    const int btnGap = 6;
+    const int btnW   = 200;
+    const int winW   = btnW + padX * 2;
+    const int winH   = UI::W98::TitleH + 14 + 3 * (btnH + btnGap) + 4;
+    const int winX   = (SCREEN_W - winW) / 2;
+    const int winY   = (SCREEN_H - winH) / 2;
+
+    ui_.drawDarkOverlay(80);
+    ui_.drawWin98Window(winX, winY, winW, winH, "Tools");
+
+    const int cbSz = UI::W98::TitleH - 4;
+    if (ui_.mouseClicked && ui_.pointInRect(ui_.mouseX, ui_.mouseY,
+            winX + winW - 3 - cbSz, winY + 2, cbSz, cbSz)) {
+        mainMenuSub_ = 0;
+        menuSelection_ = 2;
+        ui_.mouseClicked = false;
+        return;
+    }
+
+    const char* labels[] = {"Map Editor", "Character Editor", "Sprite Editor"};
+    int by = winY + UI::W98::TitleH + 14;
+    for (int i = 0; i < 3; i++) {
+        bool sel = (menuSelection_ == i);
+        if (ui_.win98Button(i, labels[i], winX + padX, by, btnW, btnH, sel)) {
+            menuSelection_ = i;
+            confirmInput_ = true;
+        }
+        if (ui_.hoveredItem == i && !usingGamepad_) menuSelection_ = i;
+        by += btnH + btnGap;
+    }
+    ui_.drawWin98StatusBar(SCREEN_H - 26, "Esc: Back");
 }
 
 void Game::renderPlayModeMenu() {
