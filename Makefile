@@ -15,12 +15,12 @@ TARGET		:=	cold_start
 BUILD		:=	build
 SOURCES		:=	source source/enet
 DATA		:=	data
-INCLUDES	:=	source source/enet/include
+INCLUDES	:=	source source/enet/include $(DEVKITPRO)/portlibs/switch/include
 ROMFS		:=	romfs
 
 APP_TITLE	:=	COLD START
 APP_AUTHOR	:=	etonedemid
-APP_VERSION	:=	2.3.1
+APP_VERSION	:=	2.5.0
 
 #---------------------------------------------------------------------------------
 # Compiler flags
@@ -44,7 +44,8 @@ LDFLAGS	=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) \
 
 SWITCH_PKG_CONFIG_PATH	:=	$(DEVKITPRO)/portlibs/switch/lib/pkgconfig:$(DEVKITPRO)/libnx/lib/pkgconfig
 LIBS	:=	$(shell PKG_CONFIG_PATH=$(SWITCH_PKG_CONFIG_PATH) pkg-config --static --libs SDL2_image SDL2_ttf SDL2_mixer sdl2) \
-			$(shell PKG_CONFIG_PATH=$(SWITCH_PKG_CONFIG_PATH) pkg-config --static --libs libcurl mbedtls mbedcrypto mbedx509 2>/dev/null || pkg-config --static --libs libcurl)
+			$(shell PKG_CONFIG_PATH=$(SWITCH_PKG_CONFIG_PATH) pkg-config --static --libs libcurl mbedtls mbedcrypto mbedx509 2>/dev/null || pkg-config --static --libs libcurl) \
+			-lminizip -lz
 
 #---------------------------------------------------------------------------------
 # Library search paths

@@ -31,8 +31,9 @@ inline Uint8 remapButton(Uint8 btn) {
 
 // Init / Shutdown
 
-bool TextureEditor::init(SDL_Renderer* renderer, int screenW, int screenH) {
+bool TextureEditor::init(SDL_Renderer* renderer, int screenW, int screenH, UI::Context* ui) {
     renderer_ = renderer;
+    ui_       = ui;
     screenW_  = screenW;
     screenH_  = screenH;
     zoom_     = 8.0f;

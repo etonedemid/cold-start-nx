@@ -319,6 +319,7 @@ bool Game::init() {
 
     // Initialize map editor
     editor_.init(renderer_, SCREEN_W, SCREEN_H, &ui_);
+    texEditor_.init(renderer_, SCREEN_W, SCREEN_H, &ui_);
 
     // Scan for custom characters and maps
     scanCharacters();
@@ -908,6 +909,20 @@ void Game::run() {
             }
         }
 
+        else if (state_ == GameState::SpriteEditor) {
+            texEditor_.update(dt_);
+            if (texEditor_.wantsExit()) {
+                texEditor_.setActive(false);
+                state_ = GameState::MainMenu;
+                menuSelection_ = 0;
+            }
+        }
+
+        // Run for every state (update() above is gameplay-only): advance the
+        // character-creator preview and apply a confirmed mod-save.
+        updateCharCreatorPreview(dt_);
+        processModSaveConfirm();
+
         if (!dedicatedMode_) {
             render();
         } else {
@@ -917,6 +932,59 @@ void Game::run() {
 }
 
 // Input
+
+void Game::updateCharCreatorPreview(float dt) {
+    if (state_ != GameState::CharCreator) return;
+    auto& cc = charCreator_;
+    if (!cc.playAnimation) return;
+    cc.animTime += dt;
+    const float frameTime = 0.1f;
+    if (cc.animTime < frameTime) return;
+    cc.animTime -= frameTime;
+    cc.previewFrame++;
+    int maxFrames = 0;
+    switch (cc.previewSection) {
+        case 1: maxFrames = cc.loaded ? (int)cc.charDef.bodySprites.size()  : (int)playerSprites_.size();      break;
+        case 2: maxFrames = cc.loaded ? (int)cc.charDef.legSprites.size()   : (int)legSprites_.size();         break;
+        case 3: maxFrames = cc.loaded ? (int)cc.charDef.deathSprites.size() : (int)playerDeathSprites_.size(); break;
+        default: maxFrames = 1; break;
+    }
+    if (maxFrames > 0 && cc.previewFrame >= maxFrames) cc.previewFrame = 0;
+}
+
+void Game::processModSaveConfirm() {
+    if (!modSaveDialog_.confirmed) return;
+    modSaveDialog_.confirmed = false;
+    const std::string& folder = modSaveDialog_.confirmedModFolder;
+    switch (modSaveDialog_.asset) {
+        case ModSaveDialogState::AssetMap:
+            editor_.performModSave(folder);
+            break;
+        case ModSaveDialogState::AssetCharacter:
+            if (!folder.empty()) {
+                auto& cc = charCreator_;
+                std::string safeName = cc.name;
+                for (char& ch : safeName) {
+                    if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+                        (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' || ch == ' ') {
+                        continue;
+                    }
+                    else ch = '_';
+                }
+                if (safeName.empty()) safeName = "NewChar";
+                std::string charFolder = folder + "/characters/" + safeName;
+                saveCharacterToFolder(charFolder);
+                cc.folderPath = charFolder;
+                cc.isEditing = true;
+                cc.statusMsg = "Saved to " + charFolder;
+                cc.statusTimer = 3.0f;
+            }
+            break;
+    }
+    ModManager::instance().scanMods();
+    scanCharacters();
+    modSaveDialog_.close();
+}
 
 void Game::update() {
     float dt = dt_;
@@ -1031,70 +1099,10 @@ void Game::update() {
     // Always update multiplayer (even in lobby/menus for network events)
     updateMultiplayer(dt);
 
-    // Character Creator animation update
-    if (state_ == GameState::CharCreator) {
-        auto& cc = charCreator_;
-        if (cc.playAnimation) {
-            cc.animTime += dt;
-            float frameTime = 0.1f;
-            if (cc.animTime >= frameTime) {
-                cc.animTime -= frameTime;
-                cc.previewFrame++;
-                
-                int maxFrames = 0;
-                switch (cc.previewSection) {
-                    case 0: maxFrames = 1; break;
-                    case 1: maxFrames = cc.loaded ? (int)cc.charDef.bodySprites.size() : (int)playerSprites_.size(); break;
-                    case 2: maxFrames = cc.loaded ? (int)cc.charDef.legSprites.size() : (int)legSprites_.size(); break;
-                    case 3: maxFrames = cc.loaded ? (int)cc.charDef.deathSprites.size() : (int)playerDeathSprites_.size(); break;
-                    case 4: maxFrames = 1; break;
-                }
-                if (maxFrames > 0 && cc.previewFrame >= maxFrames) cc.previewFrame = 0;
-            }
-        }
-    }
-
-    // Mod-save for editor maps (character creator no longer uses mod save dialog)
-    if (!modSaveDialog_.isOpen()) {
-        if (charCreatorWantsModSave_) {
-            charCreatorWantsModSave_ = false;
-            openModSaveDialog(ModSaveDialogState::AssetCharacter);
-        }
-    }
-    // When dialog confirmed, execute the actual save
-    if (modSaveDialog_.confirmed) {
-        modSaveDialog_.confirmed = false;
-        const std::string& folder = modSaveDialog_.confirmedModFolder;
-        switch (modSaveDialog_.asset) {
-            case ModSaveDialogState::AssetMap:
-                editor_.performModSave(folder);
-                break;
-            case ModSaveDialogState::AssetCharacter:
-                if (!folder.empty()) {
-                    auto& cc = charCreator_;
-                    std::string safeName = cc.name;
-                    for (char& ch : safeName) {
-                        if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
-                            (ch >= '0' && ch <= '9') || ch == '_' || ch == '-') {
-                            continue;
-                        }
-                        if (ch == ' ') ch = '_';
-                        else ch = '_';
-                    }
-                    if (safeName.empty()) safeName = "NewChar";
-                    std::string charFolder = folder + "/characters/" + safeName;
-                    saveCharacterToFolder(charFolder);
-                    cc.folderPath = charFolder;
-                    cc.isEditing = true;
-                    cc.statusMsg = "Saved to " + charFolder;
-                    cc.statusTimer = 3.0f;
-                }
-                break;
-        }
-        ModManager::instance().scanMods();
-        scanCharacters();
-        modSaveDialog_.close();
-    }
+    // NOTE: the character-creator preview animation and the mod-save
+    // confirmation used to live here, but update() only runs for gameplay
+    // states. They now run every frame from the main loop via
+    // updateCharCreatorPreview() and processModSaveConfirm().
 }
 
 // Player Update

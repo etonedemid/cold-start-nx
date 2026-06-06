@@ -423,15 +423,19 @@ void Game::handleInput() {
             updateAspectMode();
         }
 
+        // Suppress all input for N frames after any UI action fires
+        if (ui_.clickCooldownFrames > 0) continue;
+
         // Mod-save dialog gets first pick of all events when open
         if (modSaveDialog_.isOpen()) {
             if (modSaveDialog_.phase == ModSaveDialogState::NameNewMod && e.type == SDL_KEYDOWN) {
                 SDL_Keycode sym = e.key.keysym.sym;
-                if ((sym == SDLK_RETURN || sym == SDLK_KP_ENTER) && !modSaveDialog_.newModId.empty()) {
-                    modSaveDialog_.confirmedModFolder = modBuildFolder(modSaveDialog_.newModId, modSaveDialog_.newModId);
-                    modSaveDialog_.confirmed = true;
-                    if (softKB_.active) softKB_.close(false);
-                    continue;
+                if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) {
+                    bool canAdvance = modSaveDialog_.editingAuthor || !modSaveDialog_.newModId.empty();
+                    if (canAdvance && softKB_.active) {
+                        softKB_.close(true);
+                        continue;
+                    }
                 }
             }
             if (softKB_.active && handleSoftKBEvent(e)) continue;
@@ -464,6 +468,11 @@ void Game::handleInput() {
                 softKB_.open(t, 64, nullptr);
             }
 #endif
+        }
+
+        // Route events to the standalone sprite editor when it's active.
+        if (state_ == GameState::SpriteEditor && texEditor_.isActive()) {
+            texEditor_.handleInput(e);
         }
 
         // Dev console intercepts events when open (single-player only)
@@ -722,13 +731,11 @@ void Game::handleInput() {
                     menuNavHeldBtn_ = SDL_CONTROLLER_BUTTON_DPAD_UP;
                     menuNavRepeatAt_ = SDL_GetTicks() + 320;
                     menuSelection_--;
-                    if (sfxBeep_) playSFX(sfxBeep_, config_.sfxVolume);
                     break;
                 case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
                     menuNavHeldBtn_ = SDL_CONTROLLER_BUTTON_DPAD_DOWN;
                     menuNavRepeatAt_ = SDL_GetTicks() + 320;
                     menuSelection_++;
-                    if (sfxBeep_) playSFX(sfxBeep_, config_.sfxVolume);
                     break;
                 case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
                     menuNavHeldBtn_ = SDL_CONTROLLER_BUTTON_DPAD_LEFT;
@@ -844,11 +851,9 @@ void Game::handleInput() {
             switch (menuNavHeldBtn_) {
             case SDL_CONTROLLER_BUTTON_DPAD_UP:
                 menuSelection_--;
-                if (sfxBeep_) playSFX(sfxBeep_, config_.sfxVolume);
                 break;
             case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
                 menuSelection_++;
-                if (sfxBeep_) playSFX(sfxBeep_, config_.sfxVolume);
                 break;
             case SDL_CONTROLLER_BUTTON_DPAD_LEFT:  leftInput_  = true; break;
             case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: rightInput_ = true; break;
@@ -988,7 +993,6 @@ void Game::handleInput() {
                     menuNavRepeatAt_ = now + (isNew ? 300U : 110U);
                     if (snY != 0) {
                         menuSelection_ += snY;
-                        if (sfxBeep_) playSFX(sfxBeep_, config_.sfxVolume);
                     } else {
                         leftInput_  = snX < 0;
                         rightInput_ = snX > 0;
@@ -1200,9 +1204,9 @@ void Game::handleInput() {
 
         if (menuSelection_ < 0) menuSelection_ = 0;
 #ifdef __SWITCH__
-        if (menuSelection_ > 11) menuSelection_ = 11;
-#else
         if (menuSelection_ > 12) menuSelection_ = 12;
+#else
+        if (menuSelection_ > 13) menuSelection_ = 13;
 #endif
 
         if (confirmInput_) {
@@ -1298,6 +1302,21 @@ void Game::handleInput() {
                 menuSelection_ = 91;
             }
 #endif
+#ifndef __SWITCH__
+            else if (menuSelection_ == 13) {
+#else
+            else if (menuSelection_ == 12) {
+#endif
+                // Sprite Editor - standalone in-app pixel editor (64x64 default)
+                state_ = GameState::SpriteEditor;
+                texEditor_.setActive(true);
+                texEditor_.setScreenSize(SCREEN_W, SCREEN_H);
+                texEditor_.config().canvasW = 64;
+                texEditor_.config().canvasH = 64;
+                texEditor_.config().tmpl    = TexTemplate::Sprite64;
+                texEditor_.showConfig();
+                menuSelection_ = 0;
+            }
         }
     }
     else if (state_ == GameState::PlayModeMenu) {
