@@ -483,21 +483,21 @@ void Game::updatePlayer(float dt) {
                 spawnMeleeImpact(e.pos, {170, 15, 15, 255}, 10 + std::max(0, meleePlayerDamage - MELEE_PLAYER_DAMAGE) * 2, 1.15f);
                 queueMeleeImpactRumble(0.32f, 74, 0.46f, 1.18f);
                 if (upgrades_.hasShockEdge || upgrades_.hasStunRounds) emitShockPulse(e.pos);
-                if (simAuth) {
-                    e.hp -= meleePlayerDamage;
-                    if (e.hp <= 0) {
-                        killEnemy(e);
-                        queueMeleeImpactRumble(0.64f, 130, 1.35f, 0.70f);  // extra kill thud
-                    }
-                    if (upgrades_.hasBloodlust) {
-                        p.meleeBloodlustProc = true;
-                        p.ammo = std::min(p.maxAmmo, p.ammo + 1 + upgrades_.hasScavenger);
-                    }
+                // All peers apply damage locally for instant feedback; whoever delivers
+                // the killing blow broadcasts it so all peers sync the death.
+                e.hp -= meleePlayerDamage;
+                if (e.hp <= 0) {
+                    killEnemy(e);
+                    queueMeleeImpactRumble(0.64f, 130, 1.35f, 0.70f);
                     if (net.isInGame()) {
                         uint32_t eIdx = (uint32_t)(&e - &enemies_[0]);
                         net.sendEnemyKilled(eIdx, net.localPlayerId());
                         enemyStatesNeedUpdate_ = true;
                     }
+                }
+                if (upgrades_.hasBloodlust) {
+                    p.meleeBloodlustProc = true;
+                    p.ammo = std::min(p.maxAmmo, p.ammo + 1 + upgrades_.hasScavenger);
                 }
             }
             // Hit destroyable boxes in the swing arc
@@ -2747,8 +2747,10 @@ void Game::resolveCollisions() {
                 }
                 if (!b.piercing) {
                     b.alive = false;
-                    // Notify remote peers that this bullet is gone
-                    if (net.isInGame() && b.netId != 0) {
+                    // Only the simulation authority broadcasts bullet removal.
+                    // If a non-host client sent this, the host's copy would be killed
+                    // before it could apply damage to the enemy.
+                    if (net.isInGame() && b.netId != 0 && simAuth) {
                         net.sendBulletHit(b.netId);
                     }
                 }
