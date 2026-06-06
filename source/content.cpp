@@ -497,6 +497,15 @@ void Game::renderCharCreator() {
     bool modalOpen = modSaveDialog_.isOpen();
     char buf[256];
 
+    // Only let hovering change the selected field when the mouse actually moves.
+    // A parked cursor must not override keyboard/gamepad navigation every frame
+    // (that desync made the highlighted row differ from the row the arrow keys
+    // adjusted, which felt broken).
+    static int csLastMouseX = -99999, csLastMouseY = -99999;
+    bool mouseMoved = (ui_.mouseX != csLastMouseX || ui_.mouseY != csLastMouseY);
+    csLastMouseX = ui_.mouseX;
+    csLastMouseY = ui_.mouseY;
+
     // Win98 desktop background
     ui_.drawDesktop();
 
@@ -565,7 +574,7 @@ void Game::renderCharCreator() {
             int lBtnX = rBtnX - arGap - arW;
             if (ui_.win98Button(100 + idx * 2, "<", lBtnX, contentY + 2, arW, rowH - 4, false)) {
                 if (!modalOpen) {
-                    cc.field = idx;
+                    cc.field = idx; menuSelection_ = idx;
                     SDL_Event fakeKey; memset(&fakeKey, 0, sizeof(fakeKey));
                     fakeKey.type = SDL_KEYDOWN;
                     fakeKey.key.keysym.sym = SDLK_LEFT;
@@ -574,7 +583,7 @@ void Game::renderCharCreator() {
             }
             if (ui_.win98Button(100 + idx * 2 + 1, ">", rBtnX, contentY + 2, arW, rowH - 4, false)) {
                 if (!modalOpen) {
-                    cc.field = idx;
+                    cc.field = idx; menuSelection_ = idx;
                     SDL_Event fakeKey; memset(&fakeKey, 0, sizeof(fakeKey));
                     fakeKey.type = SDL_KEYDOWN;
                     fakeKey.key.keysym.sym = SDLK_RIGHT;
@@ -587,10 +596,10 @@ void Game::renderCharCreator() {
             ui_.drawText(value, lCX + lblW, contentY + 5, 13, valueCol);
         }
 
-        if (!modalOpen && hovered && !usingGamepad_) cc.field = idx;
+        if (!modalOpen && hovered && mouseMoved) { cc.field = idx; menuSelection_ = idx; }
         if (hovered) ui_.hoveredItem = idx;
         if (!modalOpen && hovered && ui_.mouseClicked) {
-            cc.field = idx;
+            cc.field = idx; menuSelection_ = idx;
             if (idx == 0) confirmInput_ = true;
         }
         contentY += rowH + rowGap;
@@ -685,20 +694,20 @@ void Game::renderCharCreator() {
         const char* reloadLabel = cc.loaded ? "Reload" : "Load Sprites";
         bool reloadPressed  = ui_.win98Button(6, reloadLabel,  lCX,             contentY, half, btnH, cc.field == 6);
         bool testPressed    = ui_.win98Button(7, "Test Play",  lCX + half + btnGp, contentY, half, btnH, cc.field == 7);
-        if (ui_.hoveredItem == 6 && !usingGamepad_) cc.field = 6;
-        if (ui_.hoveredItem == 7 && !usingGamepad_) cc.field = 7;
+        if (ui_.hoveredItem == 6 && mouseMoved) { cc.field = 6; menuSelection_ = 6; }
+        if (ui_.hoveredItem == 7 && mouseMoved) { cc.field = 7; menuSelection_ = 7; }
         contentY += btnH + btnGp;
 
         // Row 2: Save to Mod | Save Local
         bool modSavePressed  = ui_.win98Button(8, "Save to Mod",  lCX,             contentY, half, btnH, cc.field == 8);
         bool localSavePressed = ui_.win98Button(9, "Save Local",  lCX + half + btnGp, contentY, half, btnH, cc.field == 9);
-        if (ui_.hoveredItem == 8 && !usingGamepad_) cc.field = 8;
-        if (ui_.hoveredItem == 9 && !usingGamepad_) cc.field = 9;
+        if (ui_.hoveredItem == 8 && mouseMoved) { cc.field = 8; menuSelection_ = 8; }
+        if (ui_.hoveredItem == 9 && mouseMoved) { cc.field = 9; menuSelection_ = 9; }
         contentY += btnH + btnGp;
 
         // Row 3: Back (full width)
         bool backPressed = ui_.win98Button(10, "Back", lCX, contentY, lRW, btnH, cc.field == 10);
-        if (ui_.hoveredItem == 10 && !usingGamepad_) cc.field = 10;
+        if (ui_.hoveredItem == 10 && mouseMoved) { cc.field = 10; menuSelection_ = 10; }
 
         // win98Button already consumed mouseClicked and returns true only on click
         if (!modalOpen) {
@@ -885,11 +894,11 @@ void Game::renderCharCreator() {
                              scX + 34,       sy, scW - 64,    fcBtnH, cc.playAnimation);
     bool nextClicked   = ui_.win98Button(62, ">",
                              scX + scW - 28, sy, 26,          fcBtnH, false);
-    if (!modalOpen && ui_.mouseClicked && frameCount > 1) {
+    if (!modalOpen && frameCount > 1) {
         if (prevClicked) { cc.playAnimation = false; cc.previewFrame = (cc.previewFrame + frameCount - 1) % frameCount; }
         if (nextClicked) { cc.playAnimation = false; cc.previewFrame = (cc.previewFrame + 1) % frameCount; }
     }
-    if (!modalOpen && ui_.mouseClicked && toggleClicked) cc.playAnimation = !cc.playAnimation;
+    if (!modalOpen && toggleClicked) cc.playAnimation = !cc.playAnimation;
     sy += fcBtnH + 10;
 
     // Thin separator
@@ -973,7 +982,7 @@ void Game::renderCharCreator() {
 
 // Mod build folder helper
 
-/*static*/ std::string Game::modBuildFolder(const std::string& modId, const std::string& displayName) {
+/*static*/ std::string Game::modBuildFolder(const std::string& modId, const std::string& displayName, const std::string& author) {
     std::string base = "mods/" + modId;
     mkdir("mods",                                  0755);
     mkdir(base.c_str(),                            0755);
@@ -999,7 +1008,7 @@ void Game::renderCharCreator() {
         fprintf(f, "[mod]\n");
         fprintf(f, "id=%s\n",          modId.c_str());
         fprintf(f, "name=%s\n",        displayName.c_str());
-        fprintf(f, "author=Unknown\n");
+        fprintf(f, "author=%s\n",     author.c_str());
         fprintf(f, "version=1.0\n");
         fprintf(f, "description=\n");
         fprintf(f, "game_version=1\n\n");
@@ -1038,38 +1047,67 @@ void Game::saveCharacterToFolder(const std::string& folderPath) {
     fprintf(f, "shoot_y=%.0f\n",     cc.shootOffsetY);
     fclose(f);
 
-    // If no sprites exist, copy default templates
-    if (!cc.loaded || cc.charDef.bodySprites.empty()) {
-        auto copySprite = [&](const char* srcPat, const char* dstPat, int count) {
-            for (int i = 1; i <= count; i++) {
-                char src[256], dst[256];
-                snprintf(src, sizeof(src), srcPat, i);
-                snprintf(dst, sizeof(dst), dstPat, i);
-                std::string dstPath = folderPath + "/" + dst;
-                FILE* check = fopen(dstPath.c_str(), "rb");
-                if (check) { fclose(check); continue; }
-                const char* srcDirs[] = {"romfs/sprites/player/", "sprites/player/"};
-                for (const char* sd : srcDirs) {
-                    std::string srcPath = std::string(sd) + src;
-                    FILE* sf = fopen(srcPath.c_str(), "rb");
-                    if (sf) {
-                        FILE* df = fopen(dstPath.c_str(), "wb");
-                        if (df) {
-                            char buffer[4096]; size_t bytes;
-                            while ((bytes = fread(buffer, 1, sizeof(buffer), sf)) > 0)
-                                fwrite(buffer, 1, bytes, df);
-                            fclose(df);
-                        }
-                        fclose(sf);
-                        break;
+    auto copyFile = [](const std::string& src, const std::string& dst) {
+        FILE* check = fopen(dst.c_str(), "rb");
+        if (check) { fclose(check); return; }
+        FILE* sf = fopen(src.c_str(), "rb");
+        if (!sf) return;
+        FILE* df = fopen(dst.c_str(), "wb");
+        if (df) {
+            char buf[4096]; size_t n;
+            while ((n = fread(buf, 1, sizeof(buf), sf)) > 0)
+                fwrite(buf, 1, n, df);
+            fclose(df);
+        }
+        fclose(sf);
+    };
+
+    // Determine sprite source: loaded character folder, or default player templates
+    std::string srcFolder = (cc.loaded && !cc.charDef.folder.empty())
+        ? cc.charDef.folder   // ends with '/'
+        : std::string();
+
+    std::string normDest = folderPath;
+    if (!normDest.empty() && normDest.back() != '/') normDest += '/';
+
+    bool srcIsDest = (!srcFolder.empty() && srcFolder == normDest);
+
+    if (!srcIsDest) {
+        if (!srcFolder.empty()) {
+            // Copy all PNGs from the loaded character folder to the new location
+            DIR* sd = opendir(srcFolder.c_str());
+            if (sd) {
+                struct dirent* ent;
+                while ((ent = readdir(sd)) != nullptr) {
+                    if (ent->d_name[0] == '.') continue;
+                    std::string fn(ent->d_name);
+                    if (fn.size() < 5) continue;
+                    std::string ext = fn.substr(fn.size() - 4);
+                    for (char& c : ext) c = (char)tolower((unsigned char)c);
+                    if (ext != ".png") continue;
+                    copyFile(srcFolder + fn, normDest + fn);
+                }
+                closedir(sd);
+                printf("Copied sprites from %s to %s\n", srcFolder.c_str(), normDest.c_str());
+            }
+        } else {
+            // No loaded character - copy default player sprite templates
+            auto copySprite = [&](const char* srcPat, const char* dstPat, int count) {
+                for (int i = 1; i <= count; i++) {
+                    char src[256], dst[256];
+                    snprintf(src, sizeof(src), srcPat, i);
+                    snprintf(dst, sizeof(dst), dstPat, i);
+                    const char* srcDirs[] = {"romfs/sprites/player/", "sprites/player/"};
+                    for (const char* dir : srcDirs) {
+                        copyFile(std::string(dir) + src, normDest + dst);
                     }
                 }
-            }
-        };
-        copySprite("body-%04d.png", "body-%04d.png", 11);
-        copySprite("legs-%04d.png", "legs-%04d.png", 8);
-        copySprite("death-%d.png",  "death-%d.png",  12);
-        printf("Copied default sprite templates to %s\n", folderPath.c_str());
+            };
+            copySprite("body-%04d.png", "body-%04d.png", 11);
+            copySprite("legs-%04d.png", "legs-%04d.png", 8);
+            copySprite("death-%d.png",  "death-%d.png",  12);
+            printf("Copied default sprite templates to %s\n", normDest.c_str());
+        }
     }
 
     printf("Character saved: %s\n", cfgPath.c_str());
@@ -1197,14 +1235,16 @@ void Game::testCharacter() {
 
 void Game::openModSaveDialog(ModSaveDialogState::Asset asset) {
     auto& d = modSaveDialog_;
-    d.phase       = ModSaveDialogState::ChooseMod;
-    d.asset       = asset;
-    d.selIdx      = 0;
-    d.confirmed   = false;
+    d.phase         = ModSaveDialogState::ChooseMod;
+    d.asset         = asset;
+    d.selIdx        = 0;
+    d.confirmed     = false;
     d.newModId.clear();
-    d.textEditing = false;
-    d.gpCharIdx   = 0;
-    d.catIdx      = 0;
+    d.newModAuthor.clear();
+    d.editingAuthor = false;
+    d.textEditing   = false;
+    d.gpCharIdx     = 0;
+    d.catIdx        = 0;
     d.confirmedModFolder.clear();
 
     // Snapshot current mod list (exclude sync mods)
@@ -1224,6 +1264,7 @@ void Game::handleModSaveDialogEvent(const SDL_Event& e) {
     static const char modNamePal[] = "abcdefghijklmnopqrstuvwxyz0123456789_-";
     auto beginNewModName = [&]() {
         d.phase = ModSaveDialogState::NameNewMod;
+        d.editingAuthor = false;
         d.textEditing = true;
         d.gpCharIdx = 0;
         softKB_.open(&d.newModId, 24, [this](bool confirmed) {
@@ -1231,8 +1272,21 @@ void Game::handleModSaveDialogEvent(const SDL_Event& e) {
             dialog.textEditing = false;
             if (!dialog.isOpen()) return;
             if (confirmed && !dialog.newModId.empty()) {
-                dialog.confirmedModFolder = modBuildFolder(dialog.newModId, dialog.newModId);
-                dialog.confirmed = true;
+                dialog.editingAuthor = true;
+                dialog.textEditing = true;
+                softKB_.open(&dialog.newModAuthor, 32, [this](bool confirmed2) {
+                    auto& dlg = modSaveDialog_;
+                    dlg.editingAuthor = false;
+                    dlg.textEditing = false;
+                    if (!dlg.isOpen()) return;
+                    if (confirmed2) {
+                        if (dlg.newModAuthor.empty()) dlg.newModAuthor = "Unknown";
+                        dlg.confirmedModFolder = modBuildFolder(dlg.newModId, dlg.newModId, dlg.newModAuthor);
+                        dlg.confirmed = true;
+                    } else {
+                        dlg.phase = ModSaveDialogState::ChooseMod;
+                    }
+                });
             } else {
                 dialog.phase = ModSaveDialogState::ChooseMod;
             }
@@ -1251,12 +1305,10 @@ void Game::handleModSaveDialogEvent(const SDL_Event& e) {
                     if (d.selIdx == 0) {
                         beginNewModName();
                     } else {
-                        // Existing mod selected
+                        // Existing mod selected -- destination folder is implied
+                        // by the asset type, so save immediately.
                         d.confirmedModFolder = "mods/" + d.modIds[d.selIdx - 1];
-                        if (false)
-                            d.phase = ModSaveDialogState::ChooseCategory;
-                        else
-                            d.confirmed = true;
+                        d.confirmed = true;
                     }
                     break;
                 case SDLK_ESCAPE: d.close(); break;
@@ -1274,10 +1326,7 @@ void Game::handleModSaveDialogEvent(const SDL_Event& e) {
                         beginNewModName();
                     } else {
                         d.confirmedModFolder = "mods/" + d.modIds[d.selIdx - 1];
-                        if (false)
-                            d.phase = ModSaveDialogState::ChooseCategory;
-                        else
-                            d.confirmed = true;
+                        d.confirmed = true;
                     }
                     break;
                 case SDL_CONTROLLER_BUTTON_B:
@@ -1288,8 +1337,11 @@ void Game::handleModSaveDialogEvent(const SDL_Event& e) {
     else if (d.phase == ModSaveDialogState::NameNewMod) {
         if (e.type == SDL_KEYDOWN) {
             switch (e.key.keysym.sym) {
-                case SDLK_BACKSPACE:
-                    if (!d.newModId.empty()) d.newModId.pop_back(); break;
+                case SDLK_BACKSPACE: {
+                    std::string& cur = d.editingAuthor ? d.newModAuthor : d.newModId;
+                    if (!cur.empty()) cur.pop_back();
+                    break;
+                }
                 case SDLK_ESCAPE:
                     if (softKB_.active) softKB_.close(false);
                     else d.phase = ModSaveDialogState::ChooseMod;
@@ -1369,14 +1421,28 @@ void Game::renderModSaveDialog() {
                 if (ui_.win98Button(40 + i, "+ New Mod", panX + 20, y, panW - 40, 28, sel)) {
                     d.selIdx = i;
                     d.phase = ModSaveDialogState::NameNewMod;
+                    d.editingAuthor = false;
                     d.textEditing = true;
                     softKB_.open(&d.newModId, 24, [this](bool confirmed) {
                         auto& dialog = modSaveDialog_;
                         dialog.textEditing = false;
                         if (!dialog.isOpen()) return;
                         if (confirmed && !dialog.newModId.empty()) {
-                            dialog.confirmedModFolder = modBuildFolder(dialog.newModId, dialog.newModId);
-                            dialog.confirmed = true;
+                            dialog.editingAuthor = true;
+                            dialog.textEditing = true;
+                            softKB_.open(&dialog.newModAuthor, 32, [this](bool confirmed2) {
+                                auto& dlg = modSaveDialog_;
+                                dlg.editingAuthor = false;
+                                dlg.textEditing = false;
+                                if (!dlg.isOpen()) return;
+                                if (confirmed2) {
+                                    if (dlg.newModAuthor.empty()) dlg.newModAuthor = "Unknown";
+                                    dlg.confirmedModFolder = modBuildFolder(dlg.newModId, dlg.newModId, dlg.newModAuthor);
+                                    dlg.confirmed = true;
+                                } else {
+                                    dlg.phase = ModSaveDialogState::ChooseMod;
+                                }
+                            });
                         } else {
                             dialog.phase = ModSaveDialogState::ChooseMod;
                         }
@@ -1384,14 +1450,18 @@ void Game::renderModSaveDialog() {
                 }
             } else {
                 char buf[80];
-                snprintf(buf, sizeof(buf), "%s  (%s)", d.modNames[i-1].c_str(), d.modIds[i-1].c_str());
+                const char* nm = d.modNames[i-1].c_str();
+                const char* id = d.modIds[i-1].c_str();
+                if (d.modNames[i-1] != d.modIds[i-1])
+                    snprintf(buf, sizeof(buf), "%s  (%s)", nm, id);
+                else
+                    snprintf(buf, sizeof(buf), "%s", nm);
                 if (ui_.win98Button(40 + i, buf, panX + 20, y, panW - 40, 28, sel)) {
                     d.selIdx = i;
                     d.confirmedModFolder = "mods/" + d.modIds[i - 1];
                     d.confirmed = true;
                 }
             }
-            if (ui_.hoveredItem == 40 + i && !usingGamepad_) d.selIdx = i;
             y += 32;
         }
 
@@ -1399,19 +1469,25 @@ void Game::renderModSaveDialog() {
         { UI::HintPair hints[] = { {UI::Action::Navigate, "Navigate"}, {UI::Action::Confirm, "Confirm"}, {UI::Action::Back, "Cancel"} };
           ui_.drawHintBar(hints, 3, y); }
     }
-    // Phase: name new mod
+    // Phase: name new mod (two steps: ID then author)
     else if (d.phase == ModSaveDialogState::NameNewMod) {
-        ui_.drawTextCentered("Type a mod name", y, 13, UI::W98::Shadow);
+        if (!d.editingAuthor) {
+            ui_.drawTextCentered("Step 1 of 2: Enter mod folder name", y, 13, UI::W98::Shadow);
+        } else {
+            ui_.drawTextCentered("Step 2 of 2: Enter author name (Enter to skip)", y, 13, UI::W98::Shadow);
+        }
         y += 30;
 
-        // Win98 text field with blinking cursor
-        std::string display = d.newModId;
+        const std::string& display = d.editingAuthor ? d.newModAuthor : d.newModId;
         int bx = panX + 80, bw = panW - 160, bh = 30;
         ui_.drawWin98TextField(bx, y, bw, bh, display.c_str(), true, false,
                                (float)fmod(gameTime_ * 1.0, 1.0));
         y += bh + 16;
 
-        ui_.drawTextCentered("If you see this, have a great day!", y, 11, UI::W98::Shadow);
+        if (!d.editingAuthor)
+            ui_.drawTextCentered("Letters, digits, _ and - only", y, 11, UI::W98::Shadow);
+        else
+            ui_.drawTextCentered("Your name or handle", y, 11, UI::W98::Shadow);
         renderSoftKB();
         y = panY + panH - 40;
         ui_.drawTextCentered("ENTER / OK confirms   ESC / CANCEL goes back", y, 11, UI::W98::Shadow);
@@ -1429,7 +1505,6 @@ void Game::renderModSaveDialog() {
                 d.confirmedCat = i;
                 d.confirmed = true;
             }
-            if (ui_.hoveredItem == 20 + i && !usingGamepad_) d.catIdx = i;
             y += 30;
         }
 

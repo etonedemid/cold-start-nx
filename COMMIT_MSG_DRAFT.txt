@@ -1,8 +1,0 @@
-﻿@ v2.3.0
-
-Vehicle system alpha
-
-added support for two-layered editor mode
-
-Player hit invulnerability window (0.1s), health system revamp
-

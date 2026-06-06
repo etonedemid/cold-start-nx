@@ -29,7 +29,8 @@ enum class TriggerType : uint8_t {
     TeamSpawnYellow  = 13, // team 3 spawn
     LayerFade        = 14, // zone where top image layer fades when player is inside
     CollisionZone    = 15, // invisible solid rectangle (can be rotated); blocks player + enemies
-    COUNT            = 16,
+    Cutscene         = 16, // triggers a cutscene; param = cutscene index in the map's .csc library
+    COUNT            = 17,
 };
 
 // End-goal unlock condition
