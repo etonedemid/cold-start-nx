@@ -4,6 +4,7 @@
 #include "camera.h"
 #include "assets.h"
 #include "ui.h"
+#include "cutscene_editor.h"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 #include <string>
@@ -305,4 +306,15 @@ private:
 
     // Switch software keyboard
     std::string showSoftwareKeyboard(const std::string& headerText, const std::string& initialText, int maxLen = 64);
+
+    // Cutscene / Dialog editor
+    CutsceneEditor csEditor_;
+    CutsceneLibrary csLib_;
+    bool showCutsceneEditor_ = false;
+    void saveCutsceneLib();
+    void loadCutsceneLib();
+    // Bottom padding when cutscene editor is open (used to clip map viewport)
+    int csEditorBottom() const { return showCutsceneEditor_ ? CS_EDITOR_PANEL_H : 0; }
+    // Preview actor overlays on map canvas at current scrub time
+    void renderCutsceneActorOverlays(SDL_Renderer* renderer);
 };

@@ -50,6 +50,10 @@ bool MapEditor::init(SDL_Renderer* renderer, int screenW, int screenH, UI::Conte
 
     loadPalette();
     newMap(32, 32); // default map size
+
+    csEditor_.init(renderer, screenW, screenH, ui);
+    csEditor_.setLibrary(&csLib_);
+
     return true;
 }
 
@@ -441,11 +445,31 @@ bool MapEditor::saveMap(const std::string& path) {
     bool ok = map_.saveToFile(path);
     if (ok) {
         saveMessage_ = "Saved to " + path;
+        saveCutsceneLib();
     } else {
         saveMessage_ = "Save failed!";
     }
     saveMessageTimer_ = 2.5f;
     return ok;
+}
+
+void MapEditor::saveCutsceneLib() {
+    if (savePath_.empty()) return;
+    std::string cscPath = savePath_;
+    size_t dot = cscPath.rfind('.');
+    if (dot != std::string::npos) cscPath = cscPath.substr(0, dot);
+    cscPath += ".csc";
+    if (!csLib_.cutscenes.empty())
+        csLib_.save(cscPath);
+}
+
+void MapEditor::loadCutsceneLib() {
+    if (savePath_.empty()) return;
+    std::string cscPath = savePath_;
+    size_t dot = cscPath.rfind('.');
+    if (dot != std::string::npos) cscPath = cscPath.substr(0, dot);
+    cscPath += ".csc";
+    csLib_.load(cscPath); // fails silently if file doesn't exist yet
 }
 
 void MapEditor::performModSave(const std::string& modFolder) {
@@ -479,6 +503,7 @@ bool MapEditor::loadMap(const std::string& path) {
     undoStack_.clear();
     redoStack_.clear();
     undoPushedForStroke_ = false;
+    loadCutsceneLib();
 
     // Auto-detect layer images from map filename when not stored in CSM
     {
@@ -550,6 +575,16 @@ void MapEditor::handleInput(SDL_Event& e) {
     if (showConfig_) {
         handleConfigInput(e);
         return;
+    }
+
+    // Cutscene editor intercepts events when panel is open
+    if (showCutsceneEditor_) {
+        csEditor_.handleEvent(e, zoom_, camera_.pos.x, camera_.pos.y);
+        // If the click landed in the cutscene panel, don't let the map editor consume it
+        if (e.type == SDL_MOUSEBUTTONDOWN) {
+            int my = e.button.y;
+            if (my >= screenH_ - CS_EDITOR_PANEL_H) return;
+        }
     }
 
     // Touch events
@@ -970,6 +1005,9 @@ void MapEditor::update(float dt) {
 
     // Tick timers
     if (saveMessageTimer_ > 0) saveMessageTimer_ -= dt;
+
+    // Cutscene editor
+    if (showCutsceneEditor_) csEditor_.update(dt);
 
     // Update gamepad virtual cursor
     updateGamepadCursor(dt);
@@ -1398,6 +1436,45 @@ void MapEditor::render(SDL_Renderer* renderer) {
 
     // Gamepad / touch cursor
     renderCursor(renderer);
+
+    // Cutscene editor panel (bottom strip)
+    if (showCutsceneEditor_) {
+        int panelY = screenH_ - CS_EDITOR_PANEL_H;
+        csEditor_.render(renderer, screenW_, panelY);
+        renderCutsceneActorOverlays(renderer);
+    }
+}
+
+void MapEditor::renderCutsceneActorOverlays(SDL_Renderer* renderer) {
+    const Cutscene* cs = csEditor_.currentCutscene();
+    if (!cs) return;
+    for (int i = 0; i < csEditor_.actorCount(); i++) {
+        const CsActorState* s = csEditor_.actorStateAt(i);
+        if (!s || !s->visible) continue;
+        const CsActor& a = cs->actors[i];
+
+        int sx = worldToScreenX(s->x);
+        int sy = worldToScreenY(s->y);
+
+        // Draw a simple colored diamond marker for each actor
+        SDL_Color col;
+        switch (a.type) {
+            case CsActorType::Player:     col = {100, 200, 255, 200}; break;
+            case CsActorType::Enemy:      col = {255, 120,  80, 200}; break;
+            default:                      col = {180, 255, 180, 200}; break;
+        }
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, col.a);
+        int r = (int)(10 * zoom_);
+        SDL_RenderDrawLine(renderer, sx-r, sy,   sx,   sy-r);
+        SDL_RenderDrawLine(renderer, sx,   sy-r, sx+r, sy);
+        SDL_RenderDrawLine(renderer, sx+r, sy,   sx,   sy+r);
+        SDL_RenderDrawLine(renderer, sx,   sy+r, sx-r, sy);
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+
+        // Label
+        drawEditorText(renderer, a.name.c_str(), sx+r+2, sy-8, 11, {col.r, col.g, col.b, 255});
+    }
 }
 
 void MapEditor::renderGrid(SDL_Renderer* renderer) {
@@ -2083,6 +2160,22 @@ void MapEditor::renderToolbar(SDL_Renderer* renderer) {
     // Center: map info
     int centerX = gridX + 274;
     int rightEdge = screenW_ - PALETTE_W - 230;
+
+    // Scene (cutscene editor) toggle — only unlocked while K is held
+    {
+        const Uint8* ks = SDL_GetKeyboardState(nullptr);
+        bool kHeld = ks && ks[SDL_SCANCODE_K];
+        if (ui_->win98Button(120, "Scene", gridX + 280, 4, 60, toolBtnH, showCutsceneEditor_) && kHeld) {
+            showCutsceneEditor_ = !showCutsceneEditor_;
+            csEditor_.setActive(showCutsceneEditor_);
+        }
+        if (!kHeld) {
+            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(renderer_, 192, 192, 192, 160);
+            SDL_Rect dim = {gridX + 280, 4, 60, toolBtnH};
+            SDL_RenderFillRect(renderer_, &dim);
+        }
+    }
 
     // Save / Play buttons
     if (ui_->win98Button(110, "Save", screenW_ - PALETTE_W - 228, 4, 110, toolBtnH, false))

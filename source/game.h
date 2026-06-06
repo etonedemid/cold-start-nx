@@ -11,6 +11,7 @@
 #include "mapformat.h"
 #include "charformat.h"
 #include "editor.h"
+#include "texeditor.h"
 #include "mappack.h"
 #include "pickup.h"
 #include "gamemode.h"
@@ -98,6 +99,8 @@ enum class GameState {
     LocalCoopGame,   // active splitscreen game
     LocalCoopPaused, // paused from splitscreen
     LocalCoopDead,   // all local players dead
+    // Tools
+    SpriteEditor,    // standalone in-app pixel/sprite editor (TextureEditor)
 };
 
 struct GameConfig {
@@ -186,8 +189,10 @@ struct ModSaveDialogState {
     std::vector<std::string> modNames;
     int selIdx = 0;    // 0 = "＋ New Mod", 1+ = existing mods
 
-    // New-mod name input
+    // New-mod name/author input
     std::string newModId;
+    std::string newModAuthor;
+    bool        editingAuthor = false; // true when softKB is on the author field
     bool        textEditing = false;
     int         gpCharIdx   = 0;
 
@@ -384,6 +389,7 @@ private:
 
     // Map Editor
     MapEditor editor_;
+    TextureEditor texEditor_;   // standalone in-app pixel/sprite editor
 
     // Touch / on-screen controls (Android only)
 #ifdef __ANDROID__
@@ -702,11 +708,14 @@ private:
 
     // Mod-save overlay dialog
     ModSaveDialogState modSaveDialog_;
-    bool charCreatorWantsModSave_ = false;
     void openModSaveDialog(ModSaveDialogState::Asset asset);
     void handleModSaveDialogEvent(const SDL_Event& e);
     void renderModSaveDialog();
-    static std::string modBuildFolder(const std::string& modId, const std::string& displayName);
+    // Run from the main loop (not update(), which is gameplay-only) so they
+    // work in the character creator / editor menus too.
+    void processModSaveConfirm();             // execute a confirmed mod-save
+    void updateCharCreatorPreview(float dt);  // advance the preview animation
+    static std::string modBuildFolder(const std::string& modId, const std::string& displayName, const std::string& author = "Unknown");
     void applyResolutionSettings(bool rebuildTargets = true);
     void updateAspectMode();
     bool rebuildScreenTextures();
@@ -839,6 +848,7 @@ private:
     std::vector<std::string> workshopIconsReady_;  // IDs whose temp files are ready to load
     std::thread workshopIconThread_;
     std::atomic<bool> workshopIconStop_{false};
+    std::atomic<bool> workshopListReady_{false}; // set by bg thread; main thread calls fetchWorkshopIcons()
 
     // Download thread state
     std::atomic<bool> workshopDownloading_{false};

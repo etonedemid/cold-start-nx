@@ -1,6 +1,6 @@
 # Maintainer: etonedemid <etonedemid@proton.me>
 pkgname=cold-start
-pkgver=2.3.0
+pkgver=2.5.0
 pkgrel=1
 pkgdesc="Top-down twin-stick shooter with wave-based combat - Nintendo Switch homebrew, also playable on PC"
 arch=('x86_64')

@@ -23,7 +23,7 @@ for dll in \
     libjpeg-8.dll libpng16-16.dll zlib1.dll \
     libwebp-7.dll libwebpdecoder-3.dll libwebpdemux-2.dll libwebpmux-3.dll \
     libogg-0.dll libvorbis-0.dll libvorbisfile-3.dll \
-    libfreetype-6.dll libcurl-4.dll miniupnpc.dll; do
+    libfreetype-6.dll libcurl-4.dll libminiupnpc.dll; do
     [ -f "$MINGW/$dll" ] && cp "$MINGW/$dll" $WIN_STAGE/ || echo "  WARN: $dll not found"
 done
 # Also include any DLLs the build dropped next to the exe
