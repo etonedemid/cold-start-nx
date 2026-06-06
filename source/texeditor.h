@@ -102,6 +102,10 @@ private:
     void drawRectPixels(int x0, int y0, int x1, int y1, TexelColor c, bool filled);
     void drawCirclePixels(int cx, int cy, int rx, int ry, TexelColor c, bool filled);
 
+    // Whole-canvas effects
+    void applyBlur();          // 3x3 alpha-weighted box blur
+    void applyRandomShift();   // per-pixel random jitter/scatter
+
     // Undo / Redo
     static constexpr int MAX_UNDO = 50;
     std::vector<std::vector<TexelColor>> undoStack_;
@@ -118,6 +122,7 @@ private:
     int lastPx_ = -1, lastPy_ = -1; // last painted pixel (for pen stroke)
     bool shapeStarted_ = false;     // line/rect/circle first point set
     int shapeX0_ = 0, shapeY0_ = 0;
+    bool fillShapes_ = false;       // rect/circle drawn filled when true
 
     // Palette
     static constexpr int PALETTE_SIZE = 32;

@@ -219,29 +219,76 @@ void TextureEditor::drawRectPixels(int x0, int y0, int x1, int y1, TexelColor c,
 }
 
 void TextureEditor::drawCirclePixels(int cx, int cy, int rx, int ry, TexelColor c, bool filled) {
-    // Midpoint ellipse
+    rx = abs(rx); ry = abs(ry);
     if (rx == 0 && ry == 0) { setPixel(cx, cy, c); return; }
-    if (rx == 0) { for (int y = cy - ry; y <= cy + ry; y++) setPixel(cx, y, c); return; }
-    if (ry == 0) { for (int x = cx - rx; x <= cx + rx; x++) setPixel(x, cy, c); return; }
+    if (rx == 0) { for (int y = -ry; y <= ry; y++) setPixel(cx, cy + y, c); return; }
+    if (ry == 0) { for (int x = -rx; x <= rx; x++) setPixel(cx + x, cy, c); return; }
 
+    // A point is inside the ellipse when (x/rx)^2 + (y/ry)^2 <= 1.
+    auto inside = [rx, ry](int x, int y) {
+        float ex = (float)x / rx, ey = (float)y / ry;
+        return ex * ex + ey * ey <= 1.0f;
+    };
     for (int y = -ry; y <= ry; y++) {
         for (int x = -rx; x <= rx; x++) {
-            float ex = (float)x / rx;
-            float ey = (float)y / ry;
-            if (ex * ex + ey * ey <= 1.0f) {
-                if (filled) {
-                    setPixel(cx + x, cy + y, c);
-                } else {
-                    // only draw edge pixels
-                    float ex2 = (float)(abs(x) - 1) / rx;
-                    float ey2 = (float)(abs(y) - 1) / ry;
-                    if (ex2 * ex2 + ey2 * ey2 > 1.0f || abs(x) == rx || abs(y) == ry) {
-                        setPixel(cx + x, cy + y, c);
-                    }
-                }
+            if (!inside(x, y)) continue;
+            // Outline = an inside pixel with at least one 4-neighbour outside.
+            // This yields a clean, gap-free 1px border (the old test left holes).
+            if (filled ||
+                !inside(x - 1, y) || !inside(x + 1, y) ||
+                !inside(x, y - 1) || !inside(x, y + 1)) {
+                setPixel(cx + x, cy + y, c);
             }
         }
     }
+}
+
+void TextureEditor::applyBlur() {
+    if (pixels_.empty()) return;
+    std::vector<TexelColor> src = pixels_;
+    for (int y = 0; y < canvasH_; y++) {
+        for (int x = 0; x < canvasW_; x++) {
+            // Alpha-weighted RGB average over a 3x3 kernel so transparent
+            // pixels don't bleed black halos into the edges.
+            int sumA = 0, n = 0;
+            long sumR = 0, sumG = 0, sumB = 0, sumW = 0;
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    int nx = x + dx, ny = y + dy;
+                    if (nx < 0 || nx >= canvasW_ || ny < 0 || ny >= canvasH_) continue;
+                    const TexelColor& s = src[ny * canvasW_ + nx];
+                    sumA += s.a; n++;
+                    sumR += (long)s.r * s.a; sumG += (long)s.g * s.a; sumB += (long)s.b * s.a;
+                    sumW += s.a;
+                }
+            }
+            TexelColor& d = pixels_[y * canvasW_ + x];
+            d.a = (uint8_t)(n ? sumA / n : 0);
+            if (sumW > 0) {
+                d.r = (uint8_t)(sumR / sumW);
+                d.g = (uint8_t)(sumG / sumW);
+                d.b = (uint8_t)(sumB / sumW);
+            }
+        }
+    }
+    updateCanvasTexture();
+}
+
+void TextureEditor::applyRandomShift() {
+    if (pixels_.empty()) return;
+    std::vector<TexelColor> src = pixels_;
+    int amt = std::max(1, brushSize_);  // jitter magnitude follows brush size
+    int span = 2 * amt + 1;
+    for (int y = 0; y < canvasH_; y++) {
+        for (int x = 0; x < canvasW_; x++) {
+            int sx = x + (rand() % span - amt);
+            int sy = y + (rand() % span - amt);
+            sx = std::max(0, std::min(canvasW_ - 1, sx));
+            sy = std::max(0, std::min(canvasH_ - 1, sy));
+            pixels_[y * canvasW_ + x] = src[sy * canvasW_ + sx];
+        }
+    }
+    updateCanvasTexture();
 }
 
 // Undo / Redo
@@ -661,6 +708,11 @@ void TextureEditor::handleEditingInput(const SDL_Event& e) {
         if (key == SDLK_o) currentTool_ = TexTool::Circle;
         if (key == SDLK_i) currentTool_ = TexTool::Eyedropper;
 
+        // Fill toggle (rect/circle) + one-shot canvas effects
+        if (key == SDLK_f) fillShapes_ = !fillShapes_;
+        if (key == SDLK_m) { pushUndo(); applyBlur(); }
+        if (key == SDLK_n) { pushUndo(); applyRandomShift(); }
+
         // Grid toggle
         if (key == SDLK_h) showGrid_ = !showGrid_;
 
@@ -744,12 +796,12 @@ void TextureEditor::handleEditingInput(const SDL_Event& e) {
                             drawLinePixels(shapeX0_, shapeY0_, cx, cy, currentColor_);
                             break;
                         case TexTool::Rect:
-                            drawRectPixels(shapeX0_, shapeY0_, cx, cy, currentColor_, false);
+                            drawRectPixels(shapeX0_, shapeY0_, cx, cy, currentColor_, fillShapes_);
                             break;
                         case TexTool::Circle: {
                             int rx = abs(cx - shapeX0_), ry = abs(cy - shapeY0_);
                             int ccx = (shapeX0_ + cx) / 2, ccy = (shapeY0_ + cy) / 2;
-                            drawCirclePixels(ccx, ccy, rx / 2, ry / 2, currentColor_, false);
+                            drawCirclePixels(ccx, ccy, rx / 2, ry / 2, currentColor_, fillShapes_);
                             break;
                         }
                         default: break;
@@ -913,40 +965,23 @@ void TextureEditor::handlePaletteClick(int mx, int my) {
 }
 
 void TextureEditor::handleToolbarClick(int mx, int my) {
-   // Toolbar buttons - must match layout in renderToolbar()
-    int numTools = (int)TexTool::Count;
-    int btnW = 52, btnH = 36;
-    int startX = PALETTE_W + 10;
+    // Button layout MUST stay in sync with renderToolbar().
+    const int y = 6, btnH = 36, tw = 46, gap = 3;
+    auto hit = [&](int x, int w) { return mx >= x && mx < x + w && my >= y && my < y + btnH; };
 
-    for (int i = 0; i < numTools; i++) {
-        int bx = startX + i * (btnW + 4);
-        if (mx >= bx && mx < bx + btnW && my >= 6 && my < 6 + btnH) {
-            currentTool_ = (TexTool)i;
-            return;
-        }
+    int x = PALETTE_W + 8;
+    for (int i = 0; i < (int)TexTool::Count; i++) {
+        if (hit(x, tw)) { currentTool_ = (TexTool)i; return; }
+        x += tw + gap;
     }
-
-    // Separator and subsequent buttons - positions must match renderToolbar
-    int sepX = startX + numTools * (btnW + 4) + 8;
-
-    // Save button
-    int saveX = sepX + 12;
-    if (mx >= saveX && mx < saveX + 60 && my >= 6 && my < 6 + btnH) {
-        wantsModSave_ = true;
-        return;
-    }
-
-    // Undo button
-    int undoX = sepX + 84;
-    if (mx >= undoX && mx < undoX + 44 && my >= 6 && my < 6 + btnH) {
-        undo();
-        return;
-    }
-    // Redo button
-    if (mx >= undoX + 48 && mx < undoX + 92 && my >= 6 && my < 6 + btnH) {
-        redo();
-        return;
-    }
+    x += 6;  // separator
+    if (hit(x, tw)) { fillShapes_ = !fillShapes_;          return; }  x += tw + gap;
+    if (hit(x, tw)) { pushUndo(); applyBlur();             return; }  x += tw + gap;
+    if (hit(x, tw)) { pushUndo(); applyRandomShift();      return; }  x += tw + gap;
+    x += 6;
+    if (hit(x, 54)) { wantsModSave_ = true;                return; }  x += 54 + gap;
+    if (hit(x, tw)) { undo();                              return; }  x += tw + gap;
+    if (hit(x, tw)) { redo();                              return; }  x += tw + gap;
 }
 
 // Update
@@ -1009,205 +1044,111 @@ void TextureEditor::render() {
 }
 
 void TextureEditor::renderConfig() {
-    auto& A = Assets::instance();
-    TTF_Font* font = A.font(20);
-    TTF_Font* fontSm = A.font(14);
-    TTF_Font* fontLg = A.font(30);
+    if (!ui_) return;  // Win98 UI context is wired in by Game::init
 
-    // Background
-    SDL_SetRenderDrawColor(renderer_, 6, 8, 16, 255);
-    SDL_Rect full = {0, 0, screenW_, screenH_};
-    SDL_RenderFillRect(renderer_, &full);
+    // Win98 desktop + centered window, matching the rest of the app.
+    ui_->drawDesktop();
 
-    // Panel
-    int pw = 560, ph = 420;
-    int px = (screenW_ - pw) / 2, py = (screenH_ - ph) / 2 - 20;
-    SDL_SetRenderDrawColor(renderer_, 14, 16, 26, 255);
-    SDL_Rect panel = {px, py, pw, ph};
-    SDL_RenderFillRect(renderer_, &panel);
-    SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 80);
-    SDL_RenderDrawRect(renderer_, &panel);
+    const int pw = 560, ph = 420;
+    const int px = (screenW_ - pw) / 2;
+    const int py = (screenH_ - ph) / 2 - 20;
+    ui_->drawWin98Window(px, py, pw, ph, "Sprite Editor");
 
-    // Title
-    SDL_Color cyan = {0, 255, 228, 255};
-    SDL_Color white = {255, 255, 255, 255};
-    SDL_Color gray = {120, 120, 130, 255};
-    SDL_Color green = {50, 255, 100, 255};
-    SDL_Color red = {255, 100, 100, 255};
+    const int pad    = 16;
+    const int lX     = px + pad;
+    const int rW     = pw - pad * 2;
+    const int rowH   = 26;
+    const int rowGap = 5;
+    const int labelW = 110;
+    const int valX   = lX + labelW;
+    const int valW   = rW - labelW;
+    int cy = py + UI::W98::TitleH + 14;
 
-    auto drawText = [&](const char* text, int x, int y, TTF_Font* f, SDL_Color c) {
-        SDL_Surface* s = TTF_RenderText_Blended(f, text, c);
-        if (!s) return;
-        SDL_Texture* t = SDL_CreateTextureFromSurface(renderer_, s);
-        SDL_Rect dst = {x, y, s->w, s->h};
-        SDL_RenderCopy(renderer_, t, nullptr, &dst);
-        SDL_DestroyTexture(t);
-        SDL_FreeSurface(s);
-    };
-
-    auto drawTextCentered = [&](const char* text, int y, TTF_Font* f, SDL_Color c) {
-        SDL_Surface* s = TTF_RenderText_Blended(f, text, c);
-        if (!s) return;
-        SDL_Texture* t = SDL_CreateTextureFromSurface(renderer_, s);
-        SDL_Rect dst = {screenW_ / 2 - s->w / 2, y, s->w, s->h};
-        SDL_RenderCopy(renderer_, t, nullptr, &dst);
-        SDL_DestroyTexture(t);
-        SDL_FreeSurface(s);
-    };
-
-    drawTextCentered("SPRITE EDITOR", py + 16, fontLg, cyan);
-    SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 60);
-    SDL_Rect tl = {px + pw/2 - 100, py + 54, 200, 1};
-    SDL_RenderFillRect(renderer_, &tl);
-
-    int y = py + 76;
-    int stepY = 40;
-    int labelX = px + 30;
-    int valueX = px + 200;
-
-    auto drawRow = [&](int idx, const char* label, const char* value, bool arrowHint = true) {
+    // Sunken row: label + value; selected row highlighted navy/white.
+    auto row = [&](int idx, const char* label, const char* value, bool arrows) {
         bool sel = (config_.field == idx);
-        SDL_Color c = sel ? white : gray;
-        if (sel) {
-            SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 20);
-            SDL_Rect bg = {px + 10, y - 2, pw - 20, 32};
-            SDL_RenderFillRect(renderer_, &bg);
-            SDL_SetRenderDrawColor(renderer_, 0, 255, 228, 160);
-            SDL_Rect bar = {px + 10, y - 2, 3, 32};
-            SDL_RenderFillRect(renderer_, &bar);
-        }
-        drawText(label, labelX, y + 4, font, c);
-        char buf[128];
-        if (sel && arrowHint)
-            snprintf(buf, sizeof(buf), "< %s >", value);
-        else
-            snprintf(buf, sizeof(buf), "%s", value);
-        drawText(buf, valueX, y + 4, font, sel ? cyan : gray);
-        y += stepY;
+        ui_->drawWin98Bevel(lX, cy, rW, rowH, false);
+        SDL_Color bg = sel ? UI::W98::Navy : UI::W98::Silver;
+        SDL_SetRenderDrawColor(renderer_, bg.r, bg.g, bg.b, 255);
+        SDL_Rect fill = {lX + 2, cy + 2, rW - 4, rowH - 4};
+        SDL_RenderFillRect(renderer_, &fill);
+        SDL_Color tc = sel ? UI::W98::White : UI::W98::Black;
+        ui_->drawText(label, lX + 8, cy + 6, 13, tc);
+        char buf[160];
+        if (sel && arrows) snprintf(buf, sizeof(buf), "< %s >", value);
+        else               snprintf(buf, sizeof(buf), "%s", value);
+        ui_->drawText(buf, valX, cy + 6, 13, tc);
+        cy += rowH + rowGap;
     };
 
-    // Action
-    drawRow(0, "Action:", config_.action == TexEditorConfig::NewImage ? "New Image" : "Load Image");
+    // Centered Win98 button (keyboard-selected; this screen is key-driven).
+    auto button = [&](int idx, const char* label) {
+        bool sel = (config_.field == idx);
+        const int bw = 150, bh = 28;
+        int bx = px + (pw - bw) / 2;
+        ui_->drawWin98Bevel(bx, cy, bw, bh, !sel);  // sunken when selected
+        SDL_Color bg = sel ? UI::W98::Navy : UI::W98::Silver;
+        SDL_SetRenderDrawColor(renderer_, bg.r, bg.g, bg.b, 255);
+        SDL_Rect fill = {bx + 2, cy + 2, bw - 4, bh - 4};
+        SDL_RenderFillRect(renderer_, &fill);
+        int tw = ui_->textWidth(label, 14);
+        ui_->drawText(label, bx + (bw - tw) / 2, cy + 6, 14, sel ? UI::W98::White : UI::W98::Black);
+        cy += bh + rowGap;
+    };
+
+    row(0, "Action", config_.action == TexEditorConfig::NewImage ? "New Image" : "Load Image", true);
 
     if (config_.action == TexEditorConfig::NewImage) {
-        // Template
         const char* tmplNames[] = {"Custom", "Tile 16x16", "Tile 32x32", "Tile 64x64",
                                    "Sprite 32x32", "Sprite 64x64", "Sprite 128x128", "Icon 16x16"};
-        drawRow(1, "Template:", tmplNames[(int)config_.tmpl]);
+        row(1, "Template", tmplNames[(int)config_.tmpl], true);
+        char wBuf[32]; snprintf(wBuf, sizeof(wBuf), "%d", config_.canvasW); row(2, "Width",  wBuf, true);
+        char hBuf[32]; snprintf(hBuf, sizeof(hBuf), "%d", config_.canvasH); row(3, "Height", hBuf, true);
 
-        // Width
-        char wBuf[32]; snprintf(wBuf, sizeof(wBuf), "%d", config_.canvasW);
-        drawRow(2, "Width:", wBuf);
-
-        // Height
-        char hBuf[32]; snprintf(hBuf, sizeof(hBuf), "%d", config_.canvasH);
-        drawRow(3, "Height:", hBuf);
-
-        // Name
+        // Name row (4) with a sunken text field + caret while editing.
         {
             bool sel = (config_.field == 4);
-            SDL_Color c = sel ? white : gray;
-            if (sel) {
-                SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 20);
-                SDL_Rect bg = {px + 10, y - 2, pw - 20, 32};
-                SDL_RenderFillRect(renderer_, &bg);
-                SDL_SetRenderDrawColor(renderer_, 0, 255, 228, 160);
-                SDL_Rect bar = {px + 10, y - 2, 3, 32};
-                SDL_RenderFillRect(renderer_, &bar);
-            }
-            drawText("Name:", labelX, y + 4, font, c);
-            std::string dispName = config_.name;
-            if (config_.textEditing) dispName += "_";
-            drawText(dispName.c_str(), valueX, y + 4, font, config_.textEditing ? green : (sel ? cyan : gray));
-            y += stepY;
+            ui_->drawWin98Bevel(lX, cy, rW, rowH, false);
+            SDL_Color bg = sel ? UI::W98::Navy : UI::W98::Silver;
+            SDL_SetRenderDrawColor(renderer_, bg.r, bg.g, bg.b, 255);
+            SDL_Rect fill = {lX + 2, cy + 2, rW - 4, rowH - 4};
+            SDL_RenderFillRect(renderer_, &fill);
+            ui_->drawText("Name", lX + 8, cy + 6, 13, sel ? UI::W98::White : UI::W98::Black);
+            ui_->drawWin98TextField(valX, cy + 3, valW, rowH - 6, config_.name.c_str(),
+                                    config_.textEditing, false, 0.0f);
+            cy += rowH + rowGap;
         }
 
-        // Preview size text
-        {
-            char prevBuf[64];
-            snprintf(prevBuf, sizeof(prevBuf), "Canvas: %d x %d pixels", config_.canvasW, config_.canvasH);
-            drawText(prevBuf, px + 30, y, fontSm, {0, 140, 130, 255});
-            y += stepY - 4;
-        }
+        char prevBuf[64];
+        snprintf(prevBuf, sizeof(prevBuf), "Canvas: %d x %d pixels", config_.canvasW, config_.canvasH);
+        ui_->drawText(prevBuf, lX, cy + 2, 11, UI::W98::Shadow);
+        cy += 22;
 
-        // OK
-        {
-            bool sel = (config_.field == 5);
-            SDL_Color c = sel ? green : gray;
-            if (sel) {
-                SDL_SetRenderDrawColor(renderer_, 50, 255, 100, 20);
-                SDL_Rect bg = {screenW_/2 - 80, y - 2, 160, 32};
-                SDL_RenderFillRect(renderer_, &bg);
-            }
-            drawTextCentered(sel ? "> CREATE <" : "CREATE", y + 4, font, c);
-            y += stepY;
-        }
-        // Cancel
-        {
-            bool sel = (config_.field == 6);
-            SDL_Color c = sel ? red : gray;
-            drawTextCentered(sel ? "> CANCEL <" : "CANCEL", y + 4, font, c);
-        }
+        button(5, "CREATE");
+        button(6, "CANCEL");
     } else {
-        // Load mode
-        {
-            bool sel = (config_.field == 1);
-            SDL_Color c = sel ? white : gray;
-            if (sel) {
-                SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 20);
-                SDL_Rect bg = {px + 10, y - 2, pw - 20, 32};
-                SDL_RenderFillRect(renderer_, &bg);
-                SDL_SetRenderDrawColor(renderer_, 0, 255, 228, 160);
-                SDL_Rect bar = {px + 10, y - 2, 3, 32};
-                SDL_RenderFillRect(renderer_, &bar);
-            }
-            drawText("File:", labelX, y + 4, font, c);
-            if (loadFiles_.empty()) {
-                drawText("(no images found)", valueX, y + 4, font, gray);
-            } else {
-                // Show current file with < > arrows
-                std::string fname = loadFiles_[loadFileIdx_];
-                auto slash = fname.find_last_of('/');
-                if (slash != std::string::npos) fname = fname.substr(slash + 1);
-                char fBuf[128];
-                if (sel)
-                    snprintf(fBuf, sizeof(fBuf), "< %s > (%d/%d)", fname.c_str(), loadFileIdx_+1, (int)loadFiles_.size());
-                else
-                    snprintf(fBuf, sizeof(fBuf), "%s (%d/%d)", fname.c_str(), loadFileIdx_+1, (int)loadFiles_.size());
-                drawText(fBuf, valueX, y + 4, font, sel ? cyan : gray);
-            }
-            y += stepY;
+        std::string fileLabel;
+        if (loadFiles_.empty()) {
+            fileLabel = "(no images found)";
+        } else {
+            std::string fname = loadFiles_[loadFileIdx_];
+            auto slash = fname.find_last_of('/');
+            if (slash != std::string::npos) fname = fname.substr(slash + 1);
+            char fBuf[128];
+            snprintf(fBuf, sizeof(fBuf), "%s (%d/%d)", fname.c_str(), loadFileIdx_ + 1, (int)loadFiles_.size());
+            fileLabel = fBuf;
+        }
+        row(1, "File", fileLabel.c_str(), !loadFiles_.empty());
+        if (!loadFiles_.empty() && loadFileIdx_ < (int)loadFiles_.size())
+            ui_->drawText(loadFiles_[loadFileIdx_].c_str(), lX, cy + 2, 10, UI::W98::Shadow);
+        cy += 22;
 
-            // Show file path
-            if (!loadFiles_.empty() && loadFileIdx_ < (int)loadFiles_.size()) {
-                drawText(loadFiles_[loadFileIdx_].c_str(), px + 30, y, fontSm, {0, 140, 130, 255});
-            }
-            y += stepY;
-        }
-
-        // OK
-        {
-            bool sel = (config_.field == 2);
-            SDL_Color c = sel ? green : gray;
-            if (sel) {
-                SDL_SetRenderDrawColor(renderer_, 50, 255, 100, 20);
-                SDL_Rect bg = {screenW_/2 - 80, y - 2, 160, 32};
-                SDL_RenderFillRect(renderer_, &bg);
-            }
-            drawTextCentered(sel ? "> LOAD <" : "LOAD", y + 4, font, c);
-            y += stepY;
-        }
-        // Cancel
-        {
-            bool sel = (config_.field == 3);
-            SDL_Color c = sel ? red : gray;
-            drawTextCentered(sel ? "> CANCEL <" : "CANCEL", y + 4, font, c);
-        }
+        button(2, "LOAD");
+        button(3, "CANCEL");
     }
 
-    // Bottom hint
-    drawTextCentered("Arrow keys navigate  Left/Right change  Enter confirm  Esc cancel",
-                     screenH_ - 36, fontSm, {80, 80, 90, 255});
+    ui_->drawWin98StatusBar(screenH_ - 24,
+        "Arrow keys: navigate   Left/Right: change   Enter: confirm   Esc: cancel");
 }
 
 void TextureEditor::renderCanvas() {
@@ -1288,121 +1229,49 @@ void TextureEditor::renderGrid() {
 }
 
 void TextureEditor::renderToolbar() {
-    auto& A = Assets::instance();
-    TTF_Font* font = A.font(14);
-    TTF_Font* fontSm = A.font(11);
+    if (!ui_) return;
 
-    // Toolbar background
-    SDL_SetRenderDrawColor(renderer_, 22, 24, 38, 255);
+    // Silver toolbar strip with a shadow edge along the bottom.
+    SDL_SetRenderDrawColor(renderer_, UI::W98::Silver.r, UI::W98::Silver.g, UI::W98::Silver.b, 255);
     SDL_Rect tbBg = {0, 0, screenW_, TOOLBAR_H};
     SDL_RenderFillRect(renderer_, &tbBg);
-    SDL_SetRenderDrawColor(renderer_, 0, 140, 130, 40);
-    SDL_Rect tbLine = {0, TOOLBAR_H - 1, screenW_, 1};
-    SDL_RenderFillRect(renderer_, &tbLine);
+    SDL_SetRenderDrawColor(renderer_, UI::W98::Shadow.r, UI::W98::Shadow.g, UI::W98::Shadow.b, 255);
+    SDL_RenderDrawLine(renderer_, 0, TOOLBAR_H - 1, screenW_, TOOLBAR_H - 1);
 
-    auto drawText = [&](const char* text, int x, int y, TTF_Font* f, SDL_Color c) {
-        SDL_Surface* s = TTF_RenderText_Blended(f, text, c);
-        if (!s) return;
-        SDL_Texture* t = SDL_CreateTextureFromSurface(renderer_, s);
-        SDL_Rect dst = {x, y, s->w, s->h};
-        SDL_RenderCopy(renderer_, t, nullptr, &dst);
-        SDL_DestroyTexture(t);
-        SDL_FreeSurface(s);
+    const int y = 6, btnH = 36, tw = 46, gap = 3;
+
+    // A bevel button: sunken + navy/white when active, else raised silver/black.
+    auto btn = [&](int x, int w, const char* label, bool active) {
+        ui_->drawWin98Bevel(x, y, w, btnH, !active);
+        SDL_Color bg = active ? UI::W98::Navy : UI::W98::Silver;
+        SDL_SetRenderDrawColor(renderer_, bg.r, bg.g, bg.b, 255);
+        SDL_Rect f = {x + 2, y + 2, w - 4, btnH - 4};
+        SDL_RenderFillRect(renderer_, &f);
+        int lw = ui_->textWidth(label, 12);
+        ui_->drawText(label, x + (w - lw) / 2, y + (btnH - 14) / 2, 12,
+                      active ? UI::W98::White : UI::W98::Black);
     };
 
-    SDL_Color white = {255, 255, 255, 255};
-    SDL_Color gray = {120, 120, 130, 255};
-    SDL_Color cyan = {0, 255, 228, 255};
-
-    // Tool buttons
     const char* toolNames[] = {"Pen", "Era", "Fill", "Line", "Rect", "Circ", "Eye"};
-    const char* toolKeys[]  = {"B",   "E",   "G",    "L",    "R",    "O",    "I"};
-    SDL_Color toolColors[] = {
-        {80, 180, 255, 255},   // Pen - blue
-        {255, 140, 80, 255},   // Eraser - orange
-        {80, 255, 160, 255},   // Fill - green
-        {255, 220, 80, 255},   // Line - yellow
-        {200, 140, 255, 255},  // Rect - purple
-        {255, 100, 200, 255},  // Circle - pink
-        {0, 255, 228, 255},   // Eyedropper - cyan
-    };
-
-    int btnW = 52, btnH = 36;
-    int startX = PALETTE_W + 10;
-
+    int x = PALETTE_W + 8;
     for (int i = 0; i < (int)TexTool::Count; i++) {
-        int bx = startX + i * (btnW + 4);
-        bool active = (currentTool_ == (TexTool)i);
-
-        // Button background
-        if (active) {
-            SDL_SetRenderDrawColor(renderer_, toolColors[i].r, toolColors[i].g, toolColors[i].b, 40);
-        } else {
-            SDL_SetRenderDrawColor(renderer_, 30, 32, 48, 255);
-        }
-        SDL_Rect btn = {bx, 6, btnW, btnH};
-        SDL_RenderFillRect(renderer_, &btn);
-
-        // Active indicator
-        if (active) {
-            SDL_SetRenderDrawColor(renderer_, toolColors[i].r, toolColors[i].g, toolColors[i].b, 220);
-            SDL_Rect ind = {bx, 6 + btnH - 3, btnW, 3};
-            SDL_RenderFillRect(renderer_, &ind);
-        }
-
-        // Tool name
-        SDL_Color tc = active ? toolColors[i] : gray;
-        drawText(toolNames[i], bx + 4, 10, font, tc);
-
-        // Key badge
-        drawText(toolKeys[i], bx + btnW - 12, 28, fontSm, {60, 60, 70, 255});
+        btn(x, tw, toolNames[i], currentTool_ == (TexTool)i);
+        x += tw + gap;
     }
+    x += 6;
+    btn(x, tw, "Fill", fillShapes_); x += tw + gap;  // rect/circle fill toggle
+    btn(x, tw, "Blur",  false);      x += tw + gap;
+    btn(x, tw, "Shift", false);      x += tw + gap;
+    x += 6;
+    btn(x, 54, "Save", false); x += 54 + gap;
+    btn(x, tw, "Undo", false); x += tw + gap;
+    btn(x, tw, "Redo", false); x += tw + gap;
 
-    // Separator
-    int sepX = startX + (int)TexTool::Count * (btnW + 4) + 8;
-    SDL_SetRenderDrawColor(renderer_, 60, 60, 80, 80);
-    SDL_Rect sep = {sepX, 10, 1, 28};
-    SDL_RenderFillRect(renderer_, &sep);
-
-    // Save button
-    {
-        int saveX = sepX + 12;
-        SDL_SetRenderDrawColor(renderer_, 50, 80, 50, 255);
-        SDL_Rect btn = {saveX, 6, 60, btnH};
-        SDL_RenderFillRect(renderer_, &btn);
-        drawText("Save", saveX + 10, 13, font, {50, 255, 100, 255});
-        drawText("^S", saveX + 42, 28, fontSm, {60, 60, 70, 255});
-    }
-
-    // Undo / Redo buttons
-    {
-        int undoX = sepX + 84;
-        SDL_SetRenderDrawColor(renderer_, 40, 40, 55, 255);
-        SDL_Rect btn1 = {undoX, 6, 44, btnH};
-        SDL_RenderFillRect(renderer_, &btn1);
-        drawText("Undo", undoX + 2, 13, font, undoStack_.empty() ? gray : white);
-
-        SDL_Rect btn2 = {undoX + 48, 6, 44, btnH};
-        SDL_RenderFillRect(renderer_, &btn2);
-        drawText("Redo", undoX + 50, 13, font, redoStack_.empty() ? gray : white);
-    }
-
-    // Grid toggle
-    {
-        int gridX = screenW_ - 180;
-        drawText(showGrid_ ? "[H] Grid ON" : "[H] Grid OFF", gridX, 16, font, showGrid_ ? cyan : gray);
-    }
-
-    // Color picker button
-    {
-        int cpX = screenW_ - 80;
-        drawText("[C] Color", cpX, 16, font, {200, 140, 255, 255});
-    }
-
-    // File name
-    {
-        drawText(fileName_.c_str(), PALETTE_W + 10, TOOLBAR_H - 14, fontSm, {80, 80, 90, 255});
-    }
+    // Right-hand status: grid toggle + key hints.
+    int rx = screenW_ - 170;
+    ui_->drawText(showGrid_ ? "Grid: ON" : "Grid: OFF", rx, 9, 12,
+                  showGrid_ ? UI::W98::Navy : UI::W98::Shadow);
+    ui_->drawText("[C] Color  [F] Fill", rx, 27, 11, UI::W98::Shadow);
 }
 
 void TextureEditor::renderPalette() {
@@ -1410,14 +1279,12 @@ void TextureEditor::renderPalette() {
     TTF_Font* font = A.font(14);
     TTF_Font* fontSm = A.font(11);
 
-    // Palette panel background
-    SDL_SetRenderDrawColor(renderer_, 14, 16, 26, 255);
-    SDL_Rect palBg = {0, TOOLBAR_H, PALETTE_W, screenH_ - TOOLBAR_H - STATUS_H};
+    // Palette panel background (Win98 silver + sunken bevel)
+    int palH = screenH_ - TOOLBAR_H - STATUS_H;
+    SDL_SetRenderDrawColor(renderer_, UI::W98::Silver.r, UI::W98::Silver.g, UI::W98::Silver.b, 255);
+    SDL_Rect palBg = {0, TOOLBAR_H, PALETTE_W, palH};
     SDL_RenderFillRect(renderer_, &palBg);
-    // Right border
-    SDL_SetRenderDrawColor(renderer_, 0, 140, 130, 40);
-    SDL_Rect border = {PALETTE_W - 1, TOOLBAR_H, 1, screenH_ - TOOLBAR_H - STATUS_H};
-    SDL_RenderFillRect(renderer_, &border);
+    if (ui_) ui_->drawWin98Bevel(0, TOOLBAR_H, PALETTE_W, palH, false);
 
     auto drawText = [&](const char* text, int x, int y, TTF_Font* f, SDL_Color c) {
         SDL_Surface* s = TTF_RenderText_Blended(f, text, c);
@@ -1429,7 +1296,7 @@ void TextureEditor::renderPalette() {
         SDL_FreeSurface(s);
     };
 
-    SDL_Color dimCyan = {0, 140, 130, 255};
+    SDL_Color dimCyan = UI::W98::Navy;  // section headers (kept var name)
 
     // Current color preview
     int prevY = TOOLBAR_H + 8;
@@ -1456,9 +1323,9 @@ void TextureEditor::renderPalette() {
     // RGB values
     char rgbBuf[64];
     snprintf(rgbBuf, sizeof(rgbBuf), "R:%d G:%d B:%d", currentColor_.r, currentColor_.g, currentColor_.b);
-    drawText(rgbBuf, 56, prevY + 2, fontSm, {180, 180, 180, 255});
+    drawText(rgbBuf, 56, prevY + 2, fontSm, {0, 0, 0, 255});
     snprintf(rgbBuf, sizeof(rgbBuf), "A:%d  #%02X%02X%02X", currentColor_.a, currentColor_.r, currentColor_.g, currentColor_.b);
-    drawText(rgbBuf, 56, prevY + 18, fontSm, {140, 140, 140, 255});
+    drawText(rgbBuf, 56, prevY + 18, fontSm, {64, 64, 64, 255});
 
     prevY += swatchSize + 12;
 
@@ -1505,7 +1372,7 @@ void TextureEditor::renderPalette() {
     prevY += 16;
     char brushBuf[32];
     snprintf(brushBuf, sizeof(brushBuf), "Size: %d  [ / ]", brushSize_);
-    drawText(brushBuf, 8, prevY, fontSm, {180, 180, 180, 255});
+    drawText(brushBuf, 8, prevY, fontSm, {0, 0, 0, 255});
     // Brush preview
     int bpx = 120, bpy = prevY - 2;
     int bpSize = std::min(brushSize_ * 4, 20);
@@ -1532,14 +1399,10 @@ void TextureEditor::renderColorPicker() {
     SDL_Rect full = {0, 0, screenW_, screenH_};
     SDL_RenderFillRect(renderer_, &full);
 
-    // Panel
+    // Panel (Win98 dialog window; title bar shows "Color Picker")
     int pw = 400, ph = 340;
     int px = (screenW_ - pw) / 2, py = (screenH_ - ph) / 2;
-    SDL_SetRenderDrawColor(renderer_, 18, 20, 34, 255);
-    SDL_Rect panel = {px, py, pw, ph};
-    SDL_RenderFillRect(renderer_, &panel);
-    SDL_SetRenderDrawColor(renderer_, 0, 180, 160, 100);
-    SDL_RenderDrawRect(renderer_, &panel);
+    if (ui_) ui_->drawWin98Window(px, py, pw, ph, "Color Picker");
 
     auto drawText = [&](const char* text, int x, int y, TTF_Font* f, SDL_Color c) {
         SDL_Surface* s = TTF_RenderText_Blended(f, text, c);
@@ -1551,7 +1414,7 @@ void TextureEditor::renderColorPicker() {
         SDL_FreeSurface(s);
     };
 
-    drawText("COLOR PICKER", px + 20, py + 10, font, {0, 255, 228, 255});
+    // (title is drawn by the Win98 window title bar above)
 
     // Saturation/Value square (200×200)
     int svX = px + 20, svY = py + 40, svSize = 200;
@@ -1637,12 +1500,12 @@ void TextureEditor::renderStatusBar() {
     TTF_Font* font = A.font(13);
 
     int y = screenH_ - STATUS_H;
-    SDL_SetRenderDrawColor(renderer_, 14, 16, 26, 255);
+    SDL_SetRenderDrawColor(renderer_, UI::W98::Silver.r, UI::W98::Silver.g, UI::W98::Silver.b, 255);
     SDL_Rect bg = {0, y, screenW_, STATUS_H};
     SDL_RenderFillRect(renderer_, &bg);
-    SDL_SetRenderDrawColor(renderer_, 0, 140, 130, 40);
-    SDL_Rect topLine = {0, y, screenW_, 1};
-    SDL_RenderFillRect(renderer_, &topLine);
+    // Raised top edge (white highlight over a shadow line)
+    SDL_SetRenderDrawColor(renderer_, UI::W98::White.r, UI::W98::White.g, UI::W98::White.b, 255);
+    SDL_RenderDrawLine(renderer_, 0, y, screenW_, y);
 
     auto drawText = [&](const char* text, int x, int y, SDL_Color c) {
         SDL_Surface* s = TTF_RenderText_Blended(font, text, c);
@@ -1654,7 +1517,7 @@ void TextureEditor::renderStatusBar() {
         SDL_FreeSurface(s);
     };
 
-    SDL_Color gray = {120, 120, 130, 255};
+    SDL_Color gray = UI::W98::Black;  // primary status text (kept var name)
 
     // Canvas size
     char buf[128];
@@ -1671,17 +1534,18 @@ void TextureEditor::renderStatusBar() {
     int cx, cy;
     if (screenToCanvas(mx, my, cx, cy)) {
         snprintf(buf, sizeof(buf), "Pixel: %d, %d", cx, cy);
-        drawText(buf, 240, y + 6, {0, 200, 180, 255});
+        drawText(buf, 240, y + 6, UI::W98::Navy);
     }
 
     // Tool name
     const char* toolNames[] = {"Pen", "Eraser", "Fill", "Line", "Rect", "Circle", "Eyedropper"};
-    snprintf(buf, sizeof(buf), "Tool: %s", toolNames[(int)currentTool_]);
-    drawText(buf, 400, y + 6, {0, 255, 228, 255});
+    snprintf(buf, sizeof(buf), "Tool: %s%s", toolNames[(int)currentTool_],
+             fillShapes_ ? " (filled)" : "");
+    drawText(buf, 400, y + 6, UI::W98::Navy);
 
     // Brush size
     snprintf(buf, sizeof(buf), "Brush: %d", brushSize_);
-    drawText(buf, 560, y + 6, {180, 140, 255, 255});
+    drawText(buf, 560, y + 6, UI::W98::Navy);
 
     // Save message
     if (saveMessageTimer_ > 0 && !saveMessage_.empty()) {
