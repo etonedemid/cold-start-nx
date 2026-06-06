@@ -1918,9 +1918,7 @@ void Game::updateDiscordPresence() {
         act.state   = "Building a level";
     }
     else if (state_ == GameState::Lobby) {
-        int total = 0;
-        auto& players = net.players();
-        for (auto& p : players) if (p.alive || true) total++;
+        int total = (int)net.players().size();  // everyone connected to the lobby
         char buf[64];
         snprintf(buf, sizeof(buf), "%d player%s in lobby", total, total == 1 ? "" : "s");
         act.details = "Online Lobby";

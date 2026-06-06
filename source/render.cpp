@@ -247,6 +247,10 @@ void Game::render() {
         editor_.render(renderer_);
         break;
 
+    case GameState::SpriteEditor:
+        texEditor_.render();
+        break;
+
     case GameState::MapSelect:
         renderMapSelectMenu();
         break;
@@ -2320,8 +2324,9 @@ void Game::renderMainMenu() {
         {"Credits"},          // 9
         {"Workshop"},         // 10
         {"Log Off"},          // 11
+        {"Sprite Editor"},    // 12
     };
-    constexpr int count = 12;
+    constexpr int count = 13;
 #else
     Item items[] = {
         {"Play"},             // 0
@@ -2337,8 +2342,9 @@ void Game::renderMainMenu() {
         {"Credits"},          // 10
         {"Workshop"},         // 11
         {"Log Off"},          // 12
+        {"Sprite Editor"},    // 13
     };
-    constexpr int count = 13;
+    constexpr int count = 14;
 #endif
 
     // Window sizing: fit all buttons
@@ -2653,7 +2659,7 @@ void Game::renderMainMenu() {
     ui_.drawWin98Bevel(musicWinX_ + 4, mpy, mpW - 8, 2, false);
     mpy += 8;
 
-    // Volume row: "Volume: [<] 80% [>]"
+    // Volume row
     ui_.drawText("Volume:", mpx, mpy + 3, 11, UI::W98::Shadow);
     int vx = mpx + 56;
     if (ui_.win98Button(202, "<", vx, mpy, 22, 20, false)) {

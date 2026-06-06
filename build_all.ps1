@@ -80,7 +80,7 @@ if (-not $SkipWin) {
         # Workshop (curl)
         "libcurl-4.dll",
         # Multiplayer (miniupnpc)
-        "miniupnpc.dll"
+        "libminiupnpc.dll"
     )
     foreach ($dll in $neededDlls) {
         $src = Join-Path $mingw $dll
@@ -141,15 +141,11 @@ if (-not $SkipAndroid) {
     Wsl-Run "sh /mnt/z/cold-start-nx/.build_android.sh"
     if ($LASTEXITCODE -ne 0) { Fail "Android build failed" }
 
-    # Try release APK, fall back to debug
-    $apkCandidates = @(
-        "$ROOT\android\app\build\outputs\apk\release\app-release.apk",
-        "$ROOT\android\app\build\outputs\apk\release\app-release-unsigned.apk",
-        "$ROOT\android\app\build\outputs\apk\debug\app-debug.apk"
-    )
-    $apkSrc = $apkCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-    if (-not $apkSrc) { Fail "No APK found after Android build" }
-    Copy-Item $apkSrc $APK_OUT -Force
+    # Sign and write directly to release-out
+    $apkWsl = '/mnt/' + $APK_OUT.Substring(0,1).ToLower() + ($APK_OUT.Substring(2) -replace '\\', '/')
+    Wsl-Run "bash /mnt/z/cold-start-nx/android/sign_apk.sh '$apkWsl'"
+    if ($LASTEXITCODE -ne 0) { Fail "APK signing failed" }
+    if (-not (Test-Path $APK_OUT)) { Fail "Signed APK not found at $APK_OUT" }
     $sz = [math]::Round((Get-Item $APK_OUT).Length / 1MB, 1)
     Ok "$APK_OUT ($sz MB)"
 }

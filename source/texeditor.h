@@ -3,6 +3,7 @@
 // props, and UI sprites.  Supports canvas editing, color picker, palette,
 // drawing tools, undo/redo, grid overlay, and PNG save/load.
 #include "assets.h"
+#include "ui.h"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 #include <string>
@@ -63,7 +64,7 @@ struct TexEditorConfig {
 // Main class
 class TextureEditor {
 public:
-    bool init(SDL_Renderer* renderer, int screenW, int screenH);
+    bool init(SDL_Renderer* renderer, int screenW, int screenH, UI::Context* ui = nullptr);
     void shutdown();
 
     void handleInput(const SDL_Event& e);
@@ -184,6 +185,7 @@ private:
 
     // SDL
     SDL_Renderer* renderer_ = nullptr;
+    UI::Context*  ui_       = nullptr;  // shared Win98 UI context (provided by Game)
     int screenW_ = 1280, screenH_ = 720;
 
     // Gamepad virtual cursor
