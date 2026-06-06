@@ -8,7 +8,8 @@ Runs on PC, Nintendo Switch homebrew, and Android.
 
 License: GNU GPL - except music; consult authors before distributing. Sounds from https://pixabay.com/
 
-AI disclosure: code
+Join our discord!
+https://discord.gg/dv28MgtaNn
 
 ## Workshop
 https://etonedemid.github.io/coldstart-workshop/
