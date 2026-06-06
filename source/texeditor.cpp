@@ -116,6 +116,8 @@ void TextureEditor::newCanvas(int w, int h) {
     canvasW_ = w;
     canvasH_ = h;
     pixels_.assign(w * h, {0, 0, 0, 0}); // transparent
+    frames_.assign(1, pixels_);          // start with a single animation frame
+    curFrame_ = 0; playing_ = false; playFrame_ = 0; frameTimer_ = 0.0f;
     undoStack_.clear();
     redoStack_.clear();
 
@@ -127,23 +129,85 @@ void TextureEditor::newCanvas(int w, int h) {
 
     // Center view
     float areaW = screenW_ - PALETTE_W;
-    float areaH = screenH_ - TOOLBAR_H - STATUS_H;
+    float areaH = screenH_ - TOOLBAR_H - STATUS_H - FRAME_STRIP_H;
     zoom_ = std::min(areaW / w, areaH / h) * 0.8f;
     zoom_ = std::max(1.0f, std::min(zoom_, 64.0f));
     panX_ = 0;
     panY_ = 0;
 }
 
-void TextureEditor::updateCanvasTexture() {
-    if (!canvasTex_) return;
+// ---- Animation frames ----
+
+void TextureEditor::commitFrame() {
+    if (curFrame_ >= 0 && curFrame_ < (int)frames_.size())
+        frames_[curFrame_] = pixels_;
+}
+
+void TextureEditor::setFrame(int i) {
+    if (frames_.empty()) return;
+    commitFrame();
+    curFrame_ = std::max(0, std::min((int)frames_.size() - 1, i));
+    pixels_ = frames_[curFrame_];
+    undoStack_.clear();
+    redoStack_.clear();
+    updateCanvasTexture();
+}
+
+void TextureEditor::addFrame(bool duplicate) {
+    commitFrame();
+    std::vector<TexelColor> nf = duplicate
+        ? pixels_
+        : std::vector<TexelColor>(canvasW_ * canvasH_, TexelColor{0, 0, 0, 0});
+    frames_.insert(frames_.begin() + curFrame_ + 1, nf);
+    setFrame(curFrame_ + 1);
+}
+
+void TextureEditor::deleteFrame() {
+    if (frames_.size() <= 1) return;  // always keep at least one frame
+    frames_.erase(frames_.begin() + curFrame_);
+    curFrame_ = std::min(curFrame_, (int)frames_.size() - 1);
+    pixels_ = frames_[curFrame_];     // do NOT commit: the deleted frame is gone
+    undoStack_.clear();
+    redoStack_.clear();
+    updateCanvasTexture();
+}
+
+void TextureEditor::doSave() {
+    commitFrame();
+    std::string base = savePath_;
+    auto dot = base.find_last_of('.');
+    if (dot != std::string::npos) base = base.substr(0, dot);
+
+    if (frames_.size() <= 1) {
+        savePath_ = base + ".png";
+        saveMessage_ = saveImage(savePath_) ? ("Saved: " + savePath_) : "Save FAILED!";
+    } else {
+        // Export one numbered PNG per frame: base-0001.png, base-0002.png, ...
+        std::vector<TexelColor> backup = pixels_;
+        int ok = 0;
+        for (int i = 0; i < (int)frames_.size(); i++) {
+            pixels_ = frames_[i];
+            char path[512];
+            snprintf(path, sizeof(path), "%s-%04d.png", base.c_str(), i + 1);
+            if (saveImage(path)) ok++;
+        }
+        pixels_ = backup;
+        char msg[160];
+        snprintf(msg, sizeof(msg), "Saved %d/%d frames to %s-NNNN.png", ok, (int)frames_.size(), base.c_str());
+        saveMessage_ = msg;
+    }
+    saveMessageTimer_ = 2.5f;
+}
+
+void TextureEditor::blitToCanvasTex(const std::vector<TexelColor>& src) {
+    if (!canvasTex_ || (int)src.size() < canvasW_ * canvasH_) return;
     void* texPixels = nullptr;
     int pitch = 0;
     if (SDL_LockTexture(canvasTex_, nullptr, &texPixels, &pitch) == 0) {
         for (int y = 0; y < canvasH_; y++) {
             uint8_t* row = (uint8_t*)texPixels + y * pitch;
             for (int x = 0; x < canvasW_; x++) {
-                const TexelColor& c = pixels_[y * canvasW_ + x];
-                // SDL_PIXELFORMAT_RGBA32 = ABGR on little-endian
+                const TexelColor& c = src[y * canvasW_ + x];
                 row[x * 4 + 0] = c.r;
                 row[x * 4 + 1] = c.g;
                 row[x * 4 + 2] = c.b;
@@ -152,6 +216,10 @@ void TextureEditor::updateCanvasTexture() {
         }
         SDL_UnlockTexture(canvasTex_);
     }
+}
+
+void TextureEditor::updateCanvasTexture() {
+    blitToCanvasTex(pixels_);  // mirror the active frame
 }
 
 void TextureEditor::setPixel(int x, int y, TexelColor c) {
@@ -324,7 +392,7 @@ int TextureEditor::canvasOriginX() const {
 }
 
 int TextureEditor::canvasOriginY() const {
-    float areaH = screenH_ - TOOLBAR_H - STATUS_H;
+    float areaH = screenH_ - TOOLBAR_H - STATUS_H - FRAME_STRIP_H;
     return (int)(TOOLBAR_H + areaH / 2.0f - (canvasH_ * zoom_) / 2.0f - panY_ * zoom_);
 }
 
@@ -445,6 +513,7 @@ bool TextureEditor::loadImage(const std::string& path) {
     }
     SDL_UnlockSurface(conv);
     SDL_FreeSurface(conv);
+    if (!frames_.empty()) frames_[0] = pixels_;  // loaded image becomes frame 0
     updateCanvasTexture();
     pushUndo();
     return true;
@@ -695,7 +764,7 @@ void TextureEditor::handleEditingInput(const SDL_Event& e) {
 
         // Save
         if (ctrl && key == SDLK_s) {
-            wantsModSave_ = true;
+            doSave();
             return;
         }
 
@@ -712,6 +781,10 @@ void TextureEditor::handleEditingInput(const SDL_Event& e) {
         if (key == SDLK_f) fillShapes_ = !fillShapes_;
         if (key == SDLK_m) { pushUndo(); applyBlur(); }
         if (key == SDLK_n) { pushUndo(); applyRandomShift(); }
+
+        // Animation: step frames with , and .
+        if (key == SDLK_COMMA)  setFrame(curFrame_ - 1);
+        if (key == SDLK_PERIOD) setFrame(curFrame_ + 1);
 
         // Grid toggle
         if (key == SDLK_h) showGrid_ = !showGrid_;
@@ -747,6 +820,13 @@ void TextureEditor::handleEditingInput(const SDL_Event& e) {
     else if (e.type == SDL_MOUSEBUTTONDOWN) {
         int mx = e.button.x, my = e.button.y;
 
+        // Frame strip band (full width, just above the status bar)
+        int stripY = screenH_ - STATUS_H - FRAME_STRIP_H;
+        if (my >= stripY && my < screenH_ - STATUS_H) {
+            handleFrameStripClick(mx, my);
+            return;
+        }
+
         // Check if clicking palette area (left side)
         if (mx < PALETTE_W) {
             handlePaletteClick(mx, my);
@@ -762,6 +842,7 @@ void TextureEditor::handleEditingInput(const SDL_Event& e) {
         int cx, cy;
         if (screenToCanvas(mx, my, cx, cy)) {
             if (e.button.button == SDL_BUTTON_LEFT) {
+                if (playing_) { playing_ = false; updateCanvasTexture(); }  // editing stops playback
                 if (currentTool_ == TexTool::Line || currentTool_ == TexTool::Rect || currentTool_ == TexTool::Circle) {
                     if (!shapeStarted_) {
                         shapeStarted_ = true;
@@ -856,7 +937,7 @@ void TextureEditor::handleEditingInput(const SDL_Event& e) {
         if (btn == SDL_CONTROLLER_BUTTON_Y) showGrid_ = !showGrid_;
         // Save
         if (btn == SDL_CONTROLLER_BUTTON_X) {
-            wantsModSave_ = true;
+            doSave();
         }
         // Color picker
         if (btn == SDL_CONTROLLER_BUTTON_START) {
@@ -979,9 +1060,37 @@ void TextureEditor::handleToolbarClick(int mx, int my) {
     if (hit(x, tw)) { pushUndo(); applyBlur();             return; }  x += tw + gap;
     if (hit(x, tw)) { pushUndo(); applyRandomShift();      return; }  x += tw + gap;
     x += 6;
-    if (hit(x, 54)) { wantsModSave_ = true;                return; }  x += 54 + gap;
+    if (hit(x, 54)) { doSave();                return; }  x += 54 + gap;
     if (hit(x, tw)) { undo();                              return; }  x += tw + gap;
     if (hit(x, tw)) { redo();                              return; }  x += tw + gap;
+}
+
+void TextureEditor::handleFrameStripClick(int mx, int my) {
+    // Layout MUST stay in sync with renderFrameStrip().
+    int stripY = screenH_ - STATUS_H - FRAME_STRIP_H;
+    const int by = stripY + 6, bh = 26;
+    auto hit = [&](int x, int w) { return mx >= x && mx < x + w && my >= by && my < by + bh; };
+
+    int x = 8;
+    if (hit(x, 56)) { addFrame(false); return; }  x += 60;
+    if (hit(x, 40)) { addFrame(true);  return; }  x += 44;  // duplicate current
+    if (hit(x, 40)) { deleteFrame();   return; }  x += 44;
+    if (hit(x, 50)) {                              // play / stop
+        playing_ = !playing_;
+        if (playing_) { playFrame_ = curFrame_; frameTimer_ = 0; }
+        else updateCanvasTexture();
+        return;
+    }
+    x += 60;
+    for (int i = 0; i < (int)frames_.size(); i++) {
+        if (hit(x, 30)) {
+            if (playing_) { playing_ = false; }
+            setFrame(i);
+            return;
+        }
+        x += 34;
+        if (x > screenW_ - 40) break;
+    }
 }
 
 // Update
@@ -989,6 +1098,16 @@ void TextureEditor::handleToolbarClick(int mx, int my) {
 void TextureEditor::update(float dt) {
     if (!active_) return;
     if (saveMessageTimer_ > 0) saveMessageTimer_ -= dt;
+
+    // Animation playback: cycle the displayed frame on a timer.
+    if (playing_ && frames_.size() > 1) {
+        frameTimer_ += dt;
+        if (frameTimer_ >= frameDelay_) {
+            frameTimer_ -= frameDelay_;
+            playFrame_ = (playFrame_ + 1) % (int)frames_.size();
+            blitToCanvasTex(frames_[playFrame_]);
+        }
+    }
 
     // Gamepad cursor
     if (useGamepadCursor_) {
@@ -1035,12 +1154,61 @@ void TextureEditor::render() {
     renderPreview();
     renderToolbar();
     renderPalette();
+    renderFrameStrip();
     renderStatusBar();
     renderCursor();
 
     if (state_ == TexEditorState::ColorPicker) {
         renderColorPicker();
     }
+}
+
+void TextureEditor::renderFrameStrip() {
+    if (!ui_) return;
+    int stripY = screenH_ - STATUS_H - FRAME_STRIP_H;
+
+    // Silver band with a raised top edge.
+    SDL_SetRenderDrawColor(renderer_, UI::W98::Silver.r, UI::W98::Silver.g, UI::W98::Silver.b, 255);
+    SDL_Rect bg = {0, stripY, screenW_, FRAME_STRIP_H};
+    SDL_RenderFillRect(renderer_, &bg);
+    SDL_SetRenderDrawColor(renderer_, UI::W98::White.r, UI::W98::White.g, UI::W98::White.b, 255);
+    SDL_RenderDrawLine(renderer_, 0, stripY, screenW_, stripY);
+
+    const int by = stripY + 6, bh = 26;
+    auto btn = [&](int x, int w, const char* label, bool active) {
+        ui_->drawWin98Bevel(x, by, w, bh, !active);
+        SDL_Color c = active ? UI::W98::Navy : UI::W98::Silver;
+        SDL_SetRenderDrawColor(renderer_, c.r, c.g, c.b, 255);
+        SDL_Rect f = {x + 2, by + 2, w - 4, bh - 4};
+        SDL_RenderFillRect(renderer_, &f);
+        int lw = ui_->textWidth(label, 12);
+        ui_->drawText(label, x + (w - lw) / 2, by + 6, 12, active ? UI::W98::White : UI::W98::Black);
+    };
+
+    ui_->drawText("FRAMES", 8, stripY + 2, 11, UI::W98::Navy);
+
+    int x = 8;
+    btn(x, 56, "+ Frame", false); x += 60;
+    btn(x, 40, "Dup",     false); x += 44;
+    btn(x, 40, "Del",     false); x += 44;
+    btn(x, 50, playing_ ? "Stop" : "Play", playing_); x += 60;
+
+    for (int i = 0; i < (int)frames_.size(); i++) {
+        char num[8]; snprintf(num, sizeof(num), "%d", i + 1);
+        btn(x, 30, num, i == curFrame_);
+        if (playing_ && i == playFrame_) {  // playback position marker
+            SDL_SetRenderDrawColor(renderer_, 255, 200, 0, 255);
+            SDL_Rect m = {x, by - 3, 30, 2};
+            SDL_RenderFillRect(renderer_, &m);
+        }
+        x += 34;
+        if (x > screenW_ - 40) break;  // no horizontal scroll yet
+    }
+
+    char info[64];
+    snprintf(info, sizeof(info), "%d frame%s   %.0f ms/frame",
+             (int)frames_.size(), frames_.size() == 1 ? "" : "s", frameDelay_ * 1000.0f);
+    ui_->drawText(info, 8, stripY + FRAME_STRIP_H - 14, 11, UI::W98::Shadow);
 }
 
 void TextureEditor::renderConfig() {
@@ -1280,7 +1448,7 @@ void TextureEditor::renderPalette() {
     TTF_Font* fontSm = A.font(11);
 
     // Palette panel background (Win98 silver + sunken bevel)
-    int palH = screenH_ - TOOLBAR_H - STATUS_H;
+    int palH = screenH_ - TOOLBAR_H - STATUS_H - FRAME_STRIP_H;
     SDL_SetRenderDrawColor(renderer_, UI::W98::Silver.r, UI::W98::Silver.g, UI::W98::Silver.b, 255);
     SDL_Rect palBg = {0, TOOLBAR_H, PALETTE_W, palH};
     SDL_RenderFillRect(renderer_, &palBg);

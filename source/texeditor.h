@@ -90,11 +90,26 @@ public:
 private:
     // Canvas
     int canvasW_ = 32, canvasH_ = 32;
-    std::vector<TexelColor> pixels_;      // canvasW_ * canvasH_
+    std::vector<TexelColor> pixels_;      // canvasW_ * canvasH_ (active frame)
     SDL_Texture* canvasTex_ = nullptr;    // GPU texture mirror of pixels_
+
+    // Animation: each frame is canvasW_*canvasH_; pixels_ mirrors frames_[curFrame_].
+    std::vector<std::vector<TexelColor>> frames_;
+    int   curFrame_   = 0;
+    bool  onionSkin_  = true;   // show previous frame faintly under the current one
+    bool  playing_    = false;  // preview playback
+    int   playFrame_  = 0;
+    float frameTimer_ = 0.0f;
+    float frameDelay_ = 0.12f;  // seconds per frame during playback
+    void  commitFrame();        // copy pixels_ back into frames_[curFrame_]
+    void  setFrame(int i);      // commit current, then load frame i
+    void  addFrame(bool duplicate);
+    void  deleteFrame();
+    void  doSave();             // save frame(s) to savePath_ (numbered if >1)
 
     void newCanvas(int w, int h);
     void updateCanvasTexture();
+    void blitToCanvasTex(const std::vector<TexelColor>& src);  // upload an arbitrary buffer
     void setPixel(int x, int y, TexelColor c);
     TexelColor getPixel(int x, int y) const;
     void floodFill(int x, int y, TexelColor target, TexelColor fill);
@@ -152,6 +167,7 @@ private:
     static constexpr int TOOLBAR_H   = 48;
     static constexpr int PALETTE_W   = 200;
     static constexpr int STATUS_H    = 28;
+    static constexpr int FRAME_STRIP_H = 64;  // animation frame strip above status bar
 
     // Layout helpers
     int paletteGridY() const;       // Y position of palette color grid
@@ -165,6 +181,7 @@ private:
     void renderColorPicker();
     void renderStatusBar();
     void renderPreview();
+    void renderFrameStrip();
     void renderCursor();
     void renderBrushSettings();
 
@@ -203,6 +220,7 @@ private:
     void handleColorPickerInput(const SDL_Event& e);
     void handlePaletteClick(int mx, int my);
     void handleToolbarClick(int mx, int my);
+    void handleFrameStripClick(int mx, int my);
     void applyToolAtPixel(int cx, int cy);
     void applyBrushAt(int cx, int cy, TexelColor c);  // apply color in brush-sized area
 };
