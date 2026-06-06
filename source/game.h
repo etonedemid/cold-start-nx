@@ -463,6 +463,7 @@ private:
     // Play Mode Menu
     int playModeSelection_ = 0;   // 0=Generated,1=Map,2=Pack,3-8=sliders,9=Back
     GameState prevMenuState_ = GameState::MainMenu; // for back nav in MapSelect/PackSelect
+    int mainMenuSub_ = 0; // 0=main menu, 1=tools submenu
 
     // Map file browser
     std::vector<std::string> mapFiles_;
@@ -674,6 +675,7 @@ private:
     void renderBiosIntro();
     void renderLoginScreen();
     void renderMainMenu();
+    void renderToolsMenu();
     void renderPlayModeMenu();
     void renderConfigMenu();
     void renderPauseMenu();

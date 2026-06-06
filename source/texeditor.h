@@ -254,4 +254,5 @@ private:
     void handleFrameStripClick(int mx, int my);
     void applyToolAtPixel(int cx, int cy);
     void applyBrushAt(int cx, int cy, TexelColor c);  // apply color in brush-sized area
+    void physToLogical(int& x, int& y) const;         // convert physical window -> logical renderer coords
 };
