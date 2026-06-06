@@ -62,6 +62,7 @@ Thumbs.db
 
 # ─── Claude Code ─────────────────────────────────────────────────────────────
 .claude/
+CLAUDE.md
 
 deploy_all.ps1
 
