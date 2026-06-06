@@ -10,6 +10,9 @@ License: GNU GPL - except music; consult authors before distributing. Sounds fro
 
 AI disclosure: code
 
+## Workshop
+https://etonedemid.github.io/coldstart-workshop/
+
 ## Screenshots
 
 ![screenshot 1](Screenshots/image.png)
