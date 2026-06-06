@@ -52,7 +52,11 @@ void TextureEditor::setScreenSize(int w, int h) {
 }
 
 void TextureEditor::shutdown() {
-    if (canvasTex_) { SDL_DestroyTexture(canvasTex_); canvasTex_ = nullptr; }
+    if (canvasTex_)    { SDL_DestroyTexture(canvasTex_);    canvasTex_    = nullptr; }
+    if (cpSVTex_)      { SDL_DestroyTexture(cpSVTex_);      cpSVTex_      = nullptr; }
+    if (cpHueTex_)     { SDL_DestroyTexture(cpHueTex_);     cpHueTex_     = nullptr; }
+    if (cpAlphaTex_)   { SDL_DestroyTexture(cpAlphaTex_);   cpAlphaTex_   = nullptr; }
+    if (selFloatTex_)  { SDL_DestroyTexture(selFloatTex_);  selFloatTex_  = nullptr; }
     pixels_.clear();
     undoStack_.clear();
     redoStack_.clear();
@@ -212,6 +216,25 @@ void TextureEditor::liftSelection() {
     }
     updateCanvasTexture();
     selLifted_ = true;
+
+    // Build cached texture for fast overlay rendering
+    if (selFloatTex_) { SDL_DestroyTexture(selFloatTex_); selFloatTex_ = nullptr; }
+    SDL_Surface* fsurf = SDL_CreateRGBSurfaceWithFormat(0, selOrigW_, selOrigH_, 32, SDL_PIXELFORMAT_RGBA32);
+    if (fsurf) {
+        SDL_LockSurface(fsurf);
+        uint8_t* fpx = (uint8_t*)fsurf->pixels;
+        for (int fy = 0; fy < selOrigH_; fy++) {
+            for (int fx = 0; fx < selOrigW_; fx++) {
+                const TexelColor& fc = selOrigPixels_[fy * selOrigW_ + fx];
+                uint8_t* p = fpx + fy * fsurf->pitch + fx * 4;
+                p[0] = fc.r; p[1] = fc.g; p[2] = fc.b; p[3] = fc.a;
+            }
+        }
+        SDL_UnlockSurface(fsurf);
+        selFloatTex_ = SDL_CreateTextureFromSurface(renderer_, fsurf);
+        if (selFloatTex_) SDL_SetTextureBlendMode(selFloatTex_, SDL_BLENDMODE_BLEND);
+        SDL_FreeSurface(fsurf);
+    }
 }
 
 void TextureEditor::stampSelection() {
@@ -251,6 +274,7 @@ void TextureEditor::commitSelection() {
         stampSelection();
         updateCanvasTexture();
     }
+    if (selFloatTex_) { SDL_DestroyTexture(selFloatTex_); selFloatTex_ = nullptr; }
     selActive_  = false;
     selLifted_  = false;
     selRect_    = {0,0,0,0};
@@ -1377,32 +1401,14 @@ void TextureEditor::render() {
 void TextureEditor::renderSelectionOverlay() {
     if (!selActive_) return;
 
-    // Draw floating pixels (lifted off canvas, shown at current transformed position)
-    if (selLifted_ && !selOrigPixels_.empty()) {
-        int dw = selRect_.w, dh = selRect_.h;
-        if (dw > 0 && dh > 0) {
-            float rad = selAngle_ * 3.14159265f / 180.0f;
-            float cosA = cosf(rad), sinA = sinf(rad);
-            float srcCX = selOrigW_ * 0.5f, srcCY = selOrigH_ * 0.5f;
-            float scaleX = (float)selOrigW_ / dw, scaleY = (float)selOrigH_ / dh;
-            int pxSz = std::max(1, (int)zoom_);
-            for (int dy = 0; dy < dh; dy++) {
-                for (int dx = 0; dx < dw; dx++) {
-                    float lx = dx - dw * 0.5f + 0.5f, ly = dy - dh * 0.5f + 0.5f;
-                    float sfx = lx * scaleX, sfy = ly * scaleY;
-                    int sx2 = (int)floorf(cosA * sfx + sinA * sfy + srcCX);
-                    int sy2 = (int)floorf(-sinA * sfx + cosA * sfy + srcCY);
-                    if (sx2 < 0 || sx2 >= selOrigW_ || sy2 < 0 || sy2 >= selOrigH_) continue;
-                    TexelColor c = selOrigPixels_[sy2 * selOrigW_ + sx2];
-                    if (c.a == 0) continue;
-                    int scx, scy;
-                    canvasToScreen(selRect_.x + dx, selRect_.y + dy, scx, scy);
-                    SDL_SetRenderDrawColor(renderer_, c.r, c.g, c.b, c.a);
-                    SDL_Rect pr = {scx, scy, pxSz, pxSz};
-                    SDL_RenderFillRect(renderer_, &pr);
-                }
-            }
-        }
+    // Draw floating pixels using a cached texture + GPU transform (one draw call)
+    if (selLifted_ && selFloatTex_ && selRect_.w > 0 && selRect_.h > 0) {
+        int sx0, sy0, sx1, sy1;
+        canvasToScreen(selRect_.x, selRect_.y, sx0, sy0);
+        canvasToScreen(selRect_.x + selRect_.w, selRect_.y + selRect_.h, sx1, sy1);
+        SDL_Rect dst = {sx0, sy0, sx1 - sx0, sy1 - sy0};
+        SDL_Point center = {(sx1 - sx0) / 2, (sy1 - sy0) / 2};
+        SDL_RenderCopyEx(renderer_, selFloatTex_, nullptr, &dst, (double)selAngle_, &center, SDL_FLIP_NONE);
     }
 
     // Marching-ants selection border
@@ -1738,32 +1744,18 @@ void TextureEditor::renderToolbar() {
 }
 
 void TextureEditor::renderPalette() {
-    auto& A = Assets::instance();
-    TTF_Font* font = A.font(14);
-    TTF_Font* fontSm = A.font(11);
+    if (!ui_) return;
 
     // Palette panel background (Win98 silver + sunken bevel)
     int palH = screenH_ - TOOLBAR_H - STATUS_H - FRAME_STRIP_H;
     SDL_SetRenderDrawColor(renderer_, UI::W98::Silver.r, UI::W98::Silver.g, UI::W98::Silver.b, 255);
     SDL_Rect palBg = {0, TOOLBAR_H, PALETTE_W, palH};
     SDL_RenderFillRect(renderer_, &palBg);
-    if (ui_) ui_->drawWin98Bevel(0, TOOLBAR_H, PALETTE_W, palH, false);
-
-    auto drawText = [&](const char* text, int x, int y, TTF_Font* f, SDL_Color c) {
-        SDL_Surface* s = TTF_RenderText_Blended(f, text, c);
-        if (!s) return;
-        SDL_Texture* t = SDL_CreateTextureFromSurface(renderer_, s);
-        SDL_Rect dst = {x, y, s->w, s->h};
-        SDL_RenderCopy(renderer_, t, nullptr, &dst);
-        SDL_DestroyTexture(t);
-        SDL_FreeSurface(s);
-    };
-
-    SDL_Color dimCyan = UI::W98::Navy;  // section headers (kept var name)
+    ui_->drawWin98Bevel(0, TOOLBAR_H, PALETTE_W, palH, false);
 
     // Current color preview
     int prevY = TOOLBAR_H + 8;
-    drawText("COLOR", 8, prevY, fontSm, dimCyan);
+    ui_->drawText("COLOR", 8, prevY, 11, UI::W98::Navy);
     prevY += 16;
 
     // Large current color swatch
@@ -1786,14 +1778,14 @@ void TextureEditor::renderPalette() {
     // RGB values
     char rgbBuf[64];
     snprintf(rgbBuf, sizeof(rgbBuf), "R:%d G:%d B:%d", currentColor_.r, currentColor_.g, currentColor_.b);
-    drawText(rgbBuf, 56, prevY + 2, fontSm, {0, 0, 0, 255});
+    ui_->drawText(rgbBuf, 56, prevY + 2,  11, UI::W98::Black);
     snprintf(rgbBuf, sizeof(rgbBuf), "A:%d  #%02X%02X%02X", currentColor_.a, currentColor_.r, currentColor_.g, currentColor_.b);
-    drawText(rgbBuf, 56, prevY + 18, fontSm, {64, 64, 64, 255});
+    ui_->drawText(rgbBuf, 56, prevY + 18, 11, UI::W98::Shadow);
 
     prevY += swatchSize + 12;
 
     // Palette grid
-    drawText("PALETTE", 8, prevY, fontSm, dimCyan);
+    ui_->drawText("PALETTE", 8, prevY, 11, UI::W98::Navy);
     prevY += 16;
 
     int cellW = 22, cellH = 22, cols = 8;
@@ -1831,11 +1823,11 @@ void TextureEditor::renderPalette() {
     prevY += (PALETTE_SIZE / cols + 1) * cellH + 8;
 
     // Brush size display
-    drawText("BRUSH", 8, prevY, fontSm, dimCyan);
+    ui_->drawText("BRUSH", 8, prevY, 11, UI::W98::Navy);
     prevY += 16;
     char brushBuf[32];
     snprintf(brushBuf, sizeof(brushBuf), "Size: %d  [ / ]", brushSize_);
-    drawText(brushBuf, 8, prevY, fontSm, {0, 0, 0, 255});
+    ui_->drawText(brushBuf, 8, prevY, 11, UI::W98::Black);
     // Brush preview
     int bpx = 120, bpy = prevY - 2;
     int bpSize = std::min(brushSize_ * 4, 20);
@@ -1847,9 +1839,9 @@ void TextureEditor::renderPalette() {
     prevY += 24;
 
     // Hint
-    drawText("Click to select", 8, prevY, fontSm, {60, 60, 70, 255});
-    drawText("[C] Edit color", 8, prevY + 14, fontSm, {60, 60, 70, 255});
-    drawText("Right-click: pick", 8, prevY + 28, fontSm, {60, 60, 70, 255});
+    ui_->drawText("Click to select",   8, prevY,      11, UI::W98::Shadow);
+    ui_->drawText("[C] Edit color",    8, prevY + 14, 11, UI::W98::Shadow);
+    ui_->drawText("Right-click: pick", 8, prevY + 28, 11, UI::W98::Shadow);
 }
 
 void TextureEditor::renderColorPicker() {
@@ -1867,65 +1859,95 @@ void TextureEditor::renderColorPicker() {
     int px = (screenW_ - pw) / 2, py = (screenH_ - ph) / 2;
     if (ui_) ui_->drawWin98Window(px, py, pw, ph, "Color Picker");
 
-    auto drawText = [&](const char* text, int x, int y, TTF_Font* f, SDL_Color c) {
-        SDL_Surface* s = TTF_RenderText_Blended(f, text, c);
-        if (!s) return;
-        SDL_Texture* t = SDL_CreateTextureFromSurface(renderer_, s);
-        SDL_Rect dst = {x, y, s->w, s->h};
-        SDL_RenderCopy(renderer_, t, nullptr, &dst);
-        SDL_DestroyTexture(t);
-        SDL_FreeSurface(s);
-    };
-
-    // (title is drawn by the Win98 window title bar above)
-
-    // Saturation/Value square (200×200)
+    // Saturation/Value square (200x200) -- rebuild texture only when hue changes
     int svX = px + 20, svY = py + 40, svSize = 200;
-    for (int sy = 0; sy < svSize; sy++) {
-        for (int sx = 0; sx < svSize; sx++) {
-            float s = (float)sx / svSize;
-            float v = 1.0f - (float)sy / svSize;
-            TexelColor c = hsvToRgb(hue_, s, v);
-            SDL_SetRenderDrawColor(renderer_, c.r, c.g, c.b, 255);
-            SDL_RenderDrawPoint(renderer_, svX + sx, svY + sy);
+    if (!cpSVTex_ || cpSVHue_ != hue_) {
+        if (cpSVTex_) SDL_DestroyTexture(cpSVTex_);
+        SDL_Surface* sv = SDL_CreateRGBSurfaceWithFormat(0, svSize, svSize, 32, SDL_PIXELFORMAT_RGBA32);
+        if (sv) {
+            SDL_LockSurface(sv);
+            uint8_t* sp = (uint8_t*)sv->pixels;
+            for (int sy2 = 0; sy2 < svSize; sy2++) {
+                for (int sx2 = 0; sx2 < svSize; sx2++) {
+                    TexelColor c2 = hsvToRgb(hue_, (float)sx2 / svSize, 1.0f - (float)sy2 / svSize);
+                    uint8_t* p = sp + sy2 * sv->pitch + sx2 * 4;
+                    p[0] = c2.r; p[1] = c2.g; p[2] = c2.b; p[3] = 255;
+                }
+            }
+            SDL_UnlockSurface(sv);
+            cpSVTex_ = SDL_CreateTextureFromSurface(renderer_, sv);
+            SDL_FreeSurface(sv);
         }
+        cpSVHue_ = hue_;
+    }
+    if (cpSVTex_) {
+        SDL_Rect svDst = {svX, svY, svSize, svSize};
+        SDL_RenderCopy(renderer_, cpSVTex_, nullptr, &svDst);
     }
     SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 200);
     SDL_Rect svBorder = {svX, svY, svSize, svSize};
     SDL_RenderDrawRect(renderer_, &svBorder);
-
-    // Cursor on SV square
     int csx = svX + (int)(sat_ * svSize);
     int csy = svY + (int)((1.0f - val_) * svSize);
     SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 255);
     SDL_RenderDrawLine(renderer_, csx - 6, csy, csx + 6, csy);
     SDL_RenderDrawLine(renderer_, csx, csy - 6, csx, csy + 6);
 
-    // Hue bar (30×200)
+    // Hue bar (1x200 texture, scaled to 30 wide) -- built once
     int hueX = px + 240, hueY = py + 40, hueW = 30, hueH = 200;
-    for (int hy = 0; hy < hueH; hy++) {
-        float h = ((float)hy / hueH) * 360.0f;
-        TexelColor c = hsvToRgb(h, 1, 1);
-        SDL_SetRenderDrawColor(renderer_, c.r, c.g, c.b, 255);
-        SDL_RenderDrawLine(renderer_, hueX, hueY + hy, hueX + hueW, hueY + hy);
+    if (!cpHueTex_) {
+        SDL_Surface* hs = SDL_CreateRGBSurfaceWithFormat(0, 1, hueH, 32, SDL_PIXELFORMAT_RGBA32);
+        if (hs) {
+            SDL_LockSurface(hs);
+            uint8_t* hp = (uint8_t*)hs->pixels;
+            for (int hy = 0; hy < hueH; hy++) {
+                TexelColor c2 = hsvToRgb(((float)hy / hueH) * 360.0f, 1, 1);
+                uint8_t* p = hp + hy * hs->pitch;
+                p[0] = c2.r; p[1] = c2.g; p[2] = c2.b; p[3] = 255;
+            }
+            SDL_UnlockSurface(hs);
+            cpHueTex_ = SDL_CreateTextureFromSurface(renderer_, hs);
+            SDL_FreeSurface(hs);
+        }
+    }
+    if (cpHueTex_) {
+        SDL_Rect hueDst = {hueX, hueY, hueW, hueH};
+        SDL_RenderCopy(renderer_, cpHueTex_, nullptr, &hueDst);
     }
     SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 200);
     SDL_Rect hueBorder = {hueX, hueY, hueW, hueH};
     SDL_RenderDrawRect(renderer_, &hueBorder);
-    // Hue marker
     int hmy = hueY + (int)(hue_ / 360.0f * hueH);
     SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 255);
     SDL_Rect hmark = {hueX - 2, hmy - 2, hueW + 4, 4};
     SDL_RenderDrawRect(renderer_, &hmark);
 
-    // Alpha bar (30×200)
+    // Alpha bar (1x200 texture) -- rebuild when base color changes
     int alphaX = px + 290, alphaY = py + 40, alphaW = 30, alphaH = 200;
-    for (int ay = 0; ay < alphaH; ay++) {
-        float a = (float)ay / alphaH;
-        uint8_t av = (uint8_t)(a * 255);
-        TexelColor cc = hsvToRgb(hue_, sat_, val_);
-        SDL_SetRenderDrawColor(renderer_, cc.r, cc.g, cc.b, av);
-        SDL_RenderDrawLine(renderer_, alphaX, alphaY + ay, alphaX + alphaW, alphaY + ay);
+    TexelColor preview = hsvToRgb(hue_, sat_, val_, currentColor_.a);
+    TexelColor previewBase = {preview.r, preview.g, preview.b, 255};
+    if (!cpAlphaTex_ || previewBase.r != cpAlphaColor_.r ||
+        previewBase.g != cpAlphaColor_.g || previewBase.b != cpAlphaColor_.b) {
+        if (cpAlphaTex_) SDL_DestroyTexture(cpAlphaTex_);
+        SDL_Surface* as = SDL_CreateRGBSurfaceWithFormat(0, 1, alphaH, 32, SDL_PIXELFORMAT_RGBA32);
+        if (as) {
+            SDL_LockSurface(as);
+            uint8_t* ap2 = (uint8_t*)as->pixels;
+            for (int ay = 0; ay < alphaH; ay++) {
+                uint8_t* p = ap2 + ay * as->pitch;
+                p[0] = previewBase.r; p[1] = previewBase.g; p[2] = previewBase.b;
+                p[3] = (uint8_t)((float)ay / alphaH * 255);
+            }
+            SDL_UnlockSurface(as);
+            cpAlphaTex_ = SDL_CreateTextureFromSurface(renderer_, as);
+            if (cpAlphaTex_) SDL_SetTextureBlendMode(cpAlphaTex_, SDL_BLENDMODE_BLEND);
+            SDL_FreeSurface(as);
+        }
+        cpAlphaColor_ = previewBase;
+    }
+    if (cpAlphaTex_) {
+        SDL_Rect alphaDst = {alphaX, alphaY, alphaW, alphaH};
+        SDL_RenderCopy(renderer_, cpAlphaTex_, nullptr, &alphaDst);
     }
     SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 200);
     SDL_Rect alphaBorder = {alphaX, alphaY, alphaW, alphaH};
@@ -1935,119 +1957,85 @@ void TextureEditor::renderColorPicker() {
     SDL_RenderDrawRect(renderer_, &amark);
 
     // Preview swatch
-    int prevX = px + 340, prevY = py + 40;
-    TexelColor preview = hsvToRgb(hue_, sat_, val_, currentColor_.a);
+    int prevX = px + 340, prevY2 = py + 40;
     SDL_SetRenderDrawColor(renderer_, preview.r, preview.g, preview.b, preview.a);
-    SDL_Rect prevRect = {prevX, prevY, 40, 40};
+    SDL_Rect prevRect = {prevX, prevY2, 40, 40};
     SDL_RenderFillRect(renderer_, &prevRect);
     SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 80);
     SDL_RenderDrawRect(renderer_, &prevRect);
 
-    // RGB text
+    if (!ui_) return;
     char buf[64];
-    snprintf(buf, sizeof(buf), "R: %d", preview.r);  drawText(buf, px + 20, py + 252, fontSm, {200, 100, 100, 255});
-    snprintf(buf, sizeof(buf), "G: %d", preview.g);  drawText(buf, px + 80, py + 252, fontSm, {100, 200, 100, 255});
-    snprintf(buf, sizeof(buf), "B: %d", preview.b);  drawText(buf, px + 140, py + 252, fontSm, {100, 100, 200, 255});
-    snprintf(buf, sizeof(buf), "A: %d", preview.a);  drawText(buf, px + 200, py + 252, fontSm, {200, 200, 200, 255});
-
+    snprintf(buf, sizeof(buf), "R: %d", preview.r);
+    ui_->drawText(buf, px + 20,  py + 252, 12, {200, 100, 100, 255});
+    snprintf(buf, sizeof(buf), "G: %d", preview.g);
+    ui_->drawText(buf, px + 80,  py + 252, 12, {100, 200, 100, 255});
+    snprintf(buf, sizeof(buf), "B: %d", preview.b);
+    ui_->drawText(buf, px + 140, py + 252, 12, {100, 100, 200, 255});
+    snprintf(buf, sizeof(buf), "A: %d", preview.a);
+    ui_->drawText(buf, px + 200, py + 252, 12, {200, 200, 200, 255});
     snprintf(buf, sizeof(buf), "#%02X%02X%02X%02X", preview.r, preview.g, preview.b, preview.a);
-    drawText(buf, px + 20, py + 272, fontSm, {180, 180, 180, 255});
-
-    // Hints
-    drawText("Click SV square / Hue bar / Alpha bar", px + 20, py + 300, fontSm, {80, 80, 90, 255});
-    drawText("ESC / Enter to confirm", px + 20, py + 316, fontSm, {80, 80, 90, 255});
+    ui_->drawText(buf, px + 20, py + 272, 12, {180, 180, 180, 255});
+    ui_->drawText("Click SV square / Hue bar / Alpha bar", px + 20, py + 300, 12, {80, 80, 90, 255});
+    ui_->drawText("ESC / Enter to confirm",                px + 20, py + 316, 12, {80, 80, 90, 255});
 }
 
 void TextureEditor::renderStatusBar() {
-    auto& A = Assets::instance();
-    TTF_Font* font = A.font(13);
+    if (!ui_) return;
 
     int y = screenH_ - STATUS_H;
     SDL_SetRenderDrawColor(renderer_, UI::W98::Silver.r, UI::W98::Silver.g, UI::W98::Silver.b, 255);
     SDL_Rect bg = {0, y, screenW_, STATUS_H};
     SDL_RenderFillRect(renderer_, &bg);
-    // Raised top edge (white highlight over a shadow line)
     SDL_SetRenderDrawColor(renderer_, UI::W98::White.r, UI::W98::White.g, UI::W98::White.b, 255);
     SDL_RenderDrawLine(renderer_, 0, y, screenW_, y);
 
-    auto drawText = [&](const char* text, int x, int y, SDL_Color c) {
-        SDL_Surface* s = TTF_RenderText_Blended(font, text, c);
-        if (!s) return;
-        SDL_Texture* t = SDL_CreateTextureFromSurface(renderer_, s);
-        SDL_Rect dst = {x, y, s->w, s->h};
-        SDL_RenderCopy(renderer_, t, nullptr, &dst);
-        SDL_DestroyTexture(t);
-        SDL_FreeSurface(s);
-    };
-
-    SDL_Color gray = UI::W98::Black;  // primary status text (kept var name)
-
-    // Canvas size
     char buf[128];
     snprintf(buf, sizeof(buf), "%dx%d", canvasW_, canvasH_);
-    drawText(buf, 10, y + 6, gray);
+    ui_->drawText(buf, 10, y + 6, 13, UI::W98::Black);
 
-    // Zoom level
     snprintf(buf, sizeof(buf), "Zoom: %.0f%%", zoom_ * 100.0f / 8.0f);
-    drawText(buf, 100, y + 6, gray);
+    ui_->drawText(buf, 100, y + 6, 13, UI::W98::Black);
 
-    // Cursor position
     int mx, my;
     SDL_GetMouseState(&mx, &my);
     int cx, cy;
     if (screenToCanvas(mx, my, cx, cy)) {
         snprintf(buf, sizeof(buf), "Pixel: %d, %d", cx, cy);
-        drawText(buf, 240, y + 6, UI::W98::Navy);
+        ui_->drawText(buf, 240, y + 6, 13, UI::W98::Navy);
     }
 
-    // Tool name
     const char* toolNames[] = {"Pen", "Eraser", "Fill", "Line", "Rect", "Circle", "Eyedropper", "Select"};
     snprintf(buf, sizeof(buf), "Tool: %s%s", toolNames[(int)currentTool_],
              fillShapes_ ? " (filled)" : "");
-    drawText(buf, 400, y + 6, UI::W98::Navy);
+    ui_->drawText(buf, 400, y + 6, 13, UI::W98::Navy);
 
-    // Brush size
     snprintf(buf, sizeof(buf), "Brush: %d", brushSize_);
-    drawText(buf, 560, y + 6, UI::W98::Navy);
+    ui_->drawText(buf, 560, y + 6, 13, UI::W98::Navy);
 
-    // Selection info
     if (selActive_) {
         snprintf(buf, sizeof(buf), "Sel: %d,%d  %dx%d%s",
                  selRect_.x, selRect_.y, selRect_.w, selRect_.h,
                  selLifted_ ? " [float]" : "");
-        drawText(buf, 680, y + 6, {200, 150, 50, 255});
+        ui_->drawText(buf, 680, y + 6, 13, {200, 150, 50, 255});
     }
 
-    // Save message
     if (saveMessageTimer_ > 0 && !saveMessage_.empty()) {
         uint8_t alpha = (uint8_t)(std::min(1.0f, saveMessageTimer_ / 0.5f) * 255);
-        drawText(saveMessage_.c_str(), 580, y + 6, {50, 255, 100, alpha});
+        ui_->drawText(saveMessage_.c_str(), 580, y + 6, 13, {50, 255, 100, alpha});
     }
 
-    // File path (right side)
-    drawText(savePath_.c_str(), screenW_ - 200, y + 6, {60, 60, 70, 255});
+    ui_->drawText(savePath_.c_str(), screenW_ - 200, y + 6, 13, UI::W98::Shadow);
 }
 
 void TextureEditor::renderPreview() {
-    if (!canvasTex_) return;
-    auto& A = Assets::instance();
-    TTF_Font* fontSm = A.font(11);
+    if (!canvasTex_ || !ui_) return;
 
     // Small 1:1 preview in bottom-left of palette area
     int previewY = screenH_ - STATUS_H - canvasH_ - 30;
     if (previewY < TOOLBAR_H + 220) previewY = TOOLBAR_H + 220;
 
-    auto drawText = [&](const char* text, int x, int y, SDL_Color c) {
-        SDL_Surface* s = TTF_RenderText_Blended(fontSm, text, c);
-        if (!s) return;
-        SDL_Texture* t = SDL_CreateTextureFromSurface(renderer_, s);
-        SDL_Rect dst = {x, y, s->w, s->h};
-        SDL_RenderCopy(renderer_, t, nullptr, &dst);
-        SDL_DestroyTexture(t);
-        SDL_FreeSurface(s);
-    };
-
-    drawText("PREVIEW", 8, previewY - 16, {0, 140, 130, 255});
+    ui_->drawText("PREVIEW", 8, previewY - 16, 11, {0, 140, 130, 255});
 
     // Checkerboard behind
     int maxW = PALETTE_W - 16;
