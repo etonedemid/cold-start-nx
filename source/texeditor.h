@@ -25,6 +25,7 @@ enum class TexTool {
     Rect,
     Circle,
     Eyedropper,
+    Select,
     Count
 };
 
@@ -121,6 +122,14 @@ private:
     void applyBlur();          // 3x3 alpha-weighted box blur
     void applyRandomShift();   // per-pixel random jitter/scatter
 
+    // Selection / marquee transform
+    void liftSelection();
+    void stampSelection();
+    void commitSelection();
+    int  hitTestSelHandle(int mx, int my) const;  // -1=miss 0-7=scale 8=rotate 9=interior
+    void selHandlePos(int i, int& cx, int& cy) const;
+    void renderSelectionOverlay();
+
     // Undo / Redo
     static constexpr int MAX_UNDO = 50;
     std::vector<std::vector<TexelColor>> undoStack_;
@@ -138,6 +147,20 @@ private:
     bool shapeStarted_ = false;     // line/rect/circle first point set
     int shapeX0_ = 0, shapeY0_ = 0;
     bool fillShapes_ = false;       // rect/circle drawn filled when true
+
+    // Selection / marquee transform
+    bool     selActive_   = false;
+    bool     selLifted_   = false;
+    SDL_Rect selRect_     = {0,0,0,0};
+    std::vector<TexelColor> selOrigPixels_;
+    int      selOrigW_    = 0, selOrigH_ = 0;
+    float    selAngle_    = 0.0f;
+    int      selDragMode_ = 0;   // 0=none 1=move 2-9=handle 10=rotate 11=newband
+    int      selAnchorCX_ = 0, selAnchorCY_ = 0;
+    SDL_Rect selRectAtDragStart_ = {0,0,0,0};
+    float    selAngleAtDragStart_ = 0.0f;
+    float    selMarchTimer_ = 0.0f;
+    int      selMarchPhase_ = 0;
 
     // Palette
     static constexpr int PALETTE_SIZE = 32;
