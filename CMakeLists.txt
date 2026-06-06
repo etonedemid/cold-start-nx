@@ -36,10 +36,11 @@ if(SERVER_ONLY)
     file(GLOB HEADERS source/network.h source/gamemode.h source/mapformat.h
                       source/mappack.h source/vec2.h source/constants.h)
 else()
-    file(GLOB SOURCES source/*.cpp)
+    # FIXED: Added GLOB_RECURSE to catch subfolders, and CONFIGURE_DEPENDS to detect new files automatically.
+    file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS source/*.cpp)
     # Exclude the server-only entry point from regular builds
     list(FILTER SOURCES EXCLUDE REGEX "server_main\\.cpp$")
-    file(GLOB HEADERS source/*.h)
+    file(GLOB_RECURSE HEADERS CONFIGURE_DEPENDS source/*.h)
 endif()
 
 if(WIN32)
