@@ -162,6 +162,14 @@ private:
     float    selMarchTimer_ = 0.0f;
     int      selMarchPhase_ = 0;
 
+    // Cached render textures (rebuilt on change, never every frame)
+    SDL_Texture* cpSVTex_      = nullptr; // color picker SV square
+    float        cpSVHue_      = -999.f;  // hue at which cpSVTex_ was built
+    SDL_Texture* cpHueTex_     = nullptr; // color picker hue bar (static)
+    SDL_Texture* cpAlphaTex_   = nullptr; // color picker alpha bar
+    TexelColor   cpAlphaColor_ = {0,0,0,0};
+    SDL_Texture* selFloatTex_  = nullptr; // floating selection pixels
+
     // Palette
     static constexpr int PALETTE_SIZE = 32;
     TexelColor palette_[PALETTE_SIZE];
