@@ -843,6 +843,101 @@ void TextureEditor::handleConfigInput(const SDL_Event& e) {
             wantsExit_ = true;
         }
     }
+    else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+        if (config_.textEditing) { config_.textEditing = false; return; }
+        int mx = e.button.x, my = e.button.y;
+
+        // Mirror renderConfig layout
+        const int pw = 560;
+        const int px = (screenW_ - pw) / 2;
+        const int py = (screenH_ - 420) / 2 - 20;
+        const int pad = 16, lX = px + pad, rW = pw - pad * 2;
+        const int rowH = 26, rowGap = 5;
+        const int valX = lX + 110, valW = rW - 110;
+        const int bw = 150, bh = 28, bx = px + (pw - bw) / 2;
+        int cy = py + UI::W98::TitleH + 14;
+
+        // Returns true if click hit the current row; advances cy regardless
+        auto hitRow = [&](int idx) -> bool {
+            bool hit = mx >= lX && mx < lX + rW && my >= cy && my < cy + rowH;
+            if (hit) config_.field = idx;
+            cy += rowH + rowGap;
+            return hit;
+        };
+        // Click on button: select field + trigger Enter
+        auto hitBtn = [&](int idx) {
+            if (mx >= bx && mx < bx + bw && my >= cy && my < cy + bh) {
+                config_.field = idx;
+                SDL_Event fake{}; fake.type = SDL_KEYDOWN;
+                fake.key.keysym.sym = SDLK_RETURN;
+                handleConfigInput(fake);
+            }
+            cy += bh + rowGap;
+        };
+
+        // Row 0: Action (toggle on click)
+        if (hitRow(0)) {
+            config_.action = (config_.action == TexEditorConfig::NewImage)
+                ? TexEditorConfig::LoadImage : TexEditorConfig::NewImage;
+            return;
+        }
+
+        if (config_.action == TexEditorConfig::NewImage) {
+            // Row 1: Template - left half = prev, right half = next
+            if (hitRow(1)) {
+                int dir = (mx >= valX + valW / 2) ? 1 : -1;
+                int t = ((int)config_.tmpl + dir + (int)TexTemplate::Count) % (int)TexTemplate::Count;
+                config_.tmpl = (TexTemplate)t;
+                switch (config_.tmpl) {
+                    case TexTemplate::Tile16:    config_.canvasW = config_.canvasH = 16;  break;
+                    case TexTemplate::Tile32:    config_.canvasW = config_.canvasH = 32;  break;
+                    case TexTemplate::Tile64:    config_.canvasW = config_.canvasH = 64;  break;
+                    case TexTemplate::Sprite32:  config_.canvasW = config_.canvasH = 32;  break;
+                    case TexTemplate::Sprite64:  config_.canvasW = config_.canvasH = 64;  break;
+                    case TexTemplate::Sprite128: config_.canvasW = config_.canvasH = 128; break;
+                    case TexTemplate::Icon16:    config_.canvasW = config_.canvasH = 16;  break;
+                    default: break;
+                }
+                return;
+            }
+            // Row 2: Width
+            if (hitRow(2)) {
+                int dir = (mx >= valX + valW / 2) ? 1 : -1;
+                config_.canvasW = std::max(1, std::min(256, config_.canvasW + dir * (config_.canvasW >= 64 ? 16 : config_.canvasW >= 16 ? 8 : 1)));
+                config_.tmpl = TexTemplate::Custom;
+                return;
+            }
+            // Row 3: Height
+            if (hitRow(3)) {
+                int dir = (mx >= valX + valW / 2) ? 1 : -1;
+                config_.canvasH = std::max(1, std::min(256, config_.canvasH + dir * (config_.canvasH >= 64 ? 16 : config_.canvasH >= 16 ? 8 : 1)));
+                config_.tmpl = TexTemplate::Custom;
+                return;
+            }
+            // Row 4: Name field - click to start editing
+            if (mx >= lX && mx < lX + rW && my >= cy && my < cy + rowH) {
+                config_.field = 4;
+                config_.textEditing = true;
+                SDL_StartTextInput();
+                return;
+            }
+            cy += rowH + rowGap;
+            cy += 22; // canvas size preview text
+            hitBtn(5); // CREATE
+            hitBtn(6); // CANCEL
+        } else {
+            // Row 1: File list - left half = prev, right half = next
+            if (hitRow(1)) {
+                int dir = (mx >= valX + valW / 2) ? 1 : -1;
+                if (!loadFiles_.empty())
+                    loadFileIdx_ = (loadFileIdx_ + dir + (int)loadFiles_.size()) % (int)loadFiles_.size();
+                return;
+            }
+            cy += 22; // full path text
+            hitBtn(2); // LOAD
+            hitBtn(3); // CANCEL
+        }
+    }
     else if (e.type == SDL_TEXTINPUT && config_.textEditing) {
         if (config_.name.size() < 32)
             config_.name += e.text.text;
@@ -1372,6 +1467,9 @@ void TextureEditor::update(float dt) {
 void TextureEditor::render() {
     if (!active_) return;
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+
+    // Default: show system cursor. renderCursor() hides it over the canvas.
+    SDL_ShowCursor(SDL_ENABLE);
 
     if (state_ == TexEditorState::Config) {
         renderConfig();
@@ -2067,6 +2165,14 @@ void TextureEditor::renderCursor() {
         my = (int)cursorY_;
     } else {
         SDL_GetMouseState(&mx, &my);
+    }
+
+    // Hide system cursor over the canvas; the custom crosshair replaces it
+    if (!useGamepadCursor_) {
+        int ox = canvasOriginX(), oy = canvasOriginY();
+        int cw = (int)(canvasW_ * zoom_), ch = (int)(canvasH_ * zoom_);
+        bool overCanvas = (mx >= ox && mx < ox + cw && my >= oy && my < oy + ch);
+        SDL_ShowCursor(overCanvas ? SDL_DISABLE : SDL_ENABLE);
     }
 
     // Highlight the canvas pixel(s) under the cursor (brush size)
