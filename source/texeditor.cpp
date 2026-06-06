@@ -199,6 +199,67 @@ void TextureEditor::doSave() {
     saveMessageTimer_ = 2.5f;
 }
 
+void TextureEditor::liftSelection() {
+    if (selLifted_ || !selActive_) return;
+    selOrigW_ = selRect_.w;
+    selOrigH_ = selRect_.h;
+    selOrigPixels_.resize(selOrigW_ * selOrigH_);
+    for (int y = 0; y < selOrigH_; y++) {
+        for (int x = 0; x < selOrigW_; x++) {
+            selOrigPixels_[y * selOrigW_ + x] = getPixel(selRect_.x + x, selRect_.y + y);
+            setPixel(selRect_.x + x, selRect_.y + y, {0,0,0,0});
+        }
+    }
+    updateCanvasTexture();
+    selLifted_ = true;
+}
+
+void TextureEditor::stampSelection() {
+    if (!selActive_ || selOrigPixels_.empty()) return;
+    int dw = selRect_.w, dh = selRect_.h;
+    if (dw <= 0 || dh <= 0) return;
+    float rad = selAngle_ * 3.14159265f / 180.0f;
+    float cosA = cosf(rad), sinA = sinf(rad);
+    float srcCX = selOrigW_ * 0.5f, srcCY = selOrigH_ * 0.5f;
+    float scaleX = (float)selOrigW_ / dw, scaleY = (float)selOrigH_ / dh;
+    for (int dy = 0; dy < dh; dy++) {
+        for (int dx = 0; dx < dw; dx++) {
+            int canX = selRect_.x + dx, canY = selRect_.y + dy;
+            if (canX < 0 || canX >= canvasW_ || canY < 0 || canY >= canvasH_) continue;
+            float lx = dx - dw * 0.5f + 0.5f, ly = dy - dh * 0.5f + 0.5f;
+            float sfx = lx * scaleX, sfy = ly * scaleY;
+            int sx = (int)floorf(cosA * sfx + sinA * sfy + srcCX);
+            int sy = (int)floorf(-sinA * sfx + cosA * sfy + srcCY);
+            if (sx < 0 || sx >= selOrigW_ || sy < 0 || sy >= selOrigH_) continue;
+            TexelColor src = selOrigPixels_[sy * selOrigW_ + sx];
+            if (src.a == 0) continue;
+            TexelColor& dst = pixels_[canY * canvasW_ + canX];
+            int sa = src.a, da = dst.a * (255 - sa) / 255;
+            int outA = sa + da;
+            dst.r = outA ? (uint8_t)((src.r * sa + dst.r * da) / outA) : 0;
+            dst.g = outA ? (uint8_t)((src.g * sa + dst.g * da) / outA) : 0;
+            dst.b = outA ? (uint8_t)((src.b * sa + dst.b * da) / outA) : 0;
+            dst.a = (uint8_t)outA;
+        }
+    }
+}
+
+void TextureEditor::commitSelection() {
+    if (!selActive_) return;
+    if (selLifted_) {
+        pushUndo();
+        stampSelection();
+        updateCanvasTexture();
+    }
+    selActive_  = false;
+    selLifted_  = false;
+    selRect_    = {0,0,0,0};
+    selOrigPixels_.clear();
+    selOrigW_   = 0; selOrigH_ = 0;
+    selAngle_   = 0.0f;
+    selDragMode_= 0;
+}
+
 void TextureEditor::blitToCanvasTex(const std::vector<TexelColor>& src) {
     if (!canvasTex_ || (int)src.size() < canvasW_ * canvasH_) return;
     void* texPixels = nullptr;
@@ -406,6 +467,43 @@ bool TextureEditor::screenToCanvas(int sx, int sy, int& cx, int& cy) const {
 void TextureEditor::canvasToScreen(int cx, int cy, int& sx, int& sy) const {
     sx = canvasOriginX() + (int)(cx * zoom_);
     sy = canvasOriginY() + (int)(cy * zoom_);
+}
+
+void TextureEditor::selHandlePos(int i, int& cx, int& cy) const {
+    // 0=top-left 1=top-right 2=bottom-right 3=bottom-left
+    // 4=top-mid  5=right-mid 6=bottom-mid  7=left-mid
+    int x0 = selRect_.x, y0 = selRect_.y;
+    int x1 = x0 + selRect_.w, y1 = y0 + selRect_.h;
+    int xm = x0 + selRect_.w / 2, ym = y0 + selRect_.h / 2;
+    const int hx[8] = {x0,x1,x1,x0,xm,x1,xm,x0};
+    const int hy[8] = {y0,y0,y1,y1,y0,ym,y1,ym};
+    if (i >= 0 && i < 8) { cx = hx[i]; cy = hy[i]; }
+    else { cx = xm; cy = ym; }
+}
+
+int TextureEditor::hitTestSelHandle(int mx, int my) const {
+    if (!selActive_) return -1;
+    const int HR = 6;
+    // Rotation handle: 20px above screen position of handle 4 (top-mid)
+    {
+        int hcx, hcy, sx, sy;
+        selHandlePos(4, hcx, hcy);
+        canvasToScreen(hcx, hcy, sx, sy);
+        sy -= 20;
+        if (abs(mx - sx) <= HR && abs(my - sy) <= HR) return 8;
+    }
+    for (int i = 0; i < 8; i++) {
+        int hcx, hcy, sx, sy;
+        selHandlePos(i, hcx, hcy);
+        canvasToScreen(hcx, hcy, sx, sy);
+        if (abs(mx - sx) <= HR && abs(my - sy) <= HR) return i;
+    }
+    // Interior
+    int x0s, y0s, x1s, y1s;
+    canvasToScreen(selRect_.x, selRect_.y, x0s, y0s);
+    canvasToScreen(selRect_.x + selRect_.w, selRect_.y + selRect_.h, x1s, y1s);
+    if (mx >= x0s && mx <= x1s && my >= y0s && my <= y1s) return 9;
+    return -1;
 }
 
 int TextureEditor::paletteGridY() const {
@@ -756,7 +854,10 @@ void TextureEditor::handleEditingInput(const SDL_Event& e) {
         SDL_Keycode key = e.key.keysym.sym;
         bool ctrl = (e.key.keysym.mod & KMOD_CTRL) != 0;
 
-        if (key == SDLK_ESCAPE) { wantsExit_ = true; return; }
+        if (key == SDLK_ESCAPE) {
+            if (selActive_) { commitSelection(); return; }
+            wantsExit_ = true; return;
+        }
 
         // Undo / Redo
         if (ctrl && key == SDLK_z) { undo(); return; }
@@ -768,6 +869,23 @@ void TextureEditor::handleEditingInput(const SDL_Event& e) {
             return;
         }
 
+        // Selection: stamp on Enter, select-all on Ctrl+A
+        if (key == SDLK_RETURN && selActive_) { commitSelection(); return; }
+        if (ctrl && key == SDLK_a) {
+            commitSelection();
+            selRect_ = {0, 0, canvasW_, canvasH_};
+            selActive_ = true;
+            currentTool_ = TexTool::Select;
+            return;
+        }
+
+        // Commit floating selection when switching away from Select tool
+        if (selActive_ && (key == SDLK_b || key == SDLK_p || key == SDLK_e ||
+            key == SDLK_g || key == SDLK_l || key == SDLK_r || key == SDLK_o ||
+            key == SDLK_i)) {
+            commitSelection();
+        }
+
         // Tool shortcuts
         if (key == SDLK_b || key == SDLK_p) currentTool_ = TexTool::Pen;
         if (key == SDLK_e) currentTool_ = TexTool::Eraser;
@@ -776,6 +894,7 @@ void TextureEditor::handleEditingInput(const SDL_Event& e) {
         if (key == SDLK_r) currentTool_ = TexTool::Rect;
         if (key == SDLK_o) currentTool_ = TexTool::Circle;
         if (key == SDLK_i) currentTool_ = TexTool::Eyedropper;
+        if (key == SDLK_v) currentTool_ = TexTool::Select;
 
         // Fill toggle (rect/circle) + one-shot canvas effects
         if (key == SDLK_f) fillShapes_ = !fillShapes_;
@@ -839,6 +958,41 @@ void TextureEditor::handleEditingInput(const SDL_Event& e) {
             return;
         }
 
+        // Select tool: intercept before canvas-bounds check (handles may be near edge)
+        if (currentTool_ == TexTool::Select && e.button.button == SDL_BUTTON_LEFT) {
+            int h = hitTestSelHandle(mx, my);
+            if (h >= 0 && h <= 7) {
+                liftSelection();
+                selDragMode_ = h + 2;
+                int scx, scy; screenToCanvas(mx, my, scx, scy);
+                selAnchorCX_ = scx; selAnchorCY_ = scy;
+                selRectAtDragStart_ = selRect_;
+            } else if (h == 8) {
+                selDragMode_ = 10;
+                selAnchorCX_ = mx; selAnchorCY_ = my;  // screen coords for angle calc
+                selRectAtDragStart_ = selRect_;
+                selAngleAtDragStart_ = selAngle_;
+            } else if (h == 9) {
+                liftSelection();
+                selDragMode_ = 1;
+                int scx, scy; screenToCanvas(mx, my, scx, scy);
+                selAnchorCX_ = scx; selAnchorCY_ = scy;
+                selRectAtDragStart_ = selRect_;
+            } else {
+                if (selActive_) commitSelection();
+                int scx, scy; screenToCanvas(mx, my, scx, scy);
+                scx = std::max(0, std::min(canvasW_ - 1, scx));
+                scy = std::max(0, std::min(canvasH_ - 1, scy));
+                selActive_ = true; selLifted_ = false;
+                selAngle_  = 0.0f;
+                selRect_   = {scx, scy, 0, 0};
+                selDragMode_ = 11;
+                selAnchorCX_ = scx; selAnchorCY_ = scy;
+                selRectAtDragStart_ = selRect_;
+            }
+            return;
+        }
+
         int cx, cy;
         if (screenToCanvas(mx, my, cx, cy)) {
             if (e.button.button == SDL_BUTTON_LEFT) {
@@ -867,6 +1021,13 @@ void TextureEditor::handleEditingInput(const SDL_Event& e) {
         }
     }
     else if (e.type == SDL_MOUSEBUTTONUP) {
+        if (currentTool_ == TexTool::Select && selDragMode_ != 0) {
+            if (selDragMode_ == 11 && (selRect_.w <= 0 || selRect_.h <= 0)) {
+                selActive_  = false;
+                selRect_    = {0,0,0,0};
+            }
+            selDragMode_ = 0;
+        }
         if (e.button.button == SDL_BUTTON_LEFT) {
             if (shapeStarted_) {
                 int cx, cy;
@@ -896,6 +1057,46 @@ void TextureEditor::handleEditingInput(const SDL_Event& e) {
         }
     }
     else if (e.type == SDL_MOUSEMOTION) {
+        if (currentTool_ == TexTool::Select && selDragMode_ != 0) {
+            int smx = e.motion.x, smy = e.motion.y;
+            int cx2, cy2;
+            screenToCanvas(smx, smy, cx2, cy2);
+            cx2 = std::max(0, std::min(canvasW_ - 1, cx2));
+            cy2 = std::max(0, std::min(canvasH_ - 1, cy2));
+            if (selDragMode_ == 11) {
+                selRect_.x = std::min(cx2, selAnchorCX_);
+                selRect_.y = std::min(cy2, selAnchorCY_);
+                selRect_.w = abs(cx2 - selAnchorCX_);
+                selRect_.h = abs(cy2 - selAnchorCY_);
+            } else if (selDragMode_ == 1) {
+                selRect_.x = selRectAtDragStart_.x + (cx2 - selAnchorCX_);
+                selRect_.y = selRectAtDragStart_.y + (cy2 - selAnchorCY_);
+            } else if (selDragMode_ == 10) {
+                int scx, scy;
+                canvasToScreen(selRectAtDragStart_.x + selRectAtDragStart_.w / 2,
+                               selRectAtDragStart_.y + selRectAtDragStart_.h / 2, scx, scy);
+                selAngle_ = atan2f((float)(smy - scy), (float)(smx - scx)) * 180.0f / 3.14159265f + 90.0f;
+            } else {
+                int hi = selDragMode_ - 2;
+                int rx0 = selRectAtDragStart_.x, ry0 = selRectAtDragStart_.y;
+                int rx1 = rx0 + selRectAtDragStart_.w, ry1 = ry0 + selRectAtDragStart_.h;
+                switch (hi) {
+                    case 0: rx0 = cx2; ry0 = cy2; break;
+                    case 1: rx1 = cx2; ry0 = cy2; break;
+                    case 2: rx1 = cx2; ry1 = cy2; break;
+                    case 3: rx0 = cx2; ry1 = cy2; break;
+                    case 4: ry0 = cy2; break;
+                    case 5: rx1 = cx2; break;
+                    case 6: ry1 = cy2; break;
+                    case 7: rx0 = cx2; break;
+                    default: break;
+                }
+                if (rx1 <= rx0) rx1 = rx0 + 1;
+                if (ry1 <= ry0) ry1 = ry0 + 1;
+                selRect_ = {rx0, ry0, rx1 - rx0, ry1 - ry0};
+            }
+            return;
+        }
         if (drawing_) {
             int cx, cy;
             if (screenToCanvas(e.motion.x, e.motion.y, cx, cy)) {
@@ -1099,6 +1300,15 @@ void TextureEditor::update(float dt) {
     if (!active_) return;
     if (saveMessageTimer_ > 0) saveMessageTimer_ -= dt;
 
+    // Marching ants animation
+    if (selActive_) {
+        selMarchTimer_ += dt;
+        if (selMarchTimer_ >= 0.05f) {
+            selMarchTimer_ = 0.0f;
+            selMarchPhase_ = (selMarchPhase_ + 2) % 12;
+        }
+    }
+
     // Animation playback: cycle the displayed frame on a timer.
     if (playing_ && frames_.size() > 1) {
         frameTimer_ += dt;
@@ -1151,6 +1361,7 @@ void TextureEditor::render() {
 
     renderCanvas();
     if (showGrid_ && zoom_ >= 4.0f) renderGrid();
+    if (selActive_) renderSelectionOverlay();
     renderPreview();
     renderToolbar();
     renderPalette();
@@ -1160,6 +1371,90 @@ void TextureEditor::render() {
 
     if (state_ == TexEditorState::ColorPicker) {
         renderColorPicker();
+    }
+}
+
+void TextureEditor::renderSelectionOverlay() {
+    if (!selActive_) return;
+
+    // Draw floating pixels (lifted off canvas, shown at current transformed position)
+    if (selLifted_ && !selOrigPixels_.empty()) {
+        int dw = selRect_.w, dh = selRect_.h;
+        if (dw > 0 && dh > 0) {
+            float rad = selAngle_ * 3.14159265f / 180.0f;
+            float cosA = cosf(rad), sinA = sinf(rad);
+            float srcCX = selOrigW_ * 0.5f, srcCY = selOrigH_ * 0.5f;
+            float scaleX = (float)selOrigW_ / dw, scaleY = (float)selOrigH_ / dh;
+            int pxSz = std::max(1, (int)zoom_);
+            for (int dy = 0; dy < dh; dy++) {
+                for (int dx = 0; dx < dw; dx++) {
+                    float lx = dx - dw * 0.5f + 0.5f, ly = dy - dh * 0.5f + 0.5f;
+                    float sfx = lx * scaleX, sfy = ly * scaleY;
+                    int sx2 = (int)floorf(cosA * sfx + sinA * sfy + srcCX);
+                    int sy2 = (int)floorf(-sinA * sfx + cosA * sfy + srcCY);
+                    if (sx2 < 0 || sx2 >= selOrigW_ || sy2 < 0 || sy2 >= selOrigH_) continue;
+                    TexelColor c = selOrigPixels_[sy2 * selOrigW_ + sx2];
+                    if (c.a == 0) continue;
+                    int scx, scy;
+                    canvasToScreen(selRect_.x + dx, selRect_.y + dy, scx, scy);
+                    SDL_SetRenderDrawColor(renderer_, c.r, c.g, c.b, c.a);
+                    SDL_Rect pr = {scx, scy, pxSz, pxSz};
+                    SDL_RenderFillRect(renderer_, &pr);
+                }
+            }
+        }
+    }
+
+    // Marching-ants selection border
+    int x0s, y0s, x1s, y1s;
+    canvasToScreen(selRect_.x, selRect_.y, x0s, y0s);
+    canvasToScreen(selRect_.x + selRect_.w, selRect_.y + selRect_.h, x1s, y1s);
+
+    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
+    SDL_Rect outerR = {x0s - 1, y0s - 1, x1s - x0s + 2, y1s - y0s + 2};
+    SDL_RenderDrawRect(renderer_, &outerR);
+
+    SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 255);
+    const int dash = 6;
+    int phase = selMarchPhase_, idx = 0;
+    for (int x = x0s; x <= x1s; x++, idx++)
+        if (((idx + phase) / dash) % 2 == 0) SDL_RenderDrawPoint(renderer_, x, y0s);
+    for (int y = y0s + 1; y <= y1s; y++, idx++)
+        if (((idx + phase) / dash) % 2 == 0) SDL_RenderDrawPoint(renderer_, x1s, y);
+    for (int x = x1s - 1; x >= x0s; x--, idx++)
+        if (((idx + phase) / dash) % 2 == 0) SDL_RenderDrawPoint(renderer_, x, y1s);
+    for (int y = y1s - 1; y > y0s; y--, idx++)
+        if (((idx + phase) / dash) % 2 == 0) SDL_RenderDrawPoint(renderer_, x0s, y);
+
+    // 8 scale handles (white squares with black border)
+    for (int i = 0; i < 8; i++) {
+        int hcx, hcy, sx, sy;
+        selHandlePos(i, hcx, hcy);
+        canvasToScreen(hcx, hcy, sx, sy);
+        SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 255);
+        SDL_Rect hr = {sx - 4, sy - 4, 8, 8};
+        SDL_RenderFillRect(renderer_, &hr);
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
+        SDL_RenderDrawRect(renderer_, &hr);
+    }
+
+    // Rotation handle: green square 20px above top-mid handle
+    {
+        int hcx, hcy, sx, sy;
+        selHandlePos(4, hcx, hcy);
+        canvasToScreen(hcx, hcy, sx, sy);
+        int rsx = sx, rsy = sy - 20;
+        SDL_SetRenderDrawColor(renderer_, 150, 150, 150, 180);
+        SDL_RenderDrawLine(renderer_, sx, sy, rsx, rsy);
+        SDL_SetRenderDrawColor(renderer_, 0, 200, 100, 255);
+        SDL_Rect rh = {rsx - 5, rsy - 5, 10, 10};
+        SDL_RenderFillRect(renderer_, &rh);
+        SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 255);
+        SDL_RenderDrawRect(renderer_, &rh);
+        if (fabsf(selAngle_) > 0.5f && ui_) {
+            char abuf[16]; snprintf(abuf, sizeof(abuf), "%.0f", selAngle_);
+            ui_->drawText(abuf, rsx + 8, rsy - 8, 11, UI::W98::White);
+        }
     }
 }
 
@@ -1420,7 +1715,7 @@ void TextureEditor::renderToolbar() {
                       active ? UI::W98::White : UI::W98::Black);
     };
 
-    const char* toolNames[] = {"Pen", "Era", "Fill", "Line", "Rect", "Circ", "Eye"};
+    const char* toolNames[] = {"Pen", "Era", "Fill", "Line", "Rect", "Circ", "Eye", "Sel"};
     int x = PALETTE_W + 8;
     for (int i = 0; i < (int)TexTool::Count; i++) {
         btn(x, tw, toolNames[i], currentTool_ == (TexTool)i);
@@ -1706,7 +2001,7 @@ void TextureEditor::renderStatusBar() {
     }
 
     // Tool name
-    const char* toolNames[] = {"Pen", "Eraser", "Fill", "Line", "Rect", "Circle", "Eyedropper"};
+    const char* toolNames[] = {"Pen", "Eraser", "Fill", "Line", "Rect", "Circle", "Eyedropper", "Select"};
     snprintf(buf, sizeof(buf), "Tool: %s%s", toolNames[(int)currentTool_],
              fillShapes_ ? " (filled)" : "");
     drawText(buf, 400, y + 6, UI::W98::Navy);
@@ -1714,6 +2009,14 @@ void TextureEditor::renderStatusBar() {
     // Brush size
     snprintf(buf, sizeof(buf), "Brush: %d", brushSize_);
     drawText(buf, 560, y + 6, UI::W98::Navy);
+
+    // Selection info
+    if (selActive_) {
+        snprintf(buf, sizeof(buf), "Sel: %d,%d  %dx%d%s",
+                 selRect_.x, selRect_.y, selRect_.w, selRect_.h,
+                 selLifted_ ? " [float]" : "");
+        drawText(buf, 680, y + 6, {200, 150, 50, 255});
+    }
 
     // Save message
     if (saveMessageTimer_ > 0 && !saveMessage_.empty()) {
