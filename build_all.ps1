@@ -63,7 +63,9 @@ if (-not $SkipWin) {
     Copy-Item "$ROOT\build-win\cold_start.exe" $winStage
     Copy-Item "$ROOT\romfs" "$winStage\romfs" -Recurse
 
-    # Bundle all DLLs required to run on a clean Windows install
+    # Bundle all DLLs required to run on a clean Windows install.
+    # List covers DLLs pulled in transitively (SDL2_ttf→HarfBuzz→Graphite2,
+    # FreeType→Brotli; SDL2_mixer→mpg123/opus/FLAC; libcurl→OpenSSL/libssh2).
     $mingw = "C:\msys64\mingw64\bin"
     $neededDlls = @(
         # GCC/MinGW runtime
@@ -71,21 +73,45 @@ if (-not $SkipWin) {
         # SDL2 family
         "SDL2.dll", "SDL2_image.dll", "SDL2_mixer.dll", "SDL2_ttf.dll",
         # SDL2_image deps
-        "libjpeg-8.dll", "libpng16-16.dll", "zlib1.dll",
+        "libjpeg-8.dll", "libpng16-16.dll", "zlib1.dll", "libbz2-1.dll",
         "libwebp-7.dll", "libwebpdecoder-3.dll", "libwebpdemux-2.dll", "libwebpmux-3.dll",
         # SDL2_mixer deps
         "libogg-0.dll", "libvorbis-0.dll", "libvorbisfile-3.dll",
-        # SDL2_ttf deps
+        "libopus-0.dll", "libopusfile-0.dll",
+        "libmpg123-0.dll",
+        "libFLAC-8.dll", "libFLAC-12.dll",
+        "libmodplug-1.dll",
+        # SDL2_ttf deps (HarfBuzz text shaping + FreeType WOFF2 via Brotli)
         "libfreetype-6.dll",
-        # Workshop (curl)
+        "libharfbuzz-0.dll", "libgraphite2.dll",
+        "libbrotlidec.dll", "libbrotlicommon.dll",
+        # Workshop / updates (curl + TLS)
         "libcurl-4.dll",
-        # Multiplayer (miniupnpc)
+        "libssl-3.dll", "libcrypto-3.dll",
+        "libssl-1_1-x64.dll", "libcrypto-1_1-x64.dll",
+        "libssh2-1.dll",
+        # Multiplayer UPnP
         "libminiupnpc.dll"
     )
     foreach ($dll in $neededDlls) {
         $src = Join-Path $mingw $dll
         if (Test-Path $src) { Copy-Item $src $winStage }
-        else { Write-Host "    WARN: $dll not found (skipping)" -ForegroundColor Yellow }
+        # Missing DLLs are silently skipped — some are optional or version-specific
+    }
+
+    # Auto-detect any additional imports the exe directly needs (requires objdump)
+    $exePath = "$ROOT\build-win\cold_start.exe"
+    if ((Get-Command "objdump" -ErrorAction SilentlyContinue) -and (Test-Path $exePath)) {
+        $autoDlls = (objdump -p $exePath 2>$null) | Select-String "DLL Name:" | ForEach-Object {
+            ($_ -replace ".*DLL Name:\s*", "").Trim()
+        }
+        foreach ($dll in $autoDlls) {
+            $src = Join-Path $mingw $dll
+            if ((Test-Path $src) -and (-not (Test-Path "$winStage\$dll"))) {
+                Copy-Item $src $winStage
+                Write-Host "    + $dll (auto-detected)" -ForegroundColor DarkGray
+            }
+        }
     }
     # Also pick up any DLLs the build placed next to the exe
     Get-ChildItem "$ROOT\build-win\*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination $winStage
