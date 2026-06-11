@@ -1349,7 +1349,7 @@ void Game::handleInput() {
 
         if      (playModeSelection_ == 3) adjustIntPM  (config_.mapWidth,        20,   1000, 2);
         else if (playModeSelection_ == 4) adjustIntPM  (config_.mapHeight,        14,    1000, 2);
-        else if (playModeSelection_ == 5) adjustIntPM  (config_.playerMaxHp,       1,    20, 1);
+        else if (playModeSelection_ == 5) adjustIntPM  (config_.playerMaxHp,       1,   100, 1);
         else if (playModeSelection_ == 6) adjustFloatPM(config_.spawnRateScale,  0.3f,  3.0f, 0.1f);
         else if (playModeSelection_ == 7) adjustFloatPM(config_.enemyHpScale,    0.3f,  3.0f, 0.1f);
         else if (playModeSelection_ == 8) adjustFloatPM(config_.enemySpeedScale, 0.5f,  2.5f, 0.1f);
@@ -1463,7 +1463,7 @@ void Game::handleInput() {
             auto toggleBool = [&](bool& value) {
                 if (confirmInput_) value = !value;
             };
-            if      (configSelection_ == 0) adjustInt  (config_.playerMaxHp,    1,    20, 1);
+            if      (configSelection_ == 0) adjustInt  (config_.playerMaxHp,    1,   100, 1);
             else if (configSelection_ == 1) adjustFloat(config_.spawnRateScale, 0.3f, 3.0f, 0.1f);
             else if (configSelection_ == 2) adjustFloat(config_.enemyHpScale,   0.3f, 3.0f, 0.1f);
             else if (configSelection_ == 3) adjustFloat(config_.enemySpeedScale,0.5f, 2.5f, 0.1f);
