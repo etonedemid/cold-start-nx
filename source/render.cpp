@@ -3938,32 +3938,83 @@ void Game::renderWorkshopMenu() {
 void Game::renderDeathScreen() {
     ui_.drawDarkOverlay(160, 30, 4, 4);
 
-    const int winW = 340;
-    const int btnH = 26;
-    const int btnGap = 6;
-    const int padX = 14;
-    // content: title bar(22) + pad(14) + stats(2*20) + sep(10) + 2 buttons + gap + bottom pad
-    const int winH = UI::W98::TitleH + 14 + 20 + 6 + 20 + 14 + 2*(btnH + btnGap) + 10;
+    const int winW    = 340;
+    const int btnH    = 26;
+    const int btnGap  = 6;
+    const int padX    = 14;
+    const int padTop  = 14;
+    const int rowH    = 20;
+    const int rowGap  = 6;
+
+    const bool hasBest   = bestRun_.valid();
+    const int  bestStatH = hasBest ? (3 * 18 + 2 * 4) : 18;
+    const int  newBestH  = newBestRun_ ? (rowH + 4) : 0;
+
+    // current run: time + wave + kills (3 rows, 2 gaps)
+    const int curH = 3 * rowH + 2 * rowGap;
+
+    const int winH = UI::W98::TitleH + padTop
+                   + curH + rowGap          // current stats + gap to separator
+                   + 14                     // first separator
+                   + newBestH               // "NEW BEST!" badge (0 if not new)
+                   + rowH + rowGap          // "Best Run:" header
+                   + bestStatH              // best run stat rows
+                   + 8                      // gap before second separator
+                   + 14                     // second separator
+                   + 2 * btnH + btnGap      // two buttons
+                   + padTop;
+
     const int winX = (SCREEN_W - winW) / 2;
     const int winY = (SCREEN_H - winH) / 2;
     ui_.drawWin98Window(winX, winY, winW, winH, "Packet loss: 100%");
 
-    // Stats
-    char timeStr[64];
-    int mins = (int)gameTime_ / 60;
-    int secs = (int)gameTime_ % 60;
-    snprintf(timeStr, sizeof(timeStr), "Time: %d:%02d", mins, secs);
-    char waveBuf[64];
-    snprintf(waveBuf, sizeof(waveBuf), "Wave: %d", waveNumber_);
+    // --- Current run stats ---
+    char timeBuf[64], waveBuf[64], killsBuf[64];
+    int mins = (int)gameTime_ / 60, secs = (int)gameTime_ % 60;
+    snprintf(timeBuf,  sizeof(timeBuf),  "Time: %d:%02d", mins, secs);
+    snprintf(waveBuf,  sizeof(waveBuf),  "Wave: %d",      waveNumber_);
+    snprintf(killsBuf, sizeof(killsBuf), "Kills: %d",     coopSlots_[0].kills);
 
-    int cy = winY + UI::W98::TitleH + 14;
-    ui_.drawTextCentered(timeStr, cy, 16, UI::W98::Black);
-    cy += 20;
-    ui_.drawTextCentered(waveBuf, cy, 16, UI::W98::Black);
-    cy += 20;
+    int cy = winY + UI::W98::TitleH + padTop;
+    ui_.drawTextCentered(timeBuf,  cy, 16, UI::W98::Black); cy += rowH + rowGap;
+    ui_.drawTextCentered(waveBuf,  cy, 16, UI::W98::Black); cy += rowH + rowGap;
+    ui_.drawTextCentered(killsBuf, cy, 16, UI::W98::Black); cy += rowH + rowGap;
+
+    // First separator
     ui_.drawWin98Bevel(winX + padX, cy, winW - padX * 2, 2, false);
     cy += 14;
 
+    // NEW BEST badge
+    if (newBestRun_) {
+        constexpr SDL_Color kGold = {204, 160, 0, 255};
+        ui_.drawTextCentered(">> NEW BEST! <<", cy, 16, kGold);
+        cy += rowH + 4;
+    }
+
+    // --- Best Run section ---
+    ui_.drawTextCentered("Best Run:", cy, 16, UI::W98::Black);
+    cy += rowH + rowGap;
+
+    if (hasBest) {
+        int bm = (int)bestRun_.time / 60, bs = (int)bestRun_.time % 60;
+        char bwBuf[64], bkBuf[64], btBuf[64];
+        snprintf(bwBuf, sizeof(bwBuf), "Wave: %d",      bestRun_.wave);
+        snprintf(bkBuf, sizeof(bkBuf), "Kills: %d",     bestRun_.kills);
+        snprintf(btBuf, sizeof(btBuf), "Time: %d:%02d", bm, bs);
+        ui_.drawTextCentered(bwBuf, cy, 14, UI::W98::Black); cy += 18 + 4;
+        ui_.drawTextCentered(bkBuf, cy, 14, UI::W98::Black); cy += 18 + 4;
+        ui_.drawTextCentered(btBuf, cy, 14, UI::W98::Black); cy += 18;
+    } else {
+        ui_.drawTextCentered("No record yet", cy, 14, UI::W98::Shadow);
+        cy += 18;
+    }
+
+    // Second separator
+    cy += 8;
+    ui_.drawWin98Bevel(winX + padX, cy, winW - padX * 2, 2, false);
+    cy += 14;
+
+    // --- Buttons ---
     int bx = winX + padX;
     if (ui_.win98Button(0, "Retry", bx, cy, winW - padX * 2, btnH, menuSelection_ == 0)) {
         menuSelection_ = 0; confirmInput_ = true;

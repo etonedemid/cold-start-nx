@@ -387,6 +387,16 @@ private:
     int   lastBossWaveNum_= -1;    // wave number of last boss when first beaten (-1 = not yet)
     GameConfig config_{};
 
+    // Best-run record (persisted to best_run.txt)
+    struct BestRun {
+        int   wave  = 0;
+        int   kills = 0;
+        float time  = 0.0f;
+        bool  valid() const { return wave > 0; }
+    };
+    BestRun bestRun_;
+    bool    newBestRun_ = false; // set to true when current run beats the record
+
     // Map Editor
     MapEditor editor_;
     TextureEditor texEditor_;   // standalone in-app pixel/sprite editor
@@ -723,6 +733,9 @@ private:
     bool rebuildScreenTextures();
     void saveConfig();
     void loadConfig();
+    void saveBestRun();
+    void loadBestRun();
+    void checkAndSaveBestRun(); // call on death; updates bestRun_ and sets newBestRun_
 
     // Map Pack support
     void scanMapPacks();

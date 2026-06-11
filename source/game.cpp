@@ -229,6 +229,7 @@ bool Game::init() {
     initPitchSFX();
 
     loadConfig();
+    loadBestRun();
     applyResolutionSettings(false);
 
     char windowTitle[64];
@@ -392,6 +393,8 @@ void Game::playActionMusic() {
 
 // SoftKeyboard - centralized on-screen keyboard for all text input
 void Game::shutdown() {
+    clearWorkshopIcons();
+    clearDetailScreenshots();
     shutdownMultiplayer();
     editor_.shutdown();
     for (auto& cd : availableChars_) cd.unload();
@@ -1173,6 +1176,48 @@ void Game::loadConfig() {
     }
     fclose(f);
     printf("Config loaded from config.txt\n");
+}
+
+// Best-run persistence
+
+void Game::saveBestRun() {
+    FILE* f = fopen("best_run.txt", "w");
+    if (!f) return;
+    fprintf(f, "wave=%d\n",  bestRun_.wave);
+    fprintf(f, "kills=%d\n", bestRun_.kills);
+    fprintf(f, "time=%.2f\n", bestRun_.time);
+    fclose(f);
+}
+
+void Game::loadBestRun() {
+    FILE* f = fopen("best_run.txt", "r");
+    if (!f) return;
+    char line[128];
+    int ival; float fval;
+    while (fgets(line, sizeof(line), f)) {
+        if (sscanf(line, "wave=%d",  &ival) == 1) bestRun_.wave  = ival;
+        if (sscanf(line, "kills=%d", &ival) == 1) bestRun_.kills = ival;
+        if (sscanf(line, "time=%f",  &fval) == 1) bestRun_.time  = fval;
+    }
+    fclose(f);
+}
+
+void Game::checkAndSaveBestRun() {
+    // Only count solo/survival runs (not multiplayer or custom maps)
+    if (state_ != GameState::Playing && state_ != GameState::Paused &&
+        state_ != GameState::Workshop) return;
+    int  kills = coopSlots_[0].kills;
+    BestRun current{ waveNumber_, kills, gameTime_ };
+    newBestRun_ = false;
+    bool better = !bestRun_.valid()
+        || current.wave  > bestRun_.wave
+        || (current.wave == bestRun_.wave && current.kills  > bestRun_.kills)
+        || (current.wave == bestRun_.wave && current.kills == bestRun_.kills && current.time > bestRun_.time);
+    if (better) {
+        bestRun_    = current;
+        newBestRun_ = true;
+        saveBestRun();
+    }
 }
 
 // Dev console
