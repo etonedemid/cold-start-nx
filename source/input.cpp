@@ -2880,7 +2880,7 @@ void Game::handleInput() {
             }
         } else {
             if (backInput_ || pauseInput_) {
-                workshopIconStop_ = true;
+                clearWorkshopIcons();
                 clearDetailScreenshots();
                 workshopDetailModId_.clear();
                 state_ = GameState::ModMenu;
