@@ -831,11 +831,11 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             uint32_t netId = 0;
             memcpy(&netId, payload, 4);
             if (onBulletRemoved) onBulletRemoved(netId);
-            // Host relays to all clients
+            // Host relays reliably — lost packets leave ghost bullets on all clients
             if (isHost_) {
                 auto pkt = buildPacket(NetPacketType::BulletHit, payload, payloadLen);
                 for (auto& p : players_) {
-                    if (p.peer && p.peer != from) sendUnreliable(pkt, p.peer);
+                    if (p.peer && p.peer != from) sendReliable(pkt, p.peer);
                 }
             }
         }
@@ -1008,6 +1008,11 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
 
     case NetPacketType::WaveStart: {
         if (payloadLen >= 4) {
+            // Only the lobby host (or the dedicated server itself) may initiate wave starts.
+            if (isHost_) {
+                uint8_t senderId = (uint8_t)(uintptr_t)from->data;
+                if (senderId != lobbyHostId_) break;
+            }
             int wave;
             memcpy(&wave, payload, 4);
             if (onWaveStarted) onWaveStarted(wave);
@@ -1074,6 +1079,9 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
 
     case NetPacketType::PlayerHpSync: {
         // payload: playerId(1) + hp(4) + maxHp(4) + killerId(1)
+        // Host-authoritative only — reject any client-originated PlayerHpSync packets
+        // to prevent HP spoofing.
+        if (isHost_) break;
         if (payloadLen >= 10) {
             uint8_t  pid = payload[0];
             int      hp, maxHp;
@@ -1086,13 +1094,6 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
                 if (hp <= 0) p->alive = false;
             }
             if (onPlayerHpSync) onPlayerHpSync(pid, hp, maxHp, killerId);
-            // Host relays to all other clients
-            if (isHost_) {
-                auto pkt = buildPacket(NetPacketType::PlayerHpSync, payload, payloadLen);
-                for (auto& p : players_) {
-                    if (p.peer && p.peer != from) sendReliable(pkt, p.peer);
-                }
-            }
         }
         break;
     }
@@ -1102,6 +1103,13 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             uint8_t ownerId = payload[0];
             uint8_t slot = payload[1];
             uint8_t killerId = payload[2];
+            // Validate: only the owning client may report its own sub-player deaths.
+            if (isHost_ && from) {
+                uint8_t senderId = (uint8_t)(uintptr_t)from->data;
+                if (senderId != ownerId) break;
+            }
+            // SubPlayerDied is host-authoritative: clients only receive, never send it.
+            if (!isHost_ && from) break;
             if (auto* p = findPlayer(ownerId)) {
                 size_t idx = (slot > 0) ? (size_t)(slot - 1) : (size_t)-1;
                 if (idx < p->subPlayers.size()) {
@@ -1121,6 +1129,8 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
     }
 
     case NetPacketType::SubPlayerHpSync: {
+        // Host-authoritative only — clients must not forge HP updates.
+        if (!isHost_ && from) break;
         if (payloadLen >= 11) {
             uint8_t ownerId = payload[0];
             uint8_t slot = payload[1];
@@ -1137,12 +1147,6 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
                 }
             }
             if (onSubPlayerHpSync) onSubPlayerHpSync(ownerId, slot, hp, maxHp, killerId);
-            if (isHost_) {
-                auto pkt = buildPacket(NetPacketType::SubPlayerHpSync, payload, payloadLen);
-                for (auto& p : players_) {
-                    if (p.peer && p.peer != from) sendReliable(pkt, p.peer);
-                }
-            }
         }
         break;
     }
@@ -1219,13 +1223,21 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
     }
 
     case NetPacketType::FileSyncData: {
+        static constexpr uint32_t MAX_FILE_SYNC_BYTES = 100u * 1024u * 1024u; // 100 MB cap
         if (payloadLen > 5) {
             uint8_t nameLen = payload[0];
+            if (payloadLen < (size_t)(1 + nameLen + 4)) break; // malformed
             std::string filename((char*)payload + 1, nameLen);
             uint32_t totalSize;
             memcpy(&totalSize, payload + 1 + nameLen, 4);
             size_t dataOffset = 1 + nameLen + 4;
             size_t chunkSize = payloadLen - dataOffset;
+
+            if (totalSize == 0 || totalSize > MAX_FILE_SYNC_BYTES || chunkSize > totalSize) {
+                printf("Network: Rejecting invalid file sync for '%s' (%u bytes)\n",
+                       filename.c_str(), totalSize);
+                break;
+            }
 
             // Find or create transfer
             FileTransfer* tf = nullptr;
@@ -1238,6 +1250,14 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
                 tf->filename = filename;
                 tf->totalSize = totalSize;
                 tf->data.reserve(totalSize);
+            }
+
+            if (tf->received + chunkSize > tf->totalSize) {
+                printf("Network: Rejecting overflowing file sync chunk for '%s' (%u/%u + %zu)\n",
+                       filename.c_str(), tf->received, tf->totalSize, chunkSize);
+                transfers_.erase(std::remove_if(transfers_.begin(), transfers_.end(),
+                    [&](const FileTransfer& t) { return t.filename == filename; }), transfers_.end());
+                break;
             }
 
             tf->data.insert(tf->data.end(), payload + dataOffset, payload + payloadLen);
@@ -1412,11 +1432,12 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             if (auto* p = findPlayer(killerId)) p->score += 10;
             // Notify game layer (clients apply enemy death)
             if (onEnemyKilled) onEnemyKilled(enemyIdx, killerId);
-            // Host relays to all clients
+            // Host relays to ALL clients including sender so the killing player gets the
+            // same score increment every other client gets (excluding sender breaks score sync).
             if (isHost_) {
                 auto pkt = buildPacket(NetPacketType::EnemyKilled, payload, payloadLen);
                 for (auto& p : players_) {
-                    if (p.peer && p.peer != from) sendReliable(pkt, p.peer);
+                    if (p.peer) sendReliable(pkt, p.peer);
                 }
             }
         }
@@ -1938,8 +1959,9 @@ void NetworkManager::sendBulletSpawn(Vec2 pos, float angle, uint8_t playerId, ui
 
 void NetworkManager::sendBulletHit(uint32_t bulletNetId) {
 #if HAS_ENET
+    // Reliable: a missed BulletHit leaves a permanently-visible ghost bullet on other clients.
     auto pkt = buildPacket(NetPacketType::BulletHit, &bulletNetId, 4);
-    sendUnreliable(pkt);
+    sendReliable(pkt);
 #endif
 }
 
