@@ -1,6 +1,6 @@
 #!/bin/bash
 set -e
-ROOT=/mnt/z/cold-start-nx
+ROOT=~/cold-start-nx
 VER=$(grep 'GAME_VERSION' $ROOT/source/constants.h | grep -oP '"[^"]+"' | tr -d '"')
 OUT=$ROOT/release-out
 STAGE=$(mktemp -d)

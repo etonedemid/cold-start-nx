@@ -3538,22 +3538,6 @@ void Game::renderConfigMenu() {
         y += rowH + rowGap;
     }
 
-    // UI Scale slider
-    {
-        bool sel = (configSelection_ == CONFIG_UI_SCALE_INDEX);
-        ui_.drawText("UI Scale:", lx, y+(rowH-12)/2, 12, UI::W98::Black);
-        if (ui_.win98Button(CONFIG_UI_SCALE_INDEX*10+100, "<", fx, y, arrowW, rowH, false)) {
-            config_.uiScale = std::max(0.5f, config_.uiScale - 0.05f);
-        }
-        char scaleBuf[16]; snprintf(scaleBuf, sizeof(scaleBuf), "%.0f%%", config_.uiScale * 100.f);
-        ui_.drawWin98TextField(fx + arrowW + 2, y, fwA, rowH, scaleBuf, sel);
-        if (ui_.win98Button(CONFIG_UI_SCALE_INDEX*10+101, ">", fx + arrowW + 2 + fwA + 2, y, arrowW, rowH, false)) {
-            config_.uiScale = std::min(2.0f, config_.uiScale + 0.05f);
-        }
-        if (ui_.hoveredItem == CONFIG_UI_SCALE_INDEX*10+100 || ui_.hoveredItem == CONFIG_UI_SCALE_INDEX*10+101)
-            { configSelection_=CONFIG_UI_SCALE_INDEX; menuSelection_=CONFIG_UI_SCALE_INDEX; }
-        y += rowH + rowGap;
-    }
 
     // Back button
     {

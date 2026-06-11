@@ -124,11 +124,11 @@ if (-not $SkipWin) {
 if (-not $SkipLinux) {
     Banner "Building Linux (WSL: $WSL)..."
 
-    Wsl-Run 'cmake --build /mnt/z/cold-start-nx/build-pc -- -j\$(nproc)'
-    Wsl-Run '/bin/sh /mnt/z/cold-start-nx/build-pc/bundle.sh'
+    Wsl-Run 'cmake --build ~/cold-start-nx/build-pc -- -j\$(nproc)'
+    Wsl-Run '/bin/sh ~/cold-start-nx/build-pc/bundle.sh'
     
     # Remove .log files inside the dist folder (using WSL find)
-    Wsl-Run 'find /mnt/z/cold-start-nx/build-pc/dist -name ''.log'' -delete'
+    Wsl-Run 'find ~/cold-start-nx/build-pc/dist -name ''.log'' -delete'
     
     # Zip using PowerShell (no WSL quoting issues)
     $distPath = "Z:\cold-start-nx\build-pc\dist"
@@ -150,7 +150,7 @@ if (-not $SkipLinux) {
 if (-not $SkipSwitch) {
     Banner "Building Switch NRO (WSL: $WSL)..."
 
-    Wsl-Run "/bin/sh /mnt/z/cold-start-nx/.build_switch.sh"
+    Wsl-Run "/bin/sh ~/cold-start-nx/.build_switch.sh"
 
     $nroSrc = "$ROOT\cold_start.nro"
     if (-not (Test-Path $nroSrc)) { Fail "cold_start.nro not found after Switch build" }
@@ -164,12 +164,12 @@ if (-not $SkipAndroid) {
     Banner "Building Android APK..."
 
     # Android build uses WSL (symlinks in CMakeLists.txt require Linux)
-    Wsl-Run "sh /mnt/z/cold-start-nx/.build_android.sh"
+    Wsl-Run "sh ~/cold-start-nx/.build_android.sh"
     if ($LASTEXITCODE -ne 0) { Fail "Android build failed" }
 
     # Sign and write directly to release-out
     $apkWsl = '/mnt/' + $APK_OUT.Substring(0,1).ToLower() + ($APK_OUT.Substring(2) -replace '\\', '/')
-    Wsl-Run "bash /mnt/z/cold-start-nx/android/sign_apk.sh '$apkWsl'"
+    Wsl-Run "bash ~/cold-start-nx/android/sign_apk.sh '$apkWsl'"
     if ($LASTEXITCODE -ne 0) { Fail "APK signing failed" }
     if (-not (Test-Path $APK_OUT)) { Fail "Signed APK not found at $APK_OUT" }
     $sz = [math]::Round((Get-Item $APK_OUT).Length / 1MB, 1)

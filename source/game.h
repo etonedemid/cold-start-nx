@@ -31,7 +31,6 @@
 #include <unordered_map>
 #include <thread>
 #include <atomic>
-#include <filesystem>
 #include <mutex>
 
 // Online Workshop mod info (from API)

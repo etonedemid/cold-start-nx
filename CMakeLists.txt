@@ -36,9 +36,7 @@ if(SERVER_ONLY)
     file(GLOB HEADERS source/network.h source/gamemode.h source/mapformat.h
                       source/mappack.h source/vec2.h source/constants.h)
 else()
-    # FIXED: Added GLOB_RECURSE to catch subfolders, and CONFIGURE_DEPENDS to detect new files automatically.
     file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS source/*.cpp)
-    # Exclude the server-only entry point from regular builds
     list(FILTER SOURCES EXCLUDE REGEX "server_main\\.cpp$")
     file(GLOB_RECURSE HEADERS CONFIGURE_DEPENDS source/*.h)
 endif()
@@ -74,6 +72,9 @@ if(WIN32)
             SDL2_ttf::SDL2_ttf-static
             SDL2_mixer::SDL2_mixer-static)
 
+        target_compile_definitions(cold_start PRIVATE _GLIBCXX_USE_DEPRECATED=1)
+        target_compile_options(cold_start PRIVATE -Wno-deprecated-declarations)
+
         # libwinpthread.a ships a version.o with its own VERSIONINFO resource.
         # --whole-archive forces it in and clashes with the one in app.rc.
         # Strip the .rsrc section from a local copy and link that instead.
@@ -103,6 +104,7 @@ if(WIN32)
                 -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive,-Bdynamic
                 -mwindows)
         endif()
+
     else()
         # MSVC / vcpkg - dynamic linking
         target_link_libraries(cold_start PRIVATE
@@ -130,13 +132,21 @@ if(WIN32)
 
     # miniupnpc (optional - UPnP port forwarding for hosting)
     find_path(MINIUPNPC_INCLUDE_DIR miniupnpc/miniupnpc.h
-        HINTS "C:/msys64/mingw64/include" "C:/msys2/mingw64/include" ENV MINGW_PREFIX)
+        HINTS ${MINIUPNPC_INCLUDE_DIR} "C:/msys64/mingw64/include" "C:/msys2/mingw64/include" ENV MINGW_PREFIX
+        NO_DEFAULT_PATH)
     find_library(MINIUPNPC_LIB NAMES miniupnpc libminiupnpc
-        HINTS "C:/msys64/mingw64/lib" "C:/msys2/mingw64/lib" ENV MINGW_PREFIX)
+        HINTS ${MINIUPNPC_LIBRARY} "C:/msys64/mingw64/lib" "C:/msys2/mingw64/lib" ENV MINGW_PREFIX
+        NO_DEFAULT_PATH)
+    if(MINIUPNPC_LIBRARY AND NOT MINIUPNPC_LIB)
+        set(MINIUPNPC_LIB ${MINIUPNPC_LIBRARY})
+    endif()
     if(MINIUPNPC_INCLUDE_DIR AND MINIUPNPC_LIB)
         target_include_directories(cold_start PRIVATE ${MINIUPNPC_INCLUDE_DIR})
-        target_link_libraries(cold_start PRIVATE ${MINIUPNPC_LIB})
-        target_compile_definitions(cold_start PRIVATE HAS_ENET=1 HAS_UPNP=1 PLATFORM_PC)
+        # miniupnpc also needs iphlpapi (GetBestInterface, GetAdaptersAddresses)
+        # and additional ws2_32 symbols (inet_addr, sendto, getnameinfo)
+        target_link_libraries(cold_start PRIVATE ${MINIUPNPC_LIB} iphlpapi)
+        # MINIUPNP_STATICLIB (no C) suppresses __declspec(dllimport) in the headers
+        target_compile_definitions(cold_start PRIVATE HAS_ENET=1 HAS_UPNP=1 PLATFORM_PC MINIUPNP_STATICLIB)
         message(STATUS "miniupnpc: found - UPnP enabled")
     else()
         target_compile_definitions(cold_start PRIVATE HAS_ENET=1 HAS_UPNP=0 PLATFORM_PC)
@@ -149,7 +159,7 @@ else()
     find_package(PkgConfig REQUIRED)
 
     if(NOT SERVER_ONLY)
-    
+
         pkg_check_modules(SDL2       REQUIRED sdl2)
         pkg_check_modules(SDL2_IMAGE REQUIRED SDL2_image)
         pkg_check_modules(SDL2_TTF   REQUIRED SDL2_ttf)

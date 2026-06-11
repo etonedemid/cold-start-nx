@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
-VER=$(grep 'GAME_VERSION' /mnt/z/cold-start-nx/source/constants.h | grep -oP '"[^"]+"' | tr -d '"')
-ROOT=/mnt/z/cold-start-nx
+VER=$(grep 'GAME_VERSION' ~/cold-start-nx/source/constants.h | grep -oP '"[^"]+"' | tr -d '"')
+ROOT=~/cold-start-nx
 OUT=$ROOT/release-out
 MINGW=/mnt/c/msys64/mingw64/bin
 mkdir -p $OUT
