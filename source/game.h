@@ -150,6 +150,30 @@ struct BoxFragment {
     SDL_Color color;
 };
 
+// Story bystander: civilian, infrastructure, or a surrendered responder operator.
+// Non-combatant; harming/destroying it moves SIGNAL. Rides the EnemySpawn array
+// at spawn time but lives in its own runtime list.
+struct Bystander {
+    enum class Kind : uint8_t {
+        Civilian, MedRelay, Power, Water, Antenna, Operator
+    };
+    Vec2  pos        = {};
+    Vec2  vel        = {};
+    Kind  kind       = Kind::Civilian;
+    float hp         = 30.0f;
+    float maxHp      = 30.0f;
+    bool  alive      = true;
+    bool  fleeing    = false;   // civilian panicking from gunfire/player
+    bool  scored     = false;   // SIGNAL penalty already applied for this one
+    float wanderT    = 0.0f;
+    Vec2  wanderDir  = {1, 0};
+    float radius     = 22.0f;
+    bool  isInfrastructure() const {
+        return kind == Kind::MedRelay || kind == Kind::Power ||
+               kind == Kind::Water    || kind == Kind::Antenna;
+    }
+};
+
 // Per-player slot for local co-op splitscreen
 struct CoopSlot {
     bool   joined       = false;
@@ -401,6 +425,44 @@ private:
     bool      testPlayFromEditor_ = false;  // return to editor when done
     bool      customGoalOpen_   = false;  // end goal door is open
     int       customEnemiesTotal_ = 0;    // total enemy spawns in custom map
+
+    // --- Story campaign state (SIGNAL reputation + branching) ---
+    // SIGNAL is the Relay's invisible opinion of the player. Run-scoped: it
+    // persists across mission loads within a campaign run (guarded by
+    // storyRunActive_) but resets when a fresh run begins.
+    int   signal_        = 50;     // 0..100, mid by default
+    int   storyRoute_    = 0;      // 0=undecided, 1=Spearhead (A), 2=Signal (B)
+    bool  storyRunActive_ = false; // true once a story map has begun a run
+    std::unordered_map<std::string, bool> storyFlags_;   // campaign-spanning flags
+    enum class SignalTier : uint8_t { Low, Mid, High };
+    SignalTier signalToneTier() const {
+        if (signal_ <  34) return SignalTier::Low;
+        if (signal_ >= 67) return SignalTier::High;
+        return SignalTier::Mid;
+    }
+    void adjustSignal(int delta, const char* reason);
+    void resetStoryRun();   // clear SIGNAL/route/flags for a new campaign run
+
+    // Story cutscene playback (the map's .csc library, played in-game)
+    CutsceneLibrary  storyCutscenes_;
+    CutscenePlayback csPlay_;
+    std::set<int>    csFiredZones_;   // cutscene-trigger indices already fired
+    std::set<int>    storyFiredTriggers_; // waypoint/signalzone/objective indices fired
+    void startStoryCutscene(const std::string& id);   // begin playback by cutscene id
+    void updateStoryCutscene(float dt);               // advance + drain effects
+    void loadStoryCutsceneLib(const std::string& csmPath); // derive + load .csc
+    void updateStoryTriggers();   // fire cutscene/waypoint/signalzone/objective zones
+    bool playerInTriggerRect(const MapTrigger& t) const;
+
+    // Story bystanders (civilians / infrastructure / surrendered operators)
+    std::vector<Bystander> bystanders_;
+    void spawnBystanderFromSpawn(const EnemySpawn& es);  // route a story spawn id
+    void updateBystanders(float dt);
+    void renderBystanders();
+    // Apply damage to bystanders near pos; returns true if any was hit.
+    // Used by bullets, explosions and melee. amount<0 means instant-destroy.
+    bool damageBystandersAt(Vec2 pos, float radius, float amount);
+    void onBystanderDestroyed(Bystander& b);  // SIGNAL penalty + fx
 
     // Character system
     std::vector<CharacterDef> availableChars_;

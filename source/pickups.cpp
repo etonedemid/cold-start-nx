@@ -265,6 +265,49 @@ void Game::renderVehicles() {
     }
 }
 
+void Game::renderBystanders() {
+    for (auto& b : bystanders_) {
+        if (!b.alive) continue;
+        Vec2 sp = camera_.worldToScreen(b.pos);
+        int sx = (int)sp.x, sy = (int)sp.y;
+        if (sx < -64 || sx > SCREEN_W + 64 || sy < -64 || sy > SCREEN_H + 64) continue;
+
+        SDL_Color col; const char* tag = "";
+        switch (b.kind) {
+            case Bystander::Kind::Civilian: col = {120, 220, 255, 255}; tag = "CIV"; break;
+            case Bystander::Kind::Operator: col = {255, 230, 140, 255}; tag = "SURR"; break;
+            case Bystander::Kind::MedRelay: col = {120, 255, 160, 255}; tag = "MED"; break;
+            case Bystander::Kind::Power:    col = {255, 230,  80, 255}; tag = "PWR"; break;
+            case Bystander::Kind::Water:    col = { 90, 180, 255, 255}; tag = "H2O"; break;
+            case Bystander::Kind::Antenna:  col = {200, 160, 255, 255}; tag = "ANT"; break;
+        }
+        int half = (int)b.radius;
+        bool people = (b.kind == Bystander::Kind::Civilian || b.kind == Bystander::Kind::Operator);
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        if (people) {
+            // simple body: filled circle-ish square + head
+            SDL_SetRenderDrawColor(renderer_, col.r, col.g, col.b, 230);
+            SDL_Rect body = {sx - half/2, sy - half/2, half, half};
+            SDL_RenderFillRect(renderer_, &body);
+            SDL_SetRenderDrawColor(renderer_, 30, 30, 40, 255);
+            SDL_RenderDrawRect(renderer_, &body);
+        } else {
+            // infrastructure: bevelled box with HP bar
+            SDL_Rect box = {sx - half, sy - half, half * 2, half * 2};
+            SDL_SetRenderDrawColor(renderer_, col.r/3, col.g/3, col.b/3, 235);
+            SDL_RenderFillRect(renderer_, &box);
+            SDL_SetRenderDrawColor(renderer_, col.r, col.g, col.b, 255);
+            SDL_RenderDrawRect(renderer_, &box);
+            float hpRatio = (b.maxHp > 0) ? std::max(0.0f, b.hp / b.maxHp) : 1.0f;
+            SDL_Rect bar = {sx - half, sy - half - 8, (int)(half * 2 * hpRatio), 4};
+            SDL_SetRenderDrawColor(renderer_, 80, 230, 110, 255);
+            SDL_RenderFillRect(renderer_, &bar);
+        }
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+        ui_.drawText(tag, sx - ui_.textWidth(tag, 11) / 2, sy + half/2 + 2, 11, col);
+    }
+}
+
 void Game::renderCrates() {
     for (auto& c : crates_) {
         if (!c.alive) continue;

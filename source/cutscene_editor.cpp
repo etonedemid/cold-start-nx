@@ -318,9 +318,9 @@ void CutsceneEditor::renderCutsceneList(int x, int y, int w, int h) {
     // + button at bottom
     int btnY = y + h - 20;
     if (ui_) {
-        ui_->win98Button(100, "+ Add", x+2, btnY, 40, 16, false);
+        ui_->win98Button(100, "+ Add", x+2, btnY, 56, 16, false);
         if (selectedCutscene_ >= 0) {
-            ui_->win98Button(101, "Del", x+46, btnY, 40, 16, false);
+            ui_->win98Button(101, "Del", x+62, btnY, 40, 16, false);
         }
     }
 }
@@ -355,9 +355,9 @@ void CutsceneEditor::renderActorList(int x, int y, int w, int h) {
     // + button at bottom
     int btnY = y + h - 20;
     if (ui_) {
-        ui_->win98Button(102, "+ Actor", x+2, btnY, 60, 16, false);
+        ui_->win98Button(102, "+ Actor", x+2, btnY, 72, 16, false);
         if (selectedActor_ >= 0) {
-            ui_->win98Button(103, "Del", x+66, btnY, 40, 16, false);
+            ui_->win98Button(103, "Del", x+78, btnY, 40, 16, false);
         }
     }
 
@@ -642,13 +642,38 @@ void CutsceneEditor::renderPropsPanel(int x, int y, int w, int h) {
                 field("At:", buf);
                 break;
             }
+            case CsEventType::SetFlag:
+                field("Flag:", ev.flagName.c_str());
+                label("Value:", ev.flagValue ? "true" : "false");
+                break;
+            case CsEventType::ChainCutscene:
+                field("Chain:", ev.chainCsId.c_str());
+                break;
+            case CsEventType::AdjustSignal: {
+                char buf[16];
+                snprintf(buf,sizeof(buf),"%+d", ev.signalDelta);
+                field("Delta:", buf);
+                drawText("(UP/DOWN)", x+4, cy, colLabel, 10); cy += 14;
+                break;
+            }
+            case CsEventType::BranchCutscene: {
+                label("Var:", ev.branchVar == 1 ? "Route" : "SIGNAL");
+                const char* cmp = ev.branchCmp == 1 ? "<" : ev.branchCmp == 2 ? "==" : ">=";
+                label("Compare:", cmp);
+                char buf[16]; snprintf(buf,sizeof(buf),"%d", ev.branchThreshold);
+                field("Threshold:", buf);
+                field("If true:",  ev.chainCsId.c_str());
+                field("If false:", ev.chainFalseId.c_str());
+                drawText("(UP/DOWN=thresh)", x+4, cy, colLabel, 10); cy += 14;
+                break;
+            }
             default: break;
         }
         sep();
         // Delete button
         int delY = y + h - 20;
         if (ui_) {
-            ui_->win98Button(108, "Del Evt", x+4, delY, 50, 16, false);
+            ui_->win98Button(108, "Del Evt", x+4, delY, 64, 16, false);
         }
         return;
     }
@@ -676,7 +701,7 @@ void CutsceneEditor::renderPropsPanel(int x, int y, int w, int h) {
         sep();
         int delY = y + h - 20;
         if (ui_) {
-            ui_->win98Button(109, "Del Actor", x+4, delY, 60, 16, false);
+            ui_->win98Button(109, "Del Actor", x+4, delY, 80, 16, false);
         }
         return;
     }
@@ -1024,6 +1049,10 @@ void CutsceneEditor::handlePropsPanelEvent(SDL_Event& e) {
                 ev.toZoom += 0.05f;
             else if (ev.type == CsEventType::CameraShake)
                 ev.shakeStrength += step;
+            else if (ev.type == CsEventType::AdjustSignal)
+                ev.signalDelta += (int)step;
+            else if (ev.type == CsEventType::BranchCutscene)
+                ev.branchThreshold += (int)step;
             recomputePreview(); break;
         case SDLK_DOWN:
             if (ev.type == CsEventType::Move || ev.type == CsEventType::CameraMove)
@@ -1036,11 +1065,28 @@ void CutsceneEditor::handlePropsPanelEvent(SDL_Event& e) {
                 ev.toZoom = std::max(0.1f, ev.toZoom - 0.05f);
             else if (ev.type == CsEventType::CameraShake)
                 ev.shakeStrength = std::max(0.0f, ev.shakeStrength - step);
+            else if (ev.type == CsEventType::AdjustSignal)
+                ev.signalDelta -= (int)step;
+            else if (ev.type == CsEventType::BranchCutscene)
+                ev.branchThreshold -= (int)step;
             recomputePreview(); break;
         case SDLK_PAGEUP:
-            ev.ease = (CsEase)(((int)ev.ease + 1) % 5); break;
+            // Branch event: cycle compare var / operator; otherwise cycle ease.
+            if (ev.type == CsEventType::BranchCutscene) {
+                if (e.key.keysym.mod & KMOD_SHIFT) ev.branchVar = ev.branchVar ? 0 : 1;
+                else ev.branchCmp = (uint8_t)(((int)ev.branchCmp + 1) % 3);
+            } else {
+                ev.ease = (CsEase)(((int)ev.ease + 1) % 5);
+            }
+            break;
         case SDLK_PAGEDOWN:
-            ev.ease = (CsEase)(((int)ev.ease + 4) % 5); break;
+            if (ev.type == CsEventType::BranchCutscene) {
+                if (e.key.keysym.mod & KMOD_SHIFT) ev.branchVar = ev.branchVar ? 0 : 1;
+                else ev.branchCmp = (uint8_t)(((int)ev.branchCmp + 2) % 3);
+            } else {
+                ev.ease = (CsEase)(((int)ev.ease + 4) % 5);
+            }
+            break;
         case SDLK_DELETE:
             deleteEvent(selectedEvent_); break;
         default: break;

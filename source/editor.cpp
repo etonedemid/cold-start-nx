@@ -1605,6 +1605,53 @@ void MapEditor::renderTriggers(SDL_Renderer* renderer) {
                 if (labelSz >= 8) drawEditorText(renderer, "COLLIDE", r.x + 4, r.y + 4, labelSz, {255, 150, 80, 255});
                 break;
             }
+            case TriggerType::Cutscene: {
+                SDL_SetRenderDrawColor(renderer, 255, 120, 200, 35);
+                SDL_RenderFillRect(renderer, &r);
+                SDL_SetRenderDrawColor(renderer, 255, 120, 200, selected ? 255 : 180);
+                SDL_RenderDrawRect(renderer, &r);
+                if (labelSz >= 8) {
+                    char lbl[24]; snprintf(lbl, sizeof(lbl), "CUTSCENE %d", (int)t.param);
+                    drawEditorText(renderer, lbl, r.x + 4, r.y + 4, labelSz, {255, 150, 210, 255});
+                }
+                break;
+            }
+            case TriggerType::Waypoint: {
+                SDL_SetRenderDrawColor(renderer, 60, 220, 220, 35);
+                SDL_RenderFillRect(renderer, &r);
+                SDL_SetRenderDrawColor(renderer, 60, 220, 220, selected ? 255 : 180);
+                SDL_RenderDrawRect(renderer, &r);
+                if (labelSz >= 8) {
+                    const char* lbl = (t.param == 2) ? "WAYPOINT B" : "WAYPOINT A";
+                    drawEditorText(renderer, lbl, r.x + 4, r.y + 4, labelSz, {90, 240, 240, 255});
+                }
+                break;
+            }
+            case TriggerType::SignalZone: {
+                int d = (int)(int8_t)t.param;
+                SDL_Color c = (d >= 0) ? SDL_Color{80, 255, 120, 0} : SDL_Color{255, 90, 90, 0};
+                SDL_SetRenderDrawColor(renderer, c.r, c.g, c.b, 35);
+                SDL_RenderFillRect(renderer, &r);
+                SDL_SetRenderDrawColor(renderer, c.r, c.g, c.b, selected ? 255 : 180);
+                SDL_RenderDrawRect(renderer, &r);
+                if (labelSz >= 8) {
+                    char lbl[24]; snprintf(lbl, sizeof(lbl), "SIGNAL %+d", d);
+                    drawEditorText(renderer, lbl, r.x + 4, r.y + 4, labelSz, {c.r, c.g, c.b, 255});
+                }
+                break;
+            }
+            case TriggerType::Objective: {
+                SDL_SetRenderDrawColor(renderer, 230, 200, 90, 35);
+                SDL_RenderFillRect(renderer, &r);
+                SDL_SetRenderDrawColor(renderer, 230, 200, 90, selected ? 255 : 180);
+                SDL_RenderDrawRect(renderer, &r);
+                if (labelSz >= 8) {
+                    const char* k = (t.param == 1) ? "OBJ:PROTECT"
+                                  : (t.param == 2) ? "OBJ:ESCORT" : "OBJ:RECOVER";
+                    drawEditorText(renderer, k, r.x + 4, r.y + 4, labelSz, {245, 215, 110, 255});
+                }
+                break;
+            }
             default: break;
         }
 
@@ -1642,14 +1689,23 @@ void MapEditor::renderEntitySpawns(SDL_Renderer* renderer) {
             case ENTITY_GUNNER:        SDL_SetRenderDrawColor(renderer, 255, 215, 100, 220); break;
             case ENTITY_CRATE:         SDL_SetRenderDrawColor(renderer, 160, 120, 60, 200); break;
             case ENTITY_UPGRADE_CRATE: SDL_SetRenderDrawColor(renderer, 220, 180, 40, 200); break;
+            case ENTITY_CIVILIAN:      SDL_SetRenderDrawColor(renderer, 120, 220, 255, 220); break;
+            case ENTITY_RESPONDER:     SDL_SetRenderDrawColor(renderer, 255, 120, 60, 220); break;
+            case ENTITY_INFRA_MEDRELAY:SDL_SetRenderDrawColor(renderer, 120, 255, 160, 220); break;
+            case ENTITY_INFRA_POWER:   SDL_SetRenderDrawColor(renderer, 255, 230, 80, 220); break;
+            case ENTITY_INFRA_WATER:   SDL_SetRenderDrawColor(renderer, 90, 180, 255, 220); break;
+            case ENTITY_INFRA_ANTENNA: SDL_SetRenderDrawColor(renderer, 200, 160, 255, 220); break;
             default:                   SDL_SetRenderDrawColor(renderer, 180, 180, 180, 200); break;
         }
         SDL_RenderFillRect(renderer, &r);
         SDL_SetRenderDrawColor(renderer, selected ? 0 : 255, 255, selected ? 0 : 255, 255);
         SDL_RenderDrawRect(renderer, &r);
 
-        const char* labels[] = {"M", "S", "C", "U", "B", "F", "N", "G"};
-        const char* label = (es.enemyType >= 0 && es.enemyType < ENTITY_TYPE_COUNT) ? labels[es.enemyType] : "?";
+        const char* labels[ENTITY_TYPE_COUNT] = {
+            "M", "S", "C", "U", "B", "F", "N", "G",
+            "Civ", "Rsp", "Med", "Pwr", "Wtr", "Ant"
+        };
+        const char* label = (es.enemyType < ENTITY_TYPE_COUNT) ? labels[es.enemyType] : "?";
         drawEditorText(renderer, label, r.x + sz/4, r.y + 2, 14, {255, 255, 255, 255});
     }
 }
@@ -1718,13 +1774,17 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
 
     if (selectedEnemy_ >= 0 && selectedEnemy_ < (int)map_.enemySpawns.size()) {
         auto& es = map_.enemySpawns[selectedEnemy_];
-        // TitleH(22) + top_pad(8) + 3 rows(84) + gap(8) + delete(26) + bot_pad(8)
-        const int panelH = UI::W98::TitleH + 8 + 3 * rowH + 8 + 26 + 8;
+        bool isResp = (es.enemyType == ENTITY_RESPONDER);
+        // TitleH(22) + top_pad(8) + rows + gap(8) + delete(26) + bot_pad(8)
+        const int panelH = UI::W98::TitleH + 8 + (3 + (isResp ? 1 : 0)) * rowH + 8 + 26 + 8;
         ui_->drawWin98Window(panelX, panelY, panelW, panelH, "Entity");
         int y = panelY + UI::W98::TitleH + 8;
 
         // Type
-        static const char* eNames[] = {"Melee","Shooter","Crate","Upgrade","Brute","Scout","Sniper","Gunner"};
+        static const char* eNames[ENTITY_TYPE_COUNT] = {
+            "Melee","Shooter","Crate","Upgrade","Brute","Scout","Sniper","Gunner",
+            "Civilian","Responder","Med-Relay","Power","Water","Antenna"
+        };
         ui_->drawText("Type", lx, y + 5, 11, UI::W98::Black);
         if (ui_->win98Button(200, "<", arLx, y, btnSz, btnSz, false)) {
             pushUndo();
@@ -1752,6 +1812,19 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
         }
         y += rowH;
 
+        // Disable toggle (responders only): if on, the unit can be non-lethally
+        // disabled instead of destroyed (SIGNAL credit). Stored in reserved[0].
+        if (isResp) {
+            ui_->drawText("Disable", lx, y + 5, 11, UI::W98::Black);
+            bool on = (es.reserved[0] != 0);
+            if (ui_->win98Button(204, on ? "Disableable: ON" : "Disableable: OFF",
+                                 arLx, y, roFldW, btnSz, on)) {
+                pushUndo();
+                es.reserved[0] = on ? 0 : 1;
+            }
+            y += rowH;
+        }
+
         // Pos (read-only)
         snprintf(buf, sizeof(buf), "%.0f, %.0f", es.x, es.y);
         ui_->drawText("Pos", lx, y + 5, 11, UI::W98::Black);
@@ -1773,18 +1846,24 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
             "Start","End","Crate","Effect",
             "SpnR","SpnB","SpnG","SpnY",
             "Fade","Collision",
+            "Cutscene","Waypoint","Signal","Objective",
         };
         static const TriggerType kTypes[] = {
             TriggerType::LevelStart, TriggerType::LevelEnd, TriggerType::Crate, TriggerType::Effect,
             TriggerType::TeamSpawnRed, TriggerType::TeamSpawnBlue, TriggerType::TeamSpawnGreen, TriggerType::TeamSpawnYellow,
             TriggerType::LayerFade, TriggerType::CollisionZone,
+            TriggerType::Cutscene, TriggerType::Waypoint, TriggerType::SignalZone, TriggerType::Objective,
         };
-        constexpr int kTypeCount2 = 10;
+        constexpr int kTypeCount2 = (int)(sizeof(kTypes) / sizeof(kTypes[0]));
         int typeIdx = 0;
         for (int j = 0; j < kTypeCount2; j++) { if (kTypes[j] == t.type) { typeIdx = j; break; } }
-        bool hasCondRow = (t.type == TriggerType::LevelEnd);
+        bool hasCondRow  = (t.type == TriggerType::LevelEnd);
+        bool hasParamRow = (t.type == TriggerType::Cutscene ||
+                            t.type == TriggerType::Waypoint ||
+                            t.type == TriggerType::SignalZone ||
+                            t.type == TriggerType::Objective);
         // TitleH(22) + top_pad(8) + rows + gap(8) + delete(26) + bot_pad(8)
-        const int panelH = UI::W98::TitleH + 8 + (3 + (hasCondRow ? 1 : 0)) * rowH + 8 + 26 + 8;
+        const int panelH = UI::W98::TitleH + 8 + (3 + (hasCondRow ? 1 : 0) + (hasParamRow ? 1 : 0)) * rowH + 8 + 26 + 8;
         ui_->drawWin98Window(panelX, panelY, panelW, panelH, "Trigger");
         int y = panelY + UI::W98::TitleH + 8;
 
@@ -1805,20 +1884,70 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
 
         // Condition (LevelEnd only)
         if (hasCondRow) {
-            static const char* condNames[] = {"Open", "Kill All", "Trigger"};
+            static const char* condNames[] = {"Open", "Kill All", "Trigger", "Flag"};
             int condIdx = (int)t.condition;
-            if (condIdx < 0 || condIdx > 2) condIdx = 0;
+            if (condIdx < 0 || condIdx > 3) condIdx = 0;
             ui_->drawText("Goal", lx, y + 5, 11, UI::W98::Black);
             if (ui_->win98Button(222, "<", arLx, y, btnSz, btnSz, false)) {
                 pushUndo();
-                condIdx = (condIdx + 2) % 3;
+                condIdx = (condIdx + 3) % 4;
                 t.condition = (GoalCondition)condIdx;
             }
             ui_->drawWin98TextField(fldx, y, fieldW, btnSz, condNames[condIdx], false);
             if (ui_->win98Button(223, ">", arRx, y, btnSz, btnSz, false)) {
                 pushUndo();
-                condIdx = (condIdx + 1) % 3;
+                condIdx = (condIdx + 1) % 4;
                 t.condition = (GoalCondition)condIdx;
+            }
+            y += rowH;
+        }
+
+        // Param (story triggers): cutscene index / route / signal delta / objective kind
+        if (hasParamRow) {
+            const char* label = "Param";
+            char valBuf[24];
+            int step = 1, lo = 0, hi = 255;
+            if (t.type == TriggerType::Cutscene) {
+                label = "CS idx"; lo = 0; hi = 63;
+                snprintf(valBuf, sizeof(valBuf), "%d", (int)t.param);
+            } else if (t.type == TriggerType::Waypoint) {
+                label = "Route"; lo = 1; hi = 2;
+                snprintf(valBuf, sizeof(valBuf), "%s", t.param == 2 ? "B (Signal)" : "A (Spear)");
+            } else if (t.type == TriggerType::SignalZone) {
+                label = "Delta"; step = 5;
+                snprintf(valBuf, sizeof(valBuf), "%+d", (int)(int8_t)t.param);
+            } else { // Objective
+                label = "Kind";
+                snprintf(valBuf, sizeof(valBuf), "%s",
+                         t.param == 1 ? "Protect" : t.param == 2 ? "Escort" : "Recover");
+            }
+            ui_->drawText(label, lx, y + 5, 11, UI::W98::Black);
+            if (ui_->win98Button(224, "<", arLx, y, btnSz, btnSz, false)) {
+                pushUndo();
+                if (t.type == TriggerType::SignalZone) {
+                    int v = (int)(int8_t)t.param - step;
+                    if (v < -100) v = -100;
+                    t.param = (uint8_t)(int8_t)v;
+                } else if (t.type == TriggerType::Objective) {
+                    t.param = (uint8_t)((t.param + 2) % 3);
+                } else {
+                    int v = (int)t.param - step; if (v < lo) v = lo;
+                    t.param = (uint8_t)v;
+                }
+            }
+            ui_->drawWin98TextField(fldx, y, fieldW, btnSz, valBuf, false);
+            if (ui_->win98Button(225, ">", arRx, y, btnSz, btnSz, false)) {
+                pushUndo();
+                if (t.type == TriggerType::SignalZone) {
+                    int v = (int)(int8_t)t.param + step;
+                    if (v > 100) v = 100;
+                    t.param = (uint8_t)(int8_t)v;
+                } else if (t.type == TriggerType::Objective) {
+                    t.param = (uint8_t)((t.param + 1) % 3);
+                } else {
+                    int v = (int)t.param + step; if (v > hi) v = hi;
+                    t.param = (uint8_t)v;
+                }
             }
             y += rowH;
         }
@@ -1887,18 +2016,21 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
             "Level Start", "Level End", "Crate", "Effect",
             "Spawn Red", "Spawn Blue", "Spawn Green", "Spawn Yellow",
             "Layer Fade", "Collision",
+            "Cutscene", "Waypoint", "Signal Zone", "Objective",
         };
         static const TriggerType kT[] = {
             TriggerType::LevelStart, TriggerType::LevelEnd, TriggerType::Crate, TriggerType::Effect,
             TriggerType::TeamSpawnRed, TriggerType::TeamSpawnBlue, TriggerType::TeamSpawnGreen, TriggerType::TeamSpawnYellow,
             TriggerType::LayerFade, TriggerType::CollisionZone,
+            TriggerType::Cutscene, TriggerType::Waypoint, TriggerType::SignalZone, TriggerType::Objective,
         };
+        const int kTrigCount = (int)(sizeof(kT) / sizeof(kT[0]));
         const int itemH = 22;
-        const int panelH = UI::W98::TitleH + 8 + 10 * itemH + 8;
+        const int panelH = UI::W98::TitleH + 8 + kTrigCount * itemH + 8;
         ui_->drawWin98Window(panelX, panelY, panelW, panelH, "Trigger Type");
         int y = panelY + UI::W98::TitleH + 8;
         const int btnW = panelW - pad * 2;
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < kTrigCount; i++) {
             if (ui_->win98Button(240 + i, tNames[i], lx, y, btnW, itemH, triggerGhost_.type == kT[i]))
                 triggerGhost_.type = kT[i];
             y += itemH;
@@ -1908,13 +2040,15 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
         static const char* eNames[] = {
             "Melee", "Shooter", "Crate", "Upgrade Crate",
             "Brute", "Scout", "Sniper", "Gunner",
+            "Civilian", "Responder", "Med-Relay", "Power", "Water", "Antenna",
         };
-        const int itemH = 22;
-        const int panelH = UI::W98::TitleH + 8 + 8 * itemH + 8;
+        const int kEntCount = (int)(sizeof(eNames) / sizeof(eNames[0]));
+        const int itemH = 20;
+        const int panelH = UI::W98::TitleH + 8 + kEntCount * itemH + 8;
         ui_->drawWin98Window(panelX, panelY, panelW, panelH, "Entity Type");
         int y = panelY + UI::W98::TitleH + 8;
         const int btnW = panelW - pad * 2;
-        for (int i = 0; i < 8; i++) {
+        for (int i = 0; i < kEntCount; i++) {
             if (ui_->win98Button(250 + i, eNames[i], lx, y, btnW, itemH, entitySpawnType_ == (uint8_t)i))
                 entitySpawnType_ = (uint8_t)i;
             y += itemH;

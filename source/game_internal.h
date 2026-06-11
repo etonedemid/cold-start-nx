@@ -124,6 +124,17 @@ inline bool isCrateSpawnType(uint8_t type) {
     return type == ENTITY_CRATE || type == ENTITY_UPGRADE_CRATE;
 }
 
+// Story bystander classification (these ride the EnemySpawn array but are not enemies)
+inline bool isCivilianSpawn(uint8_t type)   { return type == ENTITY_CIVILIAN; }
+inline bool isResponderSpawn(uint8_t type)  { return type == ENTITY_RESPONDER; }
+inline bool isInfrastructureSpawn(uint8_t type) {
+    return type == ENTITY_INFRA_MEDRELAY || type == ENTITY_INFRA_POWER ||
+           type == ENTITY_INFRA_WATER    || type == ENTITY_INFRA_ANTENNA;
+}
+inline bool isBystanderSpawn(uint8_t type) {
+    return isCivilianSpawn(type) || isResponderSpawn(type) || isInfrastructureSpawn(type);
+}
+
 constexpr int CONFIG_RESOLUTION_INDEX        = -1; // removed - window is now freely resizable
 constexpr int CONFIG_SHADER_CRT_INDEX        = 7;
 constexpr int CONFIG_SHADER_CHROMATIC_INDEX  = 8;

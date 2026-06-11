@@ -131,6 +131,9 @@ void Game::startPackLevel() {
             crate.pos = {es.x, es.y};
             crate.contents = rollRandomUpgrade();
             crates_.push_back(crate);
+        } else if (isBystanderSpawn(es.enemyType)) {
+            // Story bystanders are single-player only; skip in co-op.
+            continue;
         } else {
             spawnEnemy({es.x, es.y}, enemyTypeFromSpawnId(es.enemyType));
             customEnemiesTotal_++;

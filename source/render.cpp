@@ -383,6 +383,7 @@ void Game::render() {
         renderVehicles();
         renderCrates();
         renderPickups();
+        renderBystanders();
         renderRemotePlayers();
         renderWallOverlay();
         renderRoofOverlay();
@@ -401,7 +402,19 @@ void Game::render() {
             }
         }
 
+        // Story cutscene world-space actors (between world and HUD)
+        if (csPlay_.active) {
+            SDL_Texture* pbody = playerSprites_.empty() ? nullptr : playerSprites_[0];
+            SDL_Texture* plegs = legSprites_.empty()    ? nullptr : legSprites_[0];
+            csPlay_.renderActors(renderer_, csPlay_.cam.x, csPlay_.cam.y, csPlay_.cam.zoom,
+                                 pbody, plegs, enemySprite_);
+        }
+
         renderUI();
+
+        // Story cutscene full-screen overlay (cinematic bars, dialog, fade) over HUD
+        if (csPlay_.active)
+            csPlay_.renderOverlay(renderer_, SCREEN_W, SCREEN_H, storyCutscenes_);
 
         if (state_ == GameState::CustomPaused) renderPauseMenu();
         if (state_ == GameState::CustomDead)   renderDeathScreen();
@@ -641,6 +654,7 @@ void Game::render() {
         renderVehicles();
         renderCrates();
         renderPickups();
+        renderBystanders();
         renderRemotePlayers();
         renderWallOverlay();
         renderRoofOverlay();
@@ -3166,7 +3180,7 @@ void Game::renderMainMenu() {
                     nullptr, nullptr, nullptr
                 }, 3 },
                 { "SPECIAL THANKS", {
-                    "win98icons.alexmeub.com",
+                    "github.com/1j01/98 (Win98 icons)",
                     "pixabay.com",
                     "deav",
                     nullptr, nullptr, nullptr
@@ -4011,6 +4025,10 @@ void Game::startCustomMap(const std::string& path, int modeOverride) {
     customGoalOpen_ = false;
     gameTime_ = 0;
 
+    // Story: start a fresh campaign run and load the map's cutscene library
+    resetStoryRun();
+    loadStoryCutsceneLib(path);
+
     // Apply custom map tiles to the game tilemap
     map_.width  = customMap_.width;
     map_.height = customMap_.height;
@@ -4022,6 +4040,7 @@ void Game::startCustomMap(const std::string& path, int modeOverride) {
 
     // Reset entities
     enemies_.clear();
+    bystanders_.clear();
     bullets_.clear();
     enemyBullets_.clear();
     bombs_.clear();
@@ -4093,6 +4112,15 @@ void Game::startCustomMap(const std::string& path, int modeOverride) {
                 crate.pos = {es.x, es.y};
                 crate.contents = rollRandomUpgrade();
                 crates_.push_back(crate);
+            } else if (isResponderSpawn(es.enemyType)) {
+                spawnEnemy({es.x, es.y}, EnemyType::Shooter);
+                if (!enemies_.empty()) {
+                    enemies_.back().isResponder = true;
+                    enemies_.back().disableable = (es.reserved[0] != 0);
+                }
+                customEnemiesTotal_++;
+            } else if (isBystanderSpawn(es.enemyType)) {
+                spawnBystanderFromSpawn(es);
             } else {
                 spawnEnemy({es.x, es.y}, enemyTypeFromSpawnId(es.enemyType));
                 customEnemiesTotal_++;
@@ -4109,6 +4137,10 @@ void Game::startCustomMap(const std::string& path, int modeOverride) {
         mf = (sl != std::string::npos) ? path.substr(0, sl + 1) : "./";
         playMapMusic(mf, customMap_.musicPath);
     }
+
+    // Auto-play an intro cutscene (id "intro") if the library provides one.
+    if (storyCutscenes_.findById("intro"))
+        startStoryCutscene("intro");
 }
 
 void Game::startCustomMapMultiplayer(const std::string& path) {
@@ -4159,6 +4191,7 @@ void Game::startCustomMapMultiplayer(const std::string& path) {
 
     // Reset entities
     enemies_.clear();
+    bystanders_.clear();
     bullets_.clear();
     enemyBullets_.clear();
     bombs_.clear();
@@ -4258,6 +4291,12 @@ void Game::updateCustomMapGoal() {
         // Check if some condition met (simple: after X seconds or enemies < half)
         customGoalOpen_ = (gameTime_ > 30.0f);
         break;
+    case GoalCondition::OnFlag: {
+        // Open when the story "goal_open" flag is set (by an Objective/Waypoint).
+        auto it = storyFlags_.find("goal_open");
+        customGoalOpen_ = (it != storyFlags_.end() && it->second);
+        break;
+    }
     }
 
     // Check if player reached the goal
@@ -4265,6 +4304,11 @@ void Game::updateCustomMapGoal() {
         float dx = player_.pos.x - goal->x;
         float dy = player_.pos.y - goal->y;
         if (fabsf(dx) < goal->width/2 && fabsf(dy) < goal->height/2) {
+            // Story: reward sparing surrendered operators who survived the mission.
+            for (auto& b : bystanders_) {
+                if (b.alive && b.kind == Bystander::Kind::Operator)
+                    adjustSignal(+12, "operator spared");
+            }
             state_ = GameState::CustomWin;
             menuSelection_ = 0;
         }

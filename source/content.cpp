@@ -314,10 +314,8 @@ void Game::renderMapSelectMenu() {
     bool hasMap = !mapFiles_.empty() && mapSelectIdx_ < (int)mapFiles_.size();
     if (ui_.win98Button(60, "Play \xbb", winX + padX, botY, playW, btnH, false) && hasMap)
         confirmInput_ = true;
-    if (ui_.win98Button(62, "Back", winX + padX + playW + btnGap, botY, backW, btnH, false)) {
-        menuSelection_ = (int)mapFiles_.size(); // triggers back in input handler
-        confirmInput_ = true;
-    }
+    if (ui_.win98Button(62, "Back", winX + padX + playW + btnGap, botY, backW, btnH, false))
+        backInput_ = true;
 
     char hint[64];
     snprintf(hint, sizeof(hint), "Select a map  |  Mode: %s",

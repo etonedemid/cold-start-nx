@@ -1584,6 +1584,11 @@ void Game::spawnBulletExplosion(Vec2 pos, int damage, uint8_t ownerId, uint8_t o
 
     if (!applyDamage) return;
 
+    // Story: explosions also harm civilians / infrastructure / operators caught
+    // in the blast (radius only; bystander radius is added inside the helper).
+    if (playingCustomMap_ && !bystanders_.empty())
+        damageBystandersAt(pos, radius, (float)splashDamage);
+
     for (size_t i = 0; i < enemies_.size(); ++i) {
         if ((int)i == skipEnemyIdx) continue;
         auto& e = enemies_[i];
@@ -1814,6 +1819,9 @@ void Game::updateExplosions(float dt) {
         if (!ex.dealtDmg) {
             auto& netAuth = NetworkManager::instance();
             bool isAuthoritative = !netAuth.isOnline() || netAuth.isHost() || (netAuth.isConnectedToDedicated() && netAuth.isLobbyHost());
+            // Story: explosions also harm bystanders caught in the blast.
+            if (playingCustomMap_ && !bystanders_.empty())
+                damageBystandersAt(ex.pos, ex.radius, ex.damage);
             for (auto& e : enemies_) {
                 if (!e.alive) continue;
                 if (Vec2::dist(ex.pos, e.pos) < ex.radius) {
@@ -3305,6 +3313,14 @@ void Game::resolveCollisions() {
 void Game::killEnemy(Enemy& e, bool trackKill) {
     if (!e.alive) return;  // already dead - avoid double gib/score effects
     e.alive = false;
+    // Story: a destroyed AVA responder leaves its operator crawling free,
+    // unarmed and surrendered. Killing them later costs SIGNAL; sparing them
+    // is rewarded at mission end.
+    if (e.isResponder) {
+        Bystander op; op.kind = Bystander::Kind::Operator;
+        op.pos = e.pos; op.hp = op.maxHp = 16; op.radius = 18;
+        bystanders_.push_back(op);
+    }
     // Central blood decal (large)
     BloodDecal bd;
     bd.pos = e.pos;
