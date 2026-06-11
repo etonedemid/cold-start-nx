@@ -128,8 +128,6 @@ if(WIN32)
         message(STATUS "ENet: using bundled sources")
     endif()
 
-    target_link_libraries(cold_start PRIVATE ws2_32)
-
     # miniupnpc (optional - UPnP port forwarding for hosting)
     find_path(MINIUPNPC_INCLUDE_DIR miniupnpc/miniupnpc.h
         HINTS ${MINIUPNPC_INCLUDE_DIR} "C:/msys64/mingw64/include" "C:/msys2/mingw64/include" ENV MINGW_PREFIX
@@ -142,13 +140,15 @@ if(WIN32)
     endif()
     if(MINIUPNPC_INCLUDE_DIR AND MINIUPNPC_LIB)
         target_include_directories(cold_start PRIVATE ${MINIUPNPC_INCLUDE_DIR})
-        # miniupnpc also needs iphlpapi (GetBestInterface, GetAdaptersAddresses)
-        # and additional ws2_32 symbols (inet_addr, sendto, getnameinfo)
-        target_link_libraries(cold_start PRIVATE ${MINIUPNPC_LIB} iphlpapi)
+        # miniupnpc must come before ws2_32/msvcrt so GNU ld sees its undefined
+        # refs before closing those archives (left-to-right symbol resolution).
+        # msvcrt provides __imp__snprintf / __imp__scprintf that miniupnpc uses.
+        target_link_libraries(cold_start PRIVATE ${MINIUPNPC_LIB} iphlpapi ws2_32 msvcrt-os)
         # MINIUPNP_STATICLIB (no C) suppresses __declspec(dllimport) in the headers
         target_compile_definitions(cold_start PRIVATE HAS_ENET=1 HAS_UPNP=1 PLATFORM_PC MINIUPNP_STATICLIB)
         message(STATUS "miniupnpc: found - UPnP enabled")
     else()
+        target_link_libraries(cold_start PRIVATE ws2_32)
         target_compile_definitions(cold_start PRIVATE HAS_ENET=1 HAS_UPNP=0 PLATFORM_PC)
         message(STATUS "miniupnpc: not found - UPnP disabled")
     endif()
