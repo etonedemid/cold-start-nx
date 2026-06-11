@@ -3375,7 +3375,7 @@ void Game::renderPlayModeMenu() {
             switch (row.idx) {
                 case 3: config_.mapWidth        = std::min(120,  config_.mapWidth        + 2);    break;
                 case 4: config_.mapHeight       = std::min(80,   config_.mapHeight       + 2);    break;
-                case 5: config_.playerMaxHp     = std::min(20,   config_.playerMaxHp     + 1);    break;
+                case 5: config_.playerMaxHp     = std::min(100,  config_.playerMaxHp     + 1);    break;
                 case 6: config_.spawnRateScale  = std::min(3.0f, config_.spawnRateScale  + 0.1f); break;
                 case 7: config_.enemyHpScale    = std::min(3.0f, config_.enemyHpScale    + 0.1f); break;
                 case 8: config_.enemySpeedScale = std::min(2.5f, config_.enemySpeedScale + 0.1f); break;
@@ -3470,7 +3470,7 @@ void Game::renderConfigMenu() {
         if (ui_.win98Button(row.idx*10+100, "<", fx, y, arrowW, rowH, false)) {
             int d=-1;
             switch(row.idx){
-                case 0: config_.playerMaxHp    =std::max(1,   std::min(20,  config_.playerMaxHp    +d));       break;
+                case 0: config_.playerMaxHp    =std::max(1,   std::min(100, config_.playerMaxHp    +d));       break;
                 case 1: config_.spawnRateScale =std::max(0.3f,std::min(3.0f,config_.spawnRateScale +d*0.1f));  break;
                 case 2: config_.enemyHpScale   =std::max(0.3f,std::min(3.0f,config_.enemyHpScale   +d*0.1f));  break;
                 case 3: config_.enemySpeedScale=std::max(0.5f,std::min(2.5f,config_.enemySpeedScale+d*0.1f));  break;
@@ -3483,7 +3483,7 @@ void Game::renderConfigMenu() {
         if (ui_.win98Button(row.idx*10+110, ">", fx+arrowW+2+fwA+2, y, arrowW, rowH, false)) {
             int d=1;
             switch(row.idx){
-                case 0: config_.playerMaxHp    =std::max(1,   std::min(20,  config_.playerMaxHp    +d));       break;
+                case 0: config_.playerMaxHp    =std::max(1,   std::min(100, config_.playerMaxHp    +d));       break;
                 case 1: config_.spawnRateScale =std::max(0.3f,std::min(3.0f,config_.spawnRateScale +d*0.1f));  break;
                 case 2: config_.enemyHpScale   =std::max(0.3f,std::min(3.0f,config_.enemyHpScale   +d*0.1f));  break;
                 case 3: config_.enemySpeedScale=std::max(0.5f,std::min(2.5f,config_.enemySpeedScale+d*0.1f));  break;
