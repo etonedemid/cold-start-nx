@@ -1,0 +1,224 @@
+[
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/assets.cpp.o -c /home/etonedemid/cold-start-nx/source/assets.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/assets.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/assets.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/camera.cpp.o -c /home/etonedemid/cold-start-nx/source/camera.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/camera.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/camera.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/charformat.cpp.o -c /home/etonedemid/cold-start-nx/source/charformat.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/charformat.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/charformat.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/combat.cpp.o -c /home/etonedemid/cold-start-nx/source/combat.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/combat.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/combat.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/content.cpp.o -c /home/etonedemid/cold-start-nx/source/content.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/content.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/content.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/coop.cpp.o -c /home/etonedemid/cold-start-nx/source/coop.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/coop.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/coop.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/cutscene.cpp.o -c /home/etonedemid/cold-start-nx/source/cutscene.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/cutscene.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/cutscene.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/cutscene_editor.cpp.o -c /home/etonedemid/cold-start-nx/source/cutscene_editor.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/cutscene_editor.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/cutscene_editor.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/discord_rpc.cpp.o -c /home/etonedemid/cold-start-nx/source/discord_rpc.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/discord_rpc.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/discord_rpc.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/editor.cpp.o -c /home/etonedemid/cold-start-nx/source/editor.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/editor.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/editor.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/game.cpp.o -c /home/etonedemid/cold-start-nx/source/game.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/game.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/game.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/gamemode.cpp.o -c /home/etonedemid/cold-start-nx/source/gamemode.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/gamemode.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/gamemode.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/input.cpp.o -c /home/etonedemid/cold-start-nx/source/input.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/input.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/input.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/main.cpp.o -c /home/etonedemid/cold-start-nx/source/main.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/main.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/main.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/mapformat.cpp.o -c /home/etonedemid/cold-start-nx/source/mapformat.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/mapformat.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/mapformat.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/mappack.cpp.o -c /home/etonedemid/cold-start-nx/source/mappack.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/mappack.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/mappack.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/mod.cpp.o -c /home/etonedemid/cold-start-nx/source/mod.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/mod.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/mod.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/mods.cpp.o -c /home/etonedemid/cold-start-nx/source/mods.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/mods.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/mods.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/multiplayer.cpp.o -c /home/etonedemid/cold-start-nx/source/multiplayer.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/multiplayer.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/multiplayer.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/netmenus.cpp.o -c /home/etonedemid/cold-start-nx/source/netmenus.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/netmenus.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/netmenus.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/network.cpp.o -c /home/etonedemid/cold-start-nx/source/network.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/network.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/network.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/pickup.cpp.o -c /home/etonedemid/cold-start-nx/source/pickup.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/pickup.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/pickup.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/pickups.cpp.o -c /home/etonedemid/cold-start-nx/source/pickups.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/pickups.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/pickups.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/render.cpp.o -c /home/etonedemid/cold-start-nx/source/render.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/render.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/render.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/texeditor.cpp.o -c /home/etonedemid/cold-start-nx/source/texeditor.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/texeditor.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/texeditor.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/tilemap.cpp.o -c /home/etonedemid/cold-start-nx/source/tilemap.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/tilemap.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/tilemap.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/touchcontrols.cpp.o -c /home/etonedemid/cold-start-nx/source/touchcontrols.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/touchcontrols.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/touchcontrols.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/ui.cpp.o -c /home/etonedemid/cold-start-nx/source/ui.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/ui.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/ui.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/c++ -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include -std=gnu++17 -o CMakeFiles/cold_start.dir/source/update_checker.cpp.o -c /home/etonedemid/cold-start-nx/source/update_checker.cpp",
+  "file": "/home/etonedemid/cold-start-nx/source/update_checker.cpp",
+  "output": "CMakeFiles/cold_start.dir/source/update_checker.cpp.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/cc -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include  -o CMakeFiles/cold_start.dir/source/enet/callbacks.c.o -c /home/etonedemid/cold-start-nx/source/enet/callbacks.c",
+  "file": "/home/etonedemid/cold-start-nx/source/enet/callbacks.c",
+  "output": "CMakeFiles/cold_start.dir/source/enet/callbacks.c.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/cc -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include  -o CMakeFiles/cold_start.dir/source/enet/compress.c.o -c /home/etonedemid/cold-start-nx/source/enet/compress.c",
+  "file": "/home/etonedemid/cold-start-nx/source/enet/compress.c",
+  "output": "CMakeFiles/cold_start.dir/source/enet/compress.c.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/cc -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include  -o CMakeFiles/cold_start.dir/source/enet/host.c.o -c /home/etonedemid/cold-start-nx/source/enet/host.c",
+  "file": "/home/etonedemid/cold-start-nx/source/enet/host.c",
+  "output": "CMakeFiles/cold_start.dir/source/enet/host.c.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/cc -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include  -o CMakeFiles/cold_start.dir/source/enet/list.c.o -c /home/etonedemid/cold-start-nx/source/enet/list.c",
+  "file": "/home/etonedemid/cold-start-nx/source/enet/list.c",
+  "output": "CMakeFiles/cold_start.dir/source/enet/list.c.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/cc -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include  -o CMakeFiles/cold_start.dir/source/enet/packet.c.o -c /home/etonedemid/cold-start-nx/source/enet/packet.c",
+  "file": "/home/etonedemid/cold-start-nx/source/enet/packet.c",
+  "output": "CMakeFiles/cold_start.dir/source/enet/packet.c.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/cc -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include  -o CMakeFiles/cold_start.dir/source/enet/peer.c.o -c /home/etonedemid/cold-start-nx/source/enet/peer.c",
+  "file": "/home/etonedemid/cold-start-nx/source/enet/peer.c",
+  "output": "CMakeFiles/cold_start.dir/source/enet/peer.c.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/cc -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include  -o CMakeFiles/cold_start.dir/source/enet/protocol.c.o -c /home/etonedemid/cold-start-nx/source/enet/protocol.c",
+  "file": "/home/etonedemid/cold-start-nx/source/enet/protocol.c",
+  "output": "CMakeFiles/cold_start.dir/source/enet/protocol.c.o"
+},
+{
+  "directory": "/home/etonedemid/cold-start-nx",
+  "command": "/usr/bin/cc -DHAS_CURL=1 -DHAS_ENET=1 -DHAS_UPNP=0 -DPLATFORM_PC -I/home/etonedemid/cold-start-nx/source -I/usr/include/SDL2 -I/usr/include/libpng16 -I/usr/include/rav1e -I/usr/include/svt-av1 -I/usr/include/webp -I/usr/include/harfbuzz -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -I/usr/include/freetype2 -I/home/etonedemid/cold-start-nx/source/enet/include  -o CMakeFiles/cold_start.dir/source/enet/unix.c.o -c /home/etonedemid/cold-start-nx/source/enet/unix.c",
+  "file": "/home/etonedemid/cold-start-nx/source/enet/unix.c",
+  "output": "CMakeFiles/cold_start.dir/source/enet/unix.c.o"
+}
+]

@@ -102,7 +102,7 @@ int main(int argc, char* argv[]) {
     socketInitializeDefault();
     nxlinkStdio();
     // Set CWD to the NRO directory so all relative opendir/fopen calls resolve
-    // against sdmc:/switch/<folder>/ — hbmenu provides argv[0] with the sdmc: prefix.
+    // against sdmc:/switch/<folder>/ - hbmenu provides argv[0] with the sdmc: prefix.
     if (argc > 0 && argv[0] && argv[0][0]) {
         char nroDir[512];
         strncpy(nroDir, argv[0], sizeof(nroDir) - 1);

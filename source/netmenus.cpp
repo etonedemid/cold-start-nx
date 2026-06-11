@@ -2,6 +2,7 @@
 #include "game_internal.h"
 #include "assets.h"
 #include <algorithm>
+#include <filesystem>
 #ifdef HAS_CURL
 #include <curl/curl.h>
 #endif
@@ -17,6 +18,7 @@
 // Shared toolbar/icon helpers (used across all four screens)
 
 static void drawServerIcon(SDL_Renderer* r, int ix, int iy, SDL_Color c) {
+
     SDL_SetRenderDrawColor(r, c.r, c.g, c.b, 255);
     SDL_Rect t1={ix+1,iy+8,12,6}; SDL_RenderFillRect(r,&t1);
     SDL_Rect t2={ix+3,iy+4, 8,5}; SDL_RenderFillRect(r,&t2);
@@ -2344,7 +2346,7 @@ void Game::fetchOnlineModList() {
     onlineModList_.clear();
 
 #ifdef __SWITCH__
-    // Switch: run synchronously — std::thread is unreliable with -fno-exceptions/libnx
+    // Switch: run synchronously - std::thread is unreliable with -fno-exceptions/libnx
     {
         std::string json = httpGetString(std::string(WORKSHOP_URL) + "/api/v1/mods");
         if (!json.empty()) {
@@ -2383,7 +2385,7 @@ void Game::downloadAndInstallMod(const OnlineModInfo& mod) {
     workshopDlName_      = mod.name;
     workshopDlInstallId_ = mod.id;
 
-    // On Android the CWD is SDL internal storage which is always writable —
+    // On Android the CWD is SDL internal storage which is always writable -
     // use it for the temp zip.  Mods are installed into the user-chosen romfs
     // root so they coexist with the game assets and are visible to file managers
     // when external storage was chosen.
@@ -2394,7 +2396,7 @@ void Game::downloadAndInstallMod(const OnlineModInfo& mod) {
                              "/mods_dl_" + workshopDlInstallId_ + ".zip";
     }
 #elif defined(__SWITCH__)
-    // Use absolute paths on Switch — relative opendir/rename may silently fail
+    // Use absolute paths on Switch - relative opendir/rename may silently fail
     {
         char cwd[512] = {};
         const char* cp = (getcwd(cwd, sizeof(cwd)) && cwd[0]) ? cwd : "sdmc:/switch/COLDSTART";
@@ -2465,8 +2467,13 @@ void Game::downloadAndInstallMod(const OnlineModInfo& mod) {
 }
 
 void Game::deleteModFolder(const std::string& folder) {
-    namespace fs = std::filesystem;
-    fs::remove_all(folder);
+    #if defined(_WIN32)
+    // Avoid std::filesystem::path which pulls in codecvt<wchar_t> removed in GCC 16
+    std::string cmd = "rd /s /q \"" + folder + "\"";
+    std::system(cmd.c_str());
+#else
+    std::filesystem::remove_all(folder);
+#endif
     ModManager::instance().scanMods();
     applyModOverrides();
     modMenuSelection_ = 0;

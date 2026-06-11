@@ -2161,7 +2161,7 @@ void MapEditor::renderToolbar(SDL_Renderer* renderer) {
     int centerX = gridX + 274;
     int rightEdge = screenW_ - PALETTE_W - 230;
 
-    // Scene (cutscene editor) toggle — only unlocked while K is held
+    // Scene (cutscene editor) toggle - only unlocked while K is held
     {
         const Uint8* ks = SDL_GetKeyboardState(nullptr);
         bool kHeld = ks && ks[SDL_SCANCODE_K];

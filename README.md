@@ -11,6 +11,12 @@ License: GNU GPL - except music; consult authors before distributing. Sounds fro
 Join our discord!
 https://discord.gg/dv28MgtaNn
 
+## Roadmap
+1. Better enemy pathfinding and sound alert <- We're here
+2. Cutscenes and more triggers (maybe basic scripting) in editor
+3. Official content pack (Story mode)
+4. Steam release (may be earlier, depends on the Ko-Fi goal)
+
 ## Workshop
 https://etonedemid.github.io/coldstart-workshop/
 
@@ -29,7 +35,7 @@ https://etonedemid.github.io/coldstart-workshop/
 - Arena, co-op, deathmatch, team deathmatch, playlist, and custom-map play modes
 - Host-authoritative online multiplayer (ENet) with full mod sync
 - In-game map editor, character creator, and built-in texture editor
-- Mod system: maps, packs, characters, sprites, sounds, gamemodes, items
+- Mod system: maps, packs, characters, sprites, sounds, gamemodes, items (soon)
 - Resizable window with automatic letterboxing; 4:3 mode on square/portrait displays
 
 ## Build

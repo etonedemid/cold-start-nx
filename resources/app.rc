@@ -1,9 +1,9 @@
-IDI_ICON1 ICON "..\\icon.ico"
+IDI_ICON1 ICON "icon.ico"
 
 // ── Application manifest ─────────────────────────────────────────────────────
 // Ensures Windows uses "COLD START" as the app name in the taskbar and
 // task manager, not the pthread DLL description.
-1 24 "..\\resources\\app.manifest"
+1 24 "app.manifest"
 
 // ── Version info ─────────────────────────────────────────────────────────────
 1 VERSIONINFO

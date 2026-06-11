@@ -1,6 +1,6 @@
 #!/bin/bash
 SDK=/mnt/c/Android/Sdk/build-tools/34.0.0
-ROOT=/mnt/z/cold-start-nx
+ROOT=~/cold-start-nx
 VER=$(grep 'GAME_VERSION' $ROOT/source/constants.h | grep -oP '"[^"]+"' | tr -d '"')
 APK_IN=$ROOT/android/app/build/outputs/apk/release/app-release-unsigned.apk
 APK_ALIGNED=/tmp/app-release-aligned.apk
