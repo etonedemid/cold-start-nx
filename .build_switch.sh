@@ -1,6 +1,6 @@
 #!/bin/sh
 export DEVKITPRO=/opt/devkitpro
-export DEVKITARM=$DEVKITPRO/devkitARM
-export PATH=$DEVKITPRO/tools/bin:$DEVKITARM/bin:$PATH
+export DEVKITARM=$DEVKITPRO/devkitA64
+export PATH=$DEVKITPRO/tools/bin:$DEVKITPRO/devkitA64/bin:$DEVKITPRO/portlibs/switch/bin:$PATH
 cd ~/cold-start-nx
-make -j4
+make -j$(nproc)

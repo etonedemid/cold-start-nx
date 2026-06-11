@@ -171,14 +171,26 @@ fi
 
 # ── Android ───────────────────────────────────────────────────────────────────
 if [[ "$SKIP_ANDROID" == false ]]; then
-    banner "Building Android APK..."
+    # Auto-detect Android SDK; skip gracefully if not installed.
+    _ANDROID_SDK=""
+    for _d in "$HOME/Android/Sdk" "/opt/android-sdk" "/mnt/c/Android/Sdk"; do
+        [[ -d "$_d" ]] && { _ANDROID_SDK="$_d"; break; }
+    done
 
-    bash "$ROOT/.build_android.sh"
+    if [[ -z "$_ANDROID_SDK" ]]; then
+        echo -e "\e[33m    SKIP: Android SDK not found (set ANDROID_HOME or install to ~/Android/Sdk)\e[0m"
+    else
+        export ANDROID_HOME="$_ANDROID_SDK"
+        # Update local.properties so Gradle picks up the right SDK path.
+        sed -i "s|^sdk\.dir=.*|sdk.dir=$_ANDROID_SDK|" "$ROOT/android/local.properties"
 
-    bash "$ROOT/android/sign_apk.sh" "$APK_OUT"
-    [[ -f "$APK_OUT" ]] || fail "Signed APK not found at $APK_OUT"
-    sz=$(du -h "$APK_OUT" | cut -f1)
-    ok "$APK_OUT ($sz)"
+        banner "Building Android APK (SDK: $_ANDROID_SDK)..."
+        bash "$ROOT/.build_android.sh"
+        bash "$ROOT/android/sign_apk.sh" "$APK_OUT"
+        [[ -f "$APK_OUT" ]] || fail "Signed APK not found at $APK_OUT"
+        sz=$(du -h "$APK_OUT" | cut -f1)
+        ok "$APK_OUT ($sz)"
+    fi
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────
