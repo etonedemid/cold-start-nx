@@ -101,6 +101,7 @@ void Game::updatePlayer(float dt) {
             } else if (state_ == GameState::PlayingPack || state_ == GameState::PackPaused) {
                 state_ = GameState::PackDead;
             } else {
+                checkAndSaveBestRun();
                 state_ = GameState::Dead;
             }
             menuSelection_ = 0;
