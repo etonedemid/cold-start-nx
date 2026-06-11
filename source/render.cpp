@@ -3338,7 +3338,10 @@ void Game::renderPlayModeMenu() {
         switch (idx) {
             case 3: snprintf(valBuf,sizeof(valBuf),"%d",   config_.mapWidth);        break;
             case 4: snprintf(valBuf,sizeof(valBuf),"%d",   config_.mapHeight);       break;
-            case 5: snprintf(valBuf,sizeof(valBuf),"%d",   config_.playerMaxHp);     break;
+            case 5:
+                if (hpTyping_) snprintf(valBuf,sizeof(valBuf),"%s%c", hpStr_.c_str(), (int)(gameTime_*3)%2==0?'_':' ');
+                else           snprintf(valBuf,sizeof(valBuf),"%d",   config_.playerMaxHp);
+                break;
             case 6: snprintf(valBuf,sizeof(valBuf),"%.1fx",config_.spawnRateScale);  break;
             case 7: snprintf(valBuf,sizeof(valBuf),"%.1fx",config_.enemyHpScale);    break;
             case 8: snprintf(valBuf,sizeof(valBuf),"%.1fx",config_.enemySpeedScale); break;
@@ -3375,7 +3378,7 @@ void Game::renderPlayModeMenu() {
             switch (row.idx) {
                 case 3: config_.mapWidth        = std::min(120,  config_.mapWidth        + 2);    break;
                 case 4: config_.mapHeight       = std::min(80,   config_.mapHeight       + 2);    break;
-                case 5: config_.playerMaxHp     = std::min(20,   config_.playerMaxHp     + 1);    break;
+                case 5: config_.playerMaxHp     = std::min(1000, config_.playerMaxHp     + 1);    break;
                 case 6: config_.spawnRateScale  = std::min(3.0f, config_.spawnRateScale  + 0.1f); break;
                 case 7: config_.enemyHpScale    = std::min(3.0f, config_.enemyHpScale    + 0.1f); break;
                 case 8: config_.enemySpeedScale = std::min(2.5f, config_.enemySpeedScale + 0.1f); break;
@@ -3451,7 +3454,10 @@ void Game::renderConfigMenu() {
     };
     auto fmtS = [&](int idx) -> const char* {
         switch (idx) {
-            case 0: snprintf(valBuf,sizeof(valBuf),"%d",    config_.playerMaxHp);  break;
+            case 0:
+                if (hpTyping_) snprintf(valBuf,sizeof(valBuf),"%s%c", hpStr_.c_str(), (int)(gameTime_*3)%2==0?'_':' ');
+                else           snprintf(valBuf,sizeof(valBuf),"%d",   config_.playerMaxHp);
+                break;
             case 1: snprintf(valBuf,sizeof(valBuf),"%.1fx", config_.spawnRateScale); break;
             case 2: snprintf(valBuf,sizeof(valBuf),"%.1fx", config_.enemyHpScale);  break;
             case 3: snprintf(valBuf,sizeof(valBuf),"%.1fx", config_.enemySpeedScale); break;
@@ -3470,7 +3476,7 @@ void Game::renderConfigMenu() {
         if (ui_.win98Button(row.idx*10+100, "<", fx, y, arrowW, rowH, false)) {
             int d=-1;
             switch(row.idx){
-                case 0: config_.playerMaxHp    =std::max(1,   std::min(20,  config_.playerMaxHp    +d));       break;
+                case 0: config_.playerMaxHp    =std::max(1,   std::min(1000,config_.playerMaxHp    +d));       break;
                 case 1: config_.spawnRateScale =std::max(0.3f,std::min(3.0f,config_.spawnRateScale +d*0.1f));  break;
                 case 2: config_.enemyHpScale   =std::max(0.3f,std::min(3.0f,config_.enemyHpScale   +d*0.1f));  break;
                 case 3: config_.enemySpeedScale=std::max(0.5f,std::min(2.5f,config_.enemySpeedScale+d*0.1f));  break;
@@ -3483,7 +3489,7 @@ void Game::renderConfigMenu() {
         if (ui_.win98Button(row.idx*10+110, ">", fx+arrowW+2+fwA+2, y, arrowW, rowH, false)) {
             int d=1;
             switch(row.idx){
-                case 0: config_.playerMaxHp    =std::max(1,   std::min(20,  config_.playerMaxHp    +d));       break;
+                case 0: config_.playerMaxHp    =std::max(1,   std::min(1000,config_.playerMaxHp    +d));       break;
                 case 1: config_.spawnRateScale =std::max(0.3f,std::min(3.0f,config_.spawnRateScale +d*0.1f));  break;
                 case 2: config_.enemyHpScale   =std::max(0.3f,std::min(3.0f,config_.enemyHpScale   +d*0.1f));  break;
                 case 3: config_.enemySpeedScale=std::max(0.5f,std::min(2.5f,config_.enemySpeedScale+d*0.1f));  break;
@@ -3916,32 +3922,83 @@ void Game::renderWorkshopMenu() {
 void Game::renderDeathScreen() {
     ui_.drawDarkOverlay(160, 30, 4, 4);
 
-    const int winW = 340;
-    const int btnH = 26;
-    const int btnGap = 6;
-    const int padX = 14;
-    // content: title bar(22) + pad(14) + stats(2*20) + sep(10) + 2 buttons + gap + bottom pad
-    const int winH = UI::W98::TitleH + 14 + 20 + 6 + 20 + 14 + 2*(btnH + btnGap) + 10;
+    const int winW    = 340;
+    const int btnH    = 26;
+    const int btnGap  = 6;
+    const int padX    = 14;
+    const int padTop  = 14;
+    const int rowH    = 20;
+    const int rowGap  = 6;
+
+    const bool hasBest   = bestRun_.valid();
+    const int  bestStatH = hasBest ? (3 * 18 + 2 * 4) : 18;
+    const int  newBestH  = newBestRun_ ? (rowH + 4) : 0;
+
+    // current run: time + wave + kills (3 rows, 2 gaps)
+    const int curH = 3 * rowH + 2 * rowGap;
+
+    const int winH = UI::W98::TitleH + padTop
+                   + curH + rowGap          // current stats + gap to separator
+                   + 14                     // first separator
+                   + newBestH               // "NEW BEST!" badge (0 if not new)
+                   + rowH + rowGap          // "Best Run:" header
+                   + bestStatH              // best run stat rows
+                   + 8                      // gap before second separator
+                   + 14                     // second separator
+                   + 2 * btnH + btnGap      // two buttons
+                   + padTop;
+
     const int winX = (SCREEN_W - winW) / 2;
     const int winY = (SCREEN_H - winH) / 2;
     ui_.drawWin98Window(winX, winY, winW, winH, "Packet loss: 100%");
 
-    // Stats
-    char timeStr[64];
-    int mins = (int)gameTime_ / 60;
-    int secs = (int)gameTime_ % 60;
-    snprintf(timeStr, sizeof(timeStr), "Time: %d:%02d", mins, secs);
-    char waveBuf[64];
-    snprintf(waveBuf, sizeof(waveBuf), "Wave: %d", waveNumber_);
+    // --- Current run stats ---
+    char timeBuf[64], waveBuf[64], killsBuf[64];
+    int mins = (int)gameTime_ / 60, secs = (int)gameTime_ % 60;
+    snprintf(timeBuf,  sizeof(timeBuf),  "Time: %d:%02d", mins, secs);
+    snprintf(waveBuf,  sizeof(waveBuf),  "Wave: %d",      waveNumber_);
+    snprintf(killsBuf, sizeof(killsBuf), "Kills: %d",     coopSlots_[0].kills);
 
-    int cy = winY + UI::W98::TitleH + 14;
-    ui_.drawTextCentered(timeStr, cy, 16, UI::W98::Black);
-    cy += 20;
-    ui_.drawTextCentered(waveBuf, cy, 16, UI::W98::Black);
-    cy += 20;
+    int cy = winY + UI::W98::TitleH + padTop;
+    ui_.drawTextCentered(timeBuf,  cy, 16, UI::W98::Black); cy += rowH + rowGap;
+    ui_.drawTextCentered(waveBuf,  cy, 16, UI::W98::Black); cy += rowH + rowGap;
+    ui_.drawTextCentered(killsBuf, cy, 16, UI::W98::Black); cy += rowH + rowGap;
+
+    // First separator
     ui_.drawWin98Bevel(winX + padX, cy, winW - padX * 2, 2, false);
     cy += 14;
 
+    // NEW BEST badge
+    if (newBestRun_) {
+        constexpr SDL_Color kGold = {204, 160, 0, 255};
+        ui_.drawTextCentered(">> NEW BEST! <<", cy, 16, kGold);
+        cy += rowH + 4;
+    }
+
+    // --- Best Run section ---
+    ui_.drawTextCentered("Best Run:", cy, 16, UI::W98::Black);
+    cy += rowH + rowGap;
+
+    if (hasBest) {
+        int bm = (int)bestRun_.time / 60, bs = (int)bestRun_.time % 60;
+        char bwBuf[64], bkBuf[64], btBuf[64];
+        snprintf(bwBuf, sizeof(bwBuf), "Wave: %d",      bestRun_.wave);
+        snprintf(bkBuf, sizeof(bkBuf), "Kills: %d",     bestRun_.kills);
+        snprintf(btBuf, sizeof(btBuf), "Time: %d:%02d", bm, bs);
+        ui_.drawTextCentered(bwBuf, cy, 14, UI::W98::Black); cy += 18 + 4;
+        ui_.drawTextCentered(bkBuf, cy, 14, UI::W98::Black); cy += 18 + 4;
+        ui_.drawTextCentered(btBuf, cy, 14, UI::W98::Black); cy += 18;
+    } else {
+        ui_.drawTextCentered("No record yet", cy, 14, UI::W98::Shadow);
+        cy += 18;
+    }
+
+    // Second separator
+    cy += 8;
+    ui_.drawWin98Bevel(winX + padX, cy, winW - padX * 2, 2, false);
+    cy += 14;
+
+    // --- Buttons ---
     int bx = winX + padX;
     if (ui_.win98Button(0, "Retry", bx, cy, winW - padX * 2, btnH, menuSelection_ == 0)) {
         menuSelection_ = 0; confirmInput_ = true;
