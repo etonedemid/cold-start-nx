@@ -50,7 +50,14 @@ static constexpr uint8_t ENTITY_BRUTE        = 4;
 static constexpr uint8_t ENTITY_SCOUT        = 5;
 static constexpr uint8_t ENTITY_SNIPER       = 6;
 static constexpr uint8_t ENTITY_GUNNER       = 7;
-static constexpr uint8_t ENTITY_TYPE_COUNT   = 8;
+// Story bystanders / infrastructure (non-enemy, ride the EnemySpawn array)
+static constexpr uint8_t ENTITY_CIVILIAN       = 8;
+static constexpr uint8_t ENTITY_RESPONDER      = 9;  // hostile; surrenders when disabled
+static constexpr uint8_t ENTITY_INFRA_MEDRELAY = 10;
+static constexpr uint8_t ENTITY_INFRA_POWER    = 11;
+static constexpr uint8_t ENTITY_INFRA_WATER    = 12;
+static constexpr uint8_t ENTITY_INFRA_ANTENNA  = 13;
+static constexpr uint8_t ENTITY_TYPE_COUNT     = 14;
 
 // Trigger placement ghost
 struct TriggerGhost {
@@ -136,6 +143,9 @@ public:
 
     // Fill out[0..7] with the palette textures for TILE_CUSTOM_0..7 (for test play)
     void getCustomTileTextures(SDL_Texture** out) const;
+
+    // In-memory cutscene library (for test-play, so story cutscenes run without a save)
+    const CutsceneLibrary& cutsceneLibrary() const { return csLib_; }
 
 private:
     bool active_ = false;

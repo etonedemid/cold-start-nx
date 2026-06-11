@@ -30,7 +30,17 @@ enum class TriggerType : uint8_t {
     LayerFade        = 14, // zone where top image layer fades when player is inside
     CollisionZone    = 15, // invisible solid rectangle (can be rotated); blocks player + enemies
     Cutscene         = 16, // triggers a cutscene; param = cutscene index in the map's .csc library
-    COUNT            = 17,
+    Waypoint         = 17, // route-split commit; param = route id (1=Spearhead, 2=Signal)
+    SignalZone       = 18, // one-time SIGNAL delta on enter; param = signed delta (int8)
+    Objective        = 19, // side-request marker; param = subtype; completion sets a flag + SIGNAL
+    COUNT            = 20,
+};
+
+// Objective trigger subtypes (MapTrigger::param for TriggerType::Objective)
+enum class ObjectiveKind : uint8_t {
+    Recover = 0, // reach/recover a cache (complete on enter)
+    Protect = 1, // protect target marker (informational)
+    Escort  = 2, // escort marker (informational)
 };
 
 // End-goal unlock condition
@@ -38,6 +48,7 @@ enum class GoalCondition : uint8_t {
     DefeatAll   = 0, // kill all spawned enemies
     OnTrigger   = 1, // activated by stepping on a specific trigger
     Immediate   = 2, // always open
+    OnFlag      = 3, // open when a story flag is set (param = flag slot 0..n)
 };
 
 struct MapTrigger {

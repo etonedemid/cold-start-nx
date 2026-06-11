@@ -861,6 +861,11 @@ void Game::run() {
                 customGoalOpen_ = false;
                 gameTime_ = 0;
 
+                // Story: reset run + use the editor's in-memory cutscene library
+                resetStoryRun();
+                storyCutscenes_ = editor_.cutsceneLibrary();
+                csPlay_.stop();
+
                 map_.width  = customMap_.width;
                 map_.height = customMap_.height;
                 map_.tiles  = customMap_.tiles;
@@ -891,6 +896,7 @@ void Game::run() {
                 camera_.worldW = map_.worldWidth();
                 camera_.worldH = map_.worldHeight();
 
+                bystanders_.clear();
                 customEnemiesTotal_ = 0;
                 for (auto& es : customMap_.enemySpawns) {
                     if (isCrateSpawnType(es.enemyType)) {
@@ -899,6 +905,15 @@ void Game::run() {
                         crate.pos = {es.x, es.y};
                         crate.contents = rollRandomUpgrade();
                         crates_.push_back(crate);
+                    } else if (isResponderSpawn(es.enemyType)) {
+                        spawnEnemy({es.x, es.y}, EnemyType::Shooter);
+                        if (!enemies_.empty()) {
+                            enemies_.back().isResponder = true;
+                            enemies_.back().disableable = (es.reserved[0] != 0);
+                        }
+                        customEnemiesTotal_++;
+                    } else if (isBystanderSpawn(es.enemyType)) {
+                        spawnBystanderFromSpawn(es);
                     } else {
                         spawnEnemy({es.x, es.y}, enemyTypeFromSpawnId(es.enemyType));
                         customEnemiesTotal_++;
@@ -906,6 +921,10 @@ void Game::run() {
                 }
                 map_.findSpawnPoints();
                 testPlayFromEditor_ = true;
+
+                // Auto-play an intro cutscene if the library has one
+                if (storyCutscenes_.findById("intro"))
+                    startStoryCutscene("intro");
             }
         }
 
@@ -990,6 +1009,30 @@ void Game::update() {
     float dt = dt_;
     gameTime_ += dt;
 
+    // --- Story cutscenes (custom-map play only) ---
+    // When a blocking cutscene is active, advance it and freeze the rest of
+    // gameplay. Otherwise scan story triggers so zones can fire cutscenes.
+    if (playingCustomMap_) {
+        if (csPlay_.active) {
+            // Confirm advances dialog (skip typewriter, then next line).
+            if (confirmInput_ && csPlay_.dialog.active) {
+                csPlay_.advanceDialog();
+                confirmInput_ = false;
+            }
+            updateStoryCutscene(dt);
+            if (csPlay_.active && csPlay_.cutscene && csPlay_.cutscene->blockInput) {
+                // Consume gameplay inputs so the player doesn't shoot/move.
+                fireInput_ = bombInput_ = parryInput_ = meleeInput_ = false;
+                confirmInput_ = false;
+                return;  // freeze world while the cutscene blocks input
+            }
+        } else {
+            updateStoryTriggers();  // may start a cutscene this frame
+            if (csPlay_.active && csPlay_.cutscene && csPlay_.cutscene->blockInput)
+                return;
+        }
+    }
+
     screenFlashTimer_  = std::max(0.0f, screenFlashTimer_ - dt);
     muzzleFlashTimer_  = std::max(0.0f, muzzleFlashTimer_ - dt);
 
@@ -1049,6 +1092,7 @@ void Game::update() {
         updateBullets(dt);
         updateBombs(dt);
         updateExplosions(dt);
+        updateBystanders(dt);
         updateBoxFragments(dt);
         updateBloodDecals(dt);
         updateVehicles(dt);
@@ -1177,6 +1221,268 @@ void Game::loadConfig() {
 
 // Dev console
 
+// --- Story / SIGNAL ---
+
+void Game::adjustSignal(int delta, const char* reason) {
+    if (delta == 0) return;
+    int before = signal_;
+    signal_ += delta;
+    if (signal_ < 0)   signal_ = 0;
+    if (signal_ > 100) signal_ = 100;
+    if (signal_ != before) {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "SIGNAL %+d -> %d  (%s)",
+                 signal_ - before, signal_, reason ? reason : "");
+        consoleOut(msg);
+    }
+}
+
+void Game::resetStoryRun() {
+    signal_      = 50;
+    storyRoute_  = 0;
+    storyFlags_.clear();
+    csFiredZones_.clear();
+    storyFiredTriggers_.clear();
+    storyRunActive_ = true;
+}
+
+void Game::loadStoryCutsceneLib(const std::string& csmPath) {
+    storyCutscenes_.clear();
+    csPlay_.stop();
+    // Derive the sibling .csc path (same basename, .csc extension).
+    std::string p = csmPath;
+    size_t dot = p.rfind('.');
+    if (dot != std::string::npos && p.find('/', dot) == std::string::npos &&
+        p.find('\\', dot) == std::string::npos)
+        p = p.substr(0, dot);
+    p += ".csc";
+    storyCutscenes_.load(p);   // silently leaves library empty if absent
+}
+
+void Game::startStoryCutscene(const std::string& id) {
+    const Cutscene* cs = storyCutscenes_.findById(id);
+    if (!cs) return;
+    csPlay_.extSignal = signal_;
+    csPlay_.extRoute  = storyRoute_;
+    csPlay_.start(cs, renderer_);
+}
+
+void Game::updateStoryCutscene(float dt) {
+    if (!csPlay_.active) return;
+    csPlay_.extSignal = signal_;
+    csPlay_.extRoute  = storyRoute_;
+    csPlay_.update(dt, storyCutscenes_);
+
+    // Drain SIGNAL deltas raised by AdjustSignal events.
+    if (csPlay_.pendingSignalDelta != 0) {
+        adjustSignal(csPlay_.pendingSignalDelta, "cutscene");
+        csPlay_.pendingSignalDelta = 0;
+    }
+    // Copy any script flags out into campaign-spanning state.
+    for (auto& kv : csPlay_.scriptFlags) {
+        storyFlags_[kv.first] = kv.second;
+        // Convention: flags named "route_a"/"route_b" commit the route split.
+        if (kv.second && kv.first == "route_a") storyRoute_ = 1;
+        if (kv.second && kv.first == "route_b") storyRoute_ = 2;
+    }
+
+    // Handle chain / end requests (start() resets pending fields, so read first).
+    if (!csPlay_.pendingChainId.empty()) {
+        std::string next = csPlay_.pendingChainId;
+        startStoryCutscene(next);
+    } else if (csPlay_.pendingEnd || csPlay_.isDone()) {
+        csPlay_.stop();
+    }
+}
+
+// --- Story bystanders (civilians / infrastructure / surrendered operators) ---
+
+void Game::spawnBystanderFromSpawn(const EnemySpawn& es) {
+    Bystander b;
+    b.pos = {es.x, es.y};
+    switch (es.enemyType) {
+        case ENTITY_CIVILIAN:        b.kind = Bystander::Kind::Civilian; b.hp = b.maxHp = 24;  b.radius = 20; break;
+        case ENTITY_INFRA_MEDRELAY:  b.kind = Bystander::Kind::MedRelay; b.hp = b.maxHp = 140; b.radius = 32; break;
+        case ENTITY_INFRA_POWER:     b.kind = Bystander::Kind::Power;    b.hp = b.maxHp = 140; b.radius = 32; break;
+        case ENTITY_INFRA_WATER:     b.kind = Bystander::Kind::Water;    b.hp = b.maxHp = 120; b.radius = 30; break;
+        case ENTITY_INFRA_ANTENNA:   b.kind = Bystander::Kind::Antenna;  b.hp = b.maxHp = 100; b.radius = 26; break;
+        default: return;
+    }
+    b.wanderDir = Vec2::fromAngle((float)(rand() % 628) * 0.01f);
+    bystanders_.push_back(b);
+}
+
+void Game::onBystanderDestroyed(Bystander& b) {
+    if (!b.alive) return;
+    b.alive = false;
+    int penalty = 0; const char* why = "";
+    switch (b.kind) {
+        case Bystander::Kind::Civilian: penalty = -15; why = "civilian harmed";      break;
+        case Bystander::Kind::Operator: penalty = -20; why = "surrendered killed";   break;
+        case Bystander::Kind::MedRelay: penalty = -14; why = "med-relay destroyed";  break;
+        case Bystander::Kind::Power:    penalty = -12; why = "power destroyed";       break;
+        case Bystander::Kind::Water:    penalty = -12; why = "water destroyed";       break;
+        case Bystander::Kind::Antenna:  penalty =  -8; why = "antenna destroyed";     break;
+    }
+    if (!b.scored) { adjustSignal(penalty, why); b.scored = true; }
+    // Non-damaging FX: blood for people, scorch decal + debris for structures.
+    if (b.kind == Bystander::Kind::Civilian || b.kind == Bystander::Kind::Operator) {
+        BloodDecal bd; bd.pos = b.pos; bd.type = DecalType::Blood;
+        bd.rotation = (float)(rand() % 360) * (float)M_PI / 180.0f;
+        bd.scale = 1.0f + (float)(rand() % 30) / 100.0f;
+        blood_.push_back(bd);
+        stampTileBlood(b.pos, 0.8f);
+    } else {
+        BloodDecal sd; sd.pos = b.pos; sd.type = DecalType::Scorch;
+        sd.rotation = (float)(rand() % 360) * (float)M_PI / 180.0f;
+        sd.scale = 1.4f;
+        blood_.push_back(sd);
+    }
+    for (int i = 0; i < 16; i++) {
+        BoxFragment f; f.pos = b.pos;
+        float a = (float)(rand() % 360) * (float)M_PI / 180.0f;
+        float spd = 120.0f + (float)(rand() % 220);
+        f.vel = {cosf(a) * spd, sinf(a) * spd};
+        f.size = 2.5f + (float)(rand() % 5);
+        f.lifetime = 0.4f + (float)(rand() % 40) / 100.0f;
+        f.rotation = (float)(rand() % 360);
+        f.rotSpeed = (float)(rand() % 600 - 300);
+        f.alive = true;
+        bool people = (b.kind == Bystander::Kind::Civilian || b.kind == Bystander::Kind::Operator);
+        f.color = people ? SDL_Color{(Uint8)(120 + rand() % 100), 0, 0, 255}
+                         : SDL_Color{140, 140, 150, 255};
+        boxFragments_.push_back(f);
+    }
+}
+
+bool Game::damageBystandersAt(Vec2 pos, float radius, float amount) {
+    bool hit = false;
+    for (auto& b : bystanders_) {
+        if (!b.alive) continue;
+        float reach = radius + b.radius;
+        if ((b.pos - pos).lengthSq() > reach * reach) continue;
+        hit = true;
+        if (b.kind == Bystander::Kind::Civilian) b.fleeing = true;
+        if (amount < 0) { b.hp = 0; }
+        else            { b.hp -= amount; }
+        if (b.hp <= 0) onBystanderDestroyed(b);
+    }
+    return hit;
+}
+
+void Game::updateBystanders(float dt) {
+    if (!playingCustomMap_) return;
+
+    // Responder enemies: disable below a non-lethal threshold (if authored so),
+    // converting them into a surrendered operator and crediting the player.
+    for (auto& e : enemies_) {
+        if (!e.alive || !e.isResponder) continue;
+        if (e.disableable && e.hp > 0 && e.hp < e.maxHp * 0.30f) {
+            e.alive = false;
+            Bystander op; op.kind = Bystander::Kind::Operator;
+            op.pos = e.pos; op.hp = op.maxHp = 16; op.radius = 18;
+            bystanders_.push_back(op);
+            adjustSignal(+10, "responder disabled");
+        }
+    }
+
+    const float CIV_SPEED  = 150.0f;
+    const float FLEE_RANGE  = 260.0f;
+    for (auto& b : bystanders_) {
+        if (!b.alive) continue;
+
+        // Player-bullet collisions (player bullets only live in bullets_)
+        for (auto& bl : bullets_) {
+            if (!bl.alive) continue;
+            float reach = b.radius + bl.size;
+            if ((bl.pos - b.pos).lengthSq() > reach * reach) continue;
+            bl.alive = false;
+            if (b.kind == Bystander::Kind::Civilian) b.fleeing = true;
+            b.hp -= (float)bl.damage;
+            if (b.hp <= 0) { onBystanderDestroyed(b); break; }
+        }
+        if (!b.alive) continue;
+
+        // Movement (civilians only; infrastructure + operators are static)
+        if (b.kind == Bystander::Kind::Civilian) {
+            Vec2 toPlayer = player_.pos - b.pos;
+            float pd = toPlayer.length();
+            if (pd < FLEE_RANGE) b.fleeing = true;
+            else if (pd > FLEE_RANGE * 1.6f) b.fleeing = false;
+
+            Vec2 dir;
+            if (b.fleeing && pd > 1.0f) {
+                dir = toPlayer * (-1.0f / pd);   // away from player
+            } else {
+                b.wanderT -= dt;
+                if (b.wanderT <= 0) {
+                    b.wanderT = 1.0f + (float)(rand() % 200) * 0.01f;
+                    b.wanderDir = Vec2::fromAngle((float)(rand() % 628) * 0.01f);
+                }
+                dir = b.wanderDir * 0.4f;
+            }
+            float spd = b.fleeing ? CIV_SPEED : CIV_SPEED * 0.4f;
+            Vec2 next = b.pos + dir * (spd * dt);
+            if (!wallCollision(next, b.radius * 0.5f)) b.pos = next;
+            // keep inside world bounds
+            b.pos.x = std::max(16.0f, std::min(map_.worldWidth()  - 16.0f, b.pos.x));
+            b.pos.y = std::max(16.0f, std::min(map_.worldHeight() - 16.0f, b.pos.y));
+        }
+    }
+
+    // Reap dead bystanders occasionally to keep the list bounded
+    bystanders_.erase(std::remove_if(bystanders_.begin(), bystanders_.end(),
+        [](const Bystander& b){ return !b.alive; }), bystanders_.end());
+}
+
+bool Game::playerInTriggerRect(const MapTrigger& t) const {
+    return player_.pos.x >= t.x - t.width  * 0.5f && player_.pos.x <= t.x + t.width  * 0.5f &&
+           player_.pos.y >= t.y - t.height * 0.5f && player_.pos.y <= t.y + t.height * 0.5f;
+}
+
+void Game::updateStoryTriggers() {
+    for (int i = 0; i < (int)customMap_.triggers.size(); i++) {
+        const MapTrigger& t = customMap_.triggers[i];
+        switch (t.type) {
+            case TriggerType::Cutscene: {
+                if (csFiredZones_.count(i) || !playerInTriggerRect(t)) break;
+                csFiredZones_.insert(i);
+                int idx = t.param;
+                if (idx >= 0 && idx < (int)storyCutscenes_.cutscenes.size())
+                    startStoryCutscene(storyCutscenes_.cutscenes[idx].id);
+                return;  // a cutscene started; stop scanning this frame
+            }
+            case TriggerType::Waypoint: {
+                if (storyFiredTriggers_.count(i) || !playerInTriggerRect(t)) break;
+                storyFiredTriggers_.insert(i);
+                if (t.param == 2) { storyRoute_ = 2; storyFlags_["route_b"] = true; }
+                else              { storyRoute_ = 1; storyFlags_["route_a"] = true; }
+                consoleOut(storyRoute_ == 2 ? "Route committed: SIGNAL (B)"
+                                            : "Route committed: SPEARHEAD (A)");
+                break;
+            }
+            case TriggerType::SignalZone: {
+                if (storyFiredTriggers_.count(i) || !playerInTriggerRect(t)) break;
+                storyFiredTriggers_.insert(i);
+                adjustSignal((int)(int8_t)t.param, "signal zone");
+                break;
+            }
+            case TriggerType::Objective: {
+                if (storyFiredTriggers_.count(i) || !playerInTriggerRect(t)) break;
+                if ((ObjectiveKind)t.param == ObjectiveKind::Recover) {
+                    storyFiredTriggers_.insert(i);
+                    storyFlags_["goal_open"] = true;
+                    char fn[32]; snprintf(fn, sizeof(fn), "obj_%d", i);
+                    storyFlags_[fn] = true;
+                    adjustSignal(+8, "objective recovered");
+                }
+                break;
+            }
+            default: break;
+        }
+    }
+}
+
 void Game::consoleOut(const char* line) {
     consoleLog_.push_back(line);
     if (consoleLog_.size() > 100) consoleLog_.erase(consoleLog_.begin());
@@ -1291,8 +1597,21 @@ void Game::consoleExec(const char* cmd) {
             char msg[64]; snprintf(msg, sizeof(msg), "Bombs set to %d", player_.bombCount);
             consoleOut(msg);
         } else { consoleOut("usage: bombs <number>"); }
+    } else if (strcmp(tok, "signal") == 0) {
+        int n = 0;
+        if (sscanf(rest, "%d", &n) == 1) {
+            signal_ = std::max(0, std::min(100, n));
+            char msg[64]; snprintf(msg, sizeof(msg), "SIGNAL set to %d", signal_);
+            consoleOut(msg);
+        } else {
+            const char* tier = signal_ < 34 ? "Low" : (signal_ >= 67 ? "High" : "Mid");
+            char msg[96]; snprintf(msg, sizeof(msg),
+                "SIGNAL=%d (%s)  route=%s", signal_, tier,
+                storyRoute_ == 1 ? "Spearhead" : storyRoute_ == 2 ? "Signal" : "undecided");
+            consoleOut(msg);
+        }
     } else if (strcmp(tok, "help") == 0) {
-        consoleOut(" wave N | hp N | god | clear | bombs N | help");
+        consoleOut(" wave N | hp N | god | clear | bombs N | signal [N] | help");
         consoleOut(" spawn melee|shooter|brute|scout|sniper|gunner|boss_* [N]");
         consoleOut(" give <upgrade_name>");
     } else if (tok[0] != '\0') {

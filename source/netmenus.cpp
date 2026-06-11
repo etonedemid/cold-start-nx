@@ -273,7 +273,11 @@ void Game::renderHostSetup() {
     SDL_SetRenderDrawColor(renderer_, 255,255,255,255);
     SDL_RenderDrawLine(renderer_, WX, TB_Y+TB_H-1, WX+WW-1, TB_Y+TB_H-1);
 
-    auto tbBtn = [&](int id, const char* lbl, int x, int w, SDL_Color iconC) -> bool {
+    SDL_Texture* icStart = Assets::instance().loadRelTex("sprites/ui/tb_start.png");
+    SDL_Texture* icBack  = Assets::instance().loadRelTex("sprites/ui/tb_back.png");
+
+    auto tbBtn = [&](int id, const char* lbl, int x, int w,
+                     SDL_Texture* icon, SDL_Color fallbackC) -> bool {
         bool sel=(hostSetupSelection_==id);
         bool hov=ui_.pointInRect(ui_.mouseX,ui_.mouseY,x,TBY,w,TBH);
         if (hov) ui_.hoveredItem=id;
@@ -281,14 +285,14 @@ void Game::renderHostSetup() {
         SDL_SetRenderDrawColor(renderer_, 212,208,200,255);
         SDL_Rect bg={x,TBY,w,TBH}; SDL_RenderFillRect(renderer_,&bg);
         ui_.drawWin98Bevel(x,TBY,w,TBH,!(sel&&hov));
-        int ix=x+w/2-7, iy=TBY+5;
-        SDL_SetRenderDrawColor(renderer_, iconC.r,iconC.g,iconC.b,255);
-        SDL_Rect ic={ix,iy,14,14}; SDL_RenderFillRect(renderer_,&ic);
-        SDL_SetRenderDrawColor(renderer_,
-            (Uint8)std::min(255,(int)iconC.r+80),
-            (Uint8)std::min(255,(int)iconC.g+80),
-            (Uint8)std::min(255,(int)iconC.b+80),255);
-        SDL_Rect sh={ix+1,iy+1,6,3}; SDL_RenderFillRect(renderer_,&sh);
+        const int isz=20;
+        int ix=x+w/2-isz/2, iy=TBY+5;
+        if (icon) {
+            SDL_Rect dst={ix,iy,isz,isz}; SDL_RenderCopy(renderer_,icon,nullptr,&dst);
+        } else {
+            SDL_SetRenderDrawColor(renderer_, fallbackC.r,fallbackC.g,fallbackC.b,255);
+            SDL_Rect ic={ix,iy,isz,isz}; SDL_RenderFillRect(renderer_,&ic);
+        }
         int tw=(int)(strlen(lbl)*10*0.60f);
         drawText(lbl, x+w/2-tw/2, TBY+TBH-14, 10, UI::W98::Black);
         if (hov && ui_.mouseClicked) {
@@ -306,10 +310,10 @@ void Game::renderHostSetup() {
     };
 
     int tbX=WX+6;
-    if (tbBtn(12,"Start Hosting",tbX,100,{0,100,0,255}))
+    if (tbBtn(12,"Start Hosting",tbX,100, icStart, {0,100,0,255}))
         { hostSetupSelection_=12; menuSelection_=12; confirmInput_=true; }
     tbX+=106; tbSep(tbX); tbX+=12;
-    if (tbBtn(13,"Back",tbX,76,{110,70,0,255}))
+    if (tbBtn(13,"Back",tbX,76, icBack, {110,70,0,255}))
         { hostSetupSelection_=13; menuSelection_=13; confirmInput_=true; }
 
     // Content area
@@ -478,7 +482,12 @@ void Game::renderJoinMenu() {
     SDL_SetRenderDrawColor(renderer_, 255,255,255,255);
     SDL_RenderDrawLine(renderer_, winX,TB_Y+TB_H-1,winX+winW-1,TB_Y+TB_H-1);
 
-    auto tbBtn=[&](int id, const char* lbl, int x, SDL_Color iconC) -> bool {
+    SDL_Texture* icConnect = Assets::instance().loadRelTex("sprites/ui/tb_join.png");
+    SDL_Texture* icSave    = Assets::instance().loadRelTex("sprites/ui/tb_save.png");
+    SDL_Texture* icBack    = Assets::instance().loadRelTex("sprites/ui/tb_back.png");
+
+    auto tbBtn=[&](int id, const char* lbl, int x,
+                   SDL_Texture* icon, SDL_Color fallbackC) -> bool {
         bool sel=(joinMenuSelection_==id);
         bool hov=ui_.pointInRect(ui_.mouseX,ui_.mouseY,x,TBY,TBW_BTN,TBH_BTN);
         if (hov) ui_.hoveredItem=id;
@@ -486,13 +495,14 @@ void Game::renderJoinMenu() {
         SDL_SetRenderDrawColor(renderer_, 212,208,200,255);
         SDL_Rect bg={x,TBY,TBW_BTN,TBH_BTN}; SDL_RenderFillRect(renderer_,&bg);
         ui_.drawWin98Bevel(x,TBY,TBW_BTN,TBH_BTN,!(sel&&hov));
-        int ix=x+TBW_BTN/2-7, iy=TBY+5;
-        SDL_SetRenderDrawColor(renderer_, iconC.r,iconC.g,iconC.b,255);
-        SDL_Rect ic={ix,iy,14,14}; SDL_RenderFillRect(renderer_,&ic);
-        SDL_SetRenderDrawColor(renderer_,
-            (Uint8)std::min(255,(int)iconC.r+80),(Uint8)std::min(255,(int)iconC.g+80),
-            (Uint8)std::min(255,(int)iconC.b+80),255);
-        SDL_Rect sh={ix+1,iy+1,6,3}; SDL_RenderFillRect(renderer_,&sh);
+        const int isz=20;
+        int ix=x+TBW_BTN/2-isz/2, iy=TBY+5;
+        if (icon) {
+            SDL_Rect dst={ix,iy,isz,isz}; SDL_RenderCopy(renderer_,icon,nullptr,&dst);
+        } else {
+            SDL_SetRenderDrawColor(renderer_, fallbackC.r,fallbackC.g,fallbackC.b,255);
+            SDL_Rect ic={ix,iy,isz,isz}; SDL_RenderFillRect(renderer_,&ic);
+        }
         int tw=(int)(strlen(lbl)*10*0.60f);
         drawText(lbl, x+TBW_BTN/2-tw/2, TBY+TBH_BTN-14, 10, UI::W98::Black);
         if (hov && ui_.mouseClicked) { ui_.mouseClicked=false; ui_.clickCooldownFrames=3; return true; }
@@ -506,11 +516,11 @@ void Game::renderJoinMenu() {
     };
 
     int tbX=winX+6;
-    if (tbBtn(4,"Connect",tbX,{0,100,0,255}))  { joinMenuSelection_=4; menuSelection_=4; confirmInput_=true; }
+    if (tbBtn(4,"Connect",tbX, icConnect, {0,100,0,255}))  { joinMenuSelection_=4; menuSelection_=4; confirmInput_=true; }
     tbX+=TBW_BTN+4;
-    if (tbBtn(5,"Save",tbX,{0,0,128,255}))     { joinMenuSelection_=5; menuSelection_=5; confirmInput_=true; }
+    if (tbBtn(5,"Save",tbX, icSave, {0,0,128,255}))        { joinMenuSelection_=5; menuSelection_=5; confirmInput_=true; }
     tbX+=TBW_BTN+10; tbSep(tbX); tbX+=12;
-    if (tbBtn(6,"Back",tbX,{110,70,0,255}))    { joinMenuSelection_=6; menuSelection_=6; confirmInput_=true; }
+    if (tbBtn(6,"Back",tbX, icBack, {110,70,0,255}))       { joinMenuSelection_=6; menuSelection_=6; confirmInput_=true; }
 
     // Fields
     const int fieldW=winW-padX*2, fieldX=winX+padX;
@@ -630,19 +640,24 @@ void Game::renderLobby() {
     bool allReady=true;
     for (auto& p:players) if (!p.ready&&p.id!=net.lobbyHostId()) allReady=false;
 
-    auto tbBtn=[&](int id, const char* lbl, int x, int w, SDL_Color iconC) -> bool {
+    SDL_Texture* icStart = Assets::instance().loadRelTex("sprites/ui/tb_start.png");
+    SDL_Texture* icLeave = Assets::instance().loadRelTex("sprites/ui/tb_back.png");
+
+    auto tbBtn=[&](int id, const char* lbl, int x, int w,
+                   SDL_Texture* icon, SDL_Color fallbackC) -> bool {
         bool hov=ui_.pointInRect(ui_.mouseX,ui_.mouseY,x,TBY,w,TBH_B);
         if (hov) ui_.hoveredItem=id;
         SDL_SetRenderDrawColor(renderer_, 212,208,200,255);
         SDL_Rect bg={x,TBY,w,TBH_B}; SDL_RenderFillRect(renderer_,&bg);
         ui_.drawWin98Bevel(x,TBY,w,TBH_B,true);
-        int ix=x+w/2-7, iy=TBY+5;
-        SDL_SetRenderDrawColor(renderer_, iconC.r,iconC.g,iconC.b,255);
-        SDL_Rect ic={ix,iy,14,14}; SDL_RenderFillRect(renderer_,&ic);
-        SDL_SetRenderDrawColor(renderer_,
-            (Uint8)std::min(255,(int)iconC.r+80),(Uint8)std::min(255,(int)iconC.g+80),
-            (Uint8)std::min(255,(int)iconC.b+80),255);
-        SDL_Rect sh={ix+1,iy+1,6,3}; SDL_RenderFillRect(renderer_,&sh);
+        const int isz=20;
+        int ix=x+w/2-isz/2, iy=TBY+5;
+        if (icon) {
+            SDL_Rect dst={ix,iy,isz,isz}; SDL_RenderCopy(renderer_,icon,nullptr,&dst);
+        } else {
+            SDL_SetRenderDrawColor(renderer_, fallbackC.r,fallbackC.g,fallbackC.b,255);
+            SDL_Rect ic={ix,iy,isz,isz}; SDL_RenderFillRect(renderer_,&ic);
+        }
         int tw=(int)(strlen(lbl)*10*0.60f);
         drawText(lbl, x+w/2-tw/2, TBY+TBH_B-14, 10, UI::W98::Black);
         if (hov && ui_.mouseClicked) { ui_.mouseClicked=false; ui_.clickCooldownFrames=3; return true; }
@@ -658,14 +673,14 @@ void Game::renderLobby() {
     int tbX=WX+6;
     if (canManage) {
         const char* startLbl=allReady||players.size()<=1?"Start Game":"Start Game";
-        if (tbBtn(50,startLbl,tbX,TBW_B,{0,120,0,255})) confirmInput_=true;
+        if (tbBtn(50,startLbl,tbX,TBW_B, icStart, {0,120,0,255})) confirmInput_=true;
     } else {
         const char* rdyLbl=lobbyReady_?"Unready":"Ready Up";
         SDL_Color rdyC=lobbyReady_?SDL_Color{0,100,0,255}:SDL_Color{0,0,128,255};
-        if (tbBtn(50,rdyLbl,tbX,TBW_B,rdyC)) confirmInput_=true;
+        if (tbBtn(50,rdyLbl,tbX,TBW_B, icStart, rdyC)) confirmInput_=true;
     }
     tbX+=TBW_B+10; tbSep(tbX); tbX+=12;
-    if (tbBtn(51,"Leave",tbX,TBW_B-10,{140,0,0,255})) backInput_=true;
+    if (tbBtn(51,"Leave",tbX,TBW_B-10, icLeave, {140,0,0,255})) backInput_=true;
 
     // Address bar (like "To: channel/session info")
     const int ADDR_Y=TB_Y+TB_H, ADDR_H=24;

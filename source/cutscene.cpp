@@ -99,6 +99,11 @@ bool CutsceneLibrary::save(const std::string& path) const {
             writeStr(f, "flag_name", e.flagName);
             writeB(f, "flag_value", e.flagValue);
             writeStr(f, "chain_cs_id", e.chainCsId);
+            writeI(f, "signal_delta", e.signalDelta);
+            writeI(f, "branch_var", (int)e.branchVar);
+            writeI(f, "branch_cmp", (int)e.branchCmp);
+            writeI(f, "branch_threshold", e.branchThreshold);
+            writeStr(f, "chain_false_id", e.chainFalseId);
         }
         // dialogs
         for (const auto& seq : cs.dialogs) {
@@ -255,6 +260,11 @@ bool CutsceneLibrary::load(const std::string& path) {
             else if (key == "flag_name")          curEvent->flagName          = sv();
             else if (key == "flag_value")         curEvent->flagValue         = bv();
             else if (key == "chain_cs_id")        curEvent->chainCsId         = sv();
+            else if (key == "signal_delta")       curEvent->signalDelta       = iv();
+            else if (key == "branch_var")         curEvent->branchVar         = (uint8_t)iv();
+            else if (key == "branch_cmp")         curEvent->branchCmp         = (uint8_t)iv();
+            else if (key == "branch_threshold")   curEvent->branchThreshold   = iv();
+            else if (key == "chain_false_id")     curEvent->chainFalseId      = sv();
         } else if (curCs) {
             if      (key == "id")           curCs->id           = sv();
             else if (key == "block_input")  curCs->blockInput   = bv();
@@ -338,6 +348,7 @@ void CutscenePlayback::start(const Cutscene* c, SDL_Renderer* r) {
     scriptFlags.clear();
     pendingChainId.clear();
     pendingEnd = false;
+    pendingSignalDelta = 0;
     loadTextures(r);
 }
 
@@ -534,6 +545,23 @@ void CutscenePlayback::update(float dt, const CutsceneLibrary& lib) {
                 continue;
             case CsEventType::EndCutscene:
                 if (justStarted) pendingEnd = true;
+                continue;
+            case CsEventType::AdjustSignal:
+                if (justStarted) pendingSignalDelta += ev.signalDelta;
+                continue;
+            case CsEventType::BranchCutscene:
+                if (justStarted) {
+                    int  lhs = (ev.branchVar == 1) ? extRoute : extSignal;
+                    bool cond;
+                    switch (ev.branchCmp) {
+                        case 1:  cond = (lhs <  ev.branchThreshold); break;
+                        case 2:  cond = (lhs == ev.branchThreshold); break;
+                        default: cond = (lhs >= ev.branchThreshold); break;
+                    }
+                    const std::string& target = cond ? ev.chainCsId : ev.chainFalseId;
+                    if (!target.empty()) pendingChainId = target;
+                    else pendingEnd = true;
+                }
                 continue;
             default:
                 break;

@@ -190,6 +190,8 @@ sprites/ui/skull.png
 sprites/ui/tb_back.png
 sprites/ui/tb_host.png
 sprites/ui/tb_join.png
+sprites/ui/tb_save.png
+sprites/ui/tb_start.png
 sprites/ui/wasd.png
 sprites/vehicles/car/test.png
 tiles/ceiling/glasstile.png

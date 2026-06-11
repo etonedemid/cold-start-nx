@@ -90,6 +90,12 @@ struct Enemy {
     // Stun
     float stunTimer    = 0;
 
+    // Story: AVA responder (spawns a surrendered operator when destroyed).
+    // disableable = if true, drops to a disabled state below a non-lethal
+    // threshold (the player gets credit for sparing it) instead of dying.
+    bool  isResponder  = false;
+    bool  disableable  = false;
+
     // Sprite color tint for damage
     float damageFlash  = 0;
 

@@ -45,7 +45,9 @@ enum class CsEventType : uint8_t {
     SetFlag       = 18,  // set a named script flag
     ChainCutscene = 19,  // trigger another cutscene by ID
     EndCutscene   = 20,  // immediately end this cutscene
-    COUNT         = 21,
+    AdjustSignal  = 21,  // change the campaign SIGNAL meter by signalDelta
+    BranchCutscene= 22,  // compare SIGNAL/route to a threshold, chain true/false
+    COUNT         = 23,
 };
 
 static inline const char* csEventTypeName(CsEventType t) {
@@ -54,6 +56,7 @@ static inline const char* csEventTypeName(CsEventType t) {
         "Dialog","Play SFX","Explosion","Cam Move","Cam Zoom",
         "Cam Shake","Screen Fade","Cine Bars","Set Visible","Set Frame",
         "Spawn Actor","Despawn","Set Flag","Chain CS","End CS",
+        "Adj SIGNAL","Branch CS",
     };
     int i = (int)t;
     if (i < 0 || i >= (int)CsEventType::COUNT) return "?";
@@ -130,8 +133,19 @@ struct CsEvent {
     std::string flagName;
     bool        flagValue = true;
 
-    // ChainCutscene
+    // ChainCutscene (also reused as the "true" branch of BranchCutscene)
     std::string chainCsId;
+
+    // AdjustSignal
+    int signalDelta = 0;
+
+    // BranchCutscene: compare branchVar to branchThreshold, chain chainCsId if
+    // the comparison holds, else chainFalseId. branchVar 0=SIGNAL, 1=route.
+    // branchCmp 0=">=", 1="<", 2="==".
+    uint8_t     branchVar       = 0;
+    uint8_t     branchCmp       = 0;
+    int         branchThreshold = 50;
+    std::string chainFalseId;
 };
 
 // Dialog branching choice
@@ -233,6 +247,13 @@ struct CutscenePlayback {
     // Chain request: set by ChainCutscene/EndCutscene, consumed by caller
     std::string pendingChainId;
     bool        pendingEnd = false;
+
+    // SIGNAL delta accumulated by AdjustSignal events; drained by the game.
+    int         pendingSignalDelta = 0;
+    // Campaign values the game pushes in before update() so BranchCutscene can
+    // evaluate against live SIGNAL / route.
+    int         extSignal = 50;
+    int         extRoute  = 0;
 
     void start(const Cutscene* c, SDL_Renderer* r);
     void stop();

@@ -1636,19 +1636,8 @@ void Game::handleInput() {
                 state_ = GameState::MainMenu; menuSelection_ = 0;
             }
         }
-        if (confirmInput_) {
-            // Back button sets menuSelection_ to mapFiles_.size()
-            bool isBack = (menuSelection_ > maxIdx);
-            if (!isBack && !mapFiles_.empty()) {
-                startCustomMap(mapFiles_[mapSelectIdx_], mapSelectMode_);
-            } else {
-                if (prevMenuState_ == GameState::PlayModeMenu) {
-                    state_ = GameState::PlayModeMenu; playModeSelection_ = 1; menuSelection_ = 1;
-                } else {
-                    state_ = GameState::MainMenu; menuSelection_ = 0;
-                }
-            }
-        }
+        if (confirmInput_ && !mapFiles_.empty())
+            startCustomMap(mapFiles_[mapSelectIdx_], mapSelectMode_);
     }
     else if (state_ == GameState::CharSelect) {
         int maxIdx = (int)availableChars_.size(); // includes "Default" option
