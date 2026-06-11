@@ -1349,7 +1349,7 @@ void Game::handleInput() {
 
         if      (playModeSelection_ == 3) adjustIntPM  (config_.mapWidth,        20,   1000, 2);
         else if (playModeSelection_ == 4) adjustIntPM  (config_.mapHeight,        14,    1000, 2);
-        else if (playModeSelection_ == 5) adjustIntPM  (config_.playerMaxHp,       1,   100, 1);
+        else if (playModeSelection_ == 5) adjustIntPM  (config_.playerMaxHp,       1,  1000, 1);
         else if (playModeSelection_ == 6) adjustFloatPM(config_.spawnRateScale,  0.3f,  3.0f, 0.1f);
         else if (playModeSelection_ == 7) adjustFloatPM(config_.enemyHpScale,    0.3f,  3.0f, 0.1f);
         else if (playModeSelection_ == 8) adjustFloatPM(config_.enemySpeedScale, 0.5f,  2.5f, 0.1f);
@@ -1370,6 +1370,17 @@ void Game::handleInput() {
                 state_ = GameState::PackSelect;
                 packSelectIdx_ = 0;
                 menuSelection_ = 0;
+            } else if (playModeSelection_ == 5) {
+                hpStr_ = std::to_string(config_.playerMaxHp);
+                hpTyping_ = true;
+                softKB_.open(&hpStr_, 4, [this](bool ok) {
+                    hpTyping_ = false;
+                    if (ok && !hpStr_.empty()) {
+                        try { config_.playerMaxHp = std::max(1, std::min(1000, std::stoi(hpStr_))); }
+                        catch (...) {}
+                    }
+                    hpStr_.clear();
+                });
             } else if (playModeSelection_ == 9) {
                 saveConfig();
                 state_ = GameState::MainMenu;
@@ -1463,7 +1474,7 @@ void Game::handleInput() {
             auto toggleBool = [&](bool& value) {
                 if (confirmInput_) value = !value;
             };
-            if      (configSelection_ == 0) adjustInt  (config_.playerMaxHp,    1,   100, 1);
+            if      (configSelection_ == 0) adjustInt  (config_.playerMaxHp,    1,  1000, 1);
             else if (configSelection_ == 1) adjustFloat(config_.spawnRateScale, 0.3f, 3.0f, 0.1f);
             else if (configSelection_ == 2) adjustFloat(config_.enemyHpScale,   0.3f, 3.0f, 0.1f);
             else if (configSelection_ == 3) adjustFloat(config_.enemySpeedScale,0.5f, 2.5f, 0.1f);
@@ -1478,7 +1489,18 @@ void Game::handleInput() {
             else if (configSelection_ == CONFIG_SAVE_INCOMING_MODS_INDEX) toggleBool(config_.saveIncomingModsPermanently);
             else if (configSelection_ == CONFIG_UI_SCALE_INDEX)  adjustFloat(config_.uiScale,   0.5f, 2.0f, 0.05f);
             else if (configSelection_ == CONFIG_SHAKE_INDEX)     adjustFloat(config_.shakeScale, 0.0f, 1.0f, 0.1f);
-            else if (configSelection_ == CONFIG_USERNAME_INDEX && confirmInput_) {
+            else if (configSelection_ == 0 && confirmInput_) {
+                hpStr_ = std::to_string(config_.playerMaxHp);
+                hpTyping_ = true;
+                softKB_.open(&hpStr_, 4, [this](bool ok) {
+                    hpTyping_ = false;
+                    if (ok && !hpStr_.empty()) {
+                        try { config_.playerMaxHp = std::max(1, std::min(1000, std::stoi(hpStr_))); }
+                        catch (...) {}
+                    }
+                    hpStr_.clear();
+                });
+            } else if (configSelection_ == CONFIG_USERNAME_INDEX && confirmInput_) {
                 // Edit username
                 usernameTyping_ = true;
                 softKB_.open(&config_.username, 32, [this](bool) {

@@ -3338,7 +3338,10 @@ void Game::renderPlayModeMenu() {
         switch (idx) {
             case 3: snprintf(valBuf,sizeof(valBuf),"%d",   config_.mapWidth);        break;
             case 4: snprintf(valBuf,sizeof(valBuf),"%d",   config_.mapHeight);       break;
-            case 5: snprintf(valBuf,sizeof(valBuf),"%d",   config_.playerMaxHp);     break;
+            case 5:
+                if (hpTyping_) snprintf(valBuf,sizeof(valBuf),"%s%c", hpStr_.c_str(), (int)(gameTime_*3)%2==0?'_':' ');
+                else           snprintf(valBuf,sizeof(valBuf),"%d",   config_.playerMaxHp);
+                break;
             case 6: snprintf(valBuf,sizeof(valBuf),"%.1fx",config_.spawnRateScale);  break;
             case 7: snprintf(valBuf,sizeof(valBuf),"%.1fx",config_.enemyHpScale);    break;
             case 8: snprintf(valBuf,sizeof(valBuf),"%.1fx",config_.enemySpeedScale); break;
@@ -3375,7 +3378,7 @@ void Game::renderPlayModeMenu() {
             switch (row.idx) {
                 case 3: config_.mapWidth        = std::min(120,  config_.mapWidth        + 2);    break;
                 case 4: config_.mapHeight       = std::min(80,   config_.mapHeight       + 2);    break;
-                case 5: config_.playerMaxHp     = std::min(100,  config_.playerMaxHp     + 1);    break;
+                case 5: config_.playerMaxHp     = std::min(1000, config_.playerMaxHp     + 1);    break;
                 case 6: config_.spawnRateScale  = std::min(3.0f, config_.spawnRateScale  + 0.1f); break;
                 case 7: config_.enemyHpScale    = std::min(3.0f, config_.enemyHpScale    + 0.1f); break;
                 case 8: config_.enemySpeedScale = std::min(2.5f, config_.enemySpeedScale + 0.1f); break;
@@ -3451,7 +3454,10 @@ void Game::renderConfigMenu() {
     };
     auto fmtS = [&](int idx) -> const char* {
         switch (idx) {
-            case 0: snprintf(valBuf,sizeof(valBuf),"%d",    config_.playerMaxHp);  break;
+            case 0:
+                if (hpTyping_) snprintf(valBuf,sizeof(valBuf),"%s%c", hpStr_.c_str(), (int)(gameTime_*3)%2==0?'_':' ');
+                else           snprintf(valBuf,sizeof(valBuf),"%d",   config_.playerMaxHp);
+                break;
             case 1: snprintf(valBuf,sizeof(valBuf),"%.1fx", config_.spawnRateScale); break;
             case 2: snprintf(valBuf,sizeof(valBuf),"%.1fx", config_.enemyHpScale);  break;
             case 3: snprintf(valBuf,sizeof(valBuf),"%.1fx", config_.enemySpeedScale); break;
@@ -3470,7 +3476,7 @@ void Game::renderConfigMenu() {
         if (ui_.win98Button(row.idx*10+100, "<", fx, y, arrowW, rowH, false)) {
             int d=-1;
             switch(row.idx){
-                case 0: config_.playerMaxHp    =std::max(1,   std::min(100, config_.playerMaxHp    +d));       break;
+                case 0: config_.playerMaxHp    =std::max(1,   std::min(1000,config_.playerMaxHp    +d));       break;
                 case 1: config_.spawnRateScale =std::max(0.3f,std::min(3.0f,config_.spawnRateScale +d*0.1f));  break;
                 case 2: config_.enemyHpScale   =std::max(0.3f,std::min(3.0f,config_.enemyHpScale   +d*0.1f));  break;
                 case 3: config_.enemySpeedScale=std::max(0.5f,std::min(2.5f,config_.enemySpeedScale+d*0.1f));  break;
@@ -3483,7 +3489,7 @@ void Game::renderConfigMenu() {
         if (ui_.win98Button(row.idx*10+110, ">", fx+arrowW+2+fwA+2, y, arrowW, rowH, false)) {
             int d=1;
             switch(row.idx){
-                case 0: config_.playerMaxHp    =std::max(1,   std::min(100, config_.playerMaxHp    +d));       break;
+                case 0: config_.playerMaxHp    =std::max(1,   std::min(1000,config_.playerMaxHp    +d));       break;
                 case 1: config_.spawnRateScale =std::max(0.3f,std::min(3.0f,config_.spawnRateScale +d*0.1f));  break;
                 case 2: config_.enemyHpScale   =std::max(0.3f,std::min(3.0f,config_.enemyHpScale   +d*0.1f));  break;
                 case 3: config_.enemySpeedScale=std::max(0.5f,std::min(2.5f,config_.enemySpeedScale+d*0.1f));  break;

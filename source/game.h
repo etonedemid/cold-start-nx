@@ -758,6 +758,8 @@ private:
     std::string connectStatus_;              // connection status message
     bool        ipTyping_    = false;        // currently editing IP on gamepad
     bool        usernameTyping_ = false;     // editing username in config
+    bool        hpTyping_      = false;     // editing playerMaxHp via keyboard
+    std::string hpStr_;                     // typed HP string buffer
     bool        mpUsernameTyping_ = false;   // editing username in host/join menus
     int         usernameCharIdx_ = 0;        // palette index for username char picker
     int         kbNavHeldButton_ = -1;       // D-pad button held during keyboard picker nav
