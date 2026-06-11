@@ -29,8 +29,6 @@ const CsDialogSeq* Cutscene::findDialog(const std::string& id) const {
 }
 
 // ---- File I/O ----
-// Simple text format: sections [tag] followed by key=value pairs.
-// Lines starting with # are comments.
 
 static void writeStr(FILE* f, const char* key, const std::string& val) {
     fprintf(f, "%s=%s\n", key, val.c_str());
@@ -48,12 +46,13 @@ static void writeB(FILE* f, const char* key, bool val) {
 bool CutsceneLibrary::save(const std::string& path) const {
     FILE* f = fopen(path.c_str(), "w");
     if (!f) return false;
-    fprintf(f, "# Cold Start Cutscene Library v1\n");
-    fprintf(f, "[library]\nversion=1\n");
+    fprintf(f, "# Cold Start Cutscene Library v2\n");
+    fprintf(f, "[library]\nversion=2\n");
     for (const auto& cs : cutscenes) {
         fprintf(f, "\n[cutscene]\n");
         writeStr(f, "id", cs.id);
         writeB(f, "block_input", cs.blockInput);
+        writeStr(f, "chain_on_end", cs.chainOnEnd);
         // actors
         for (const auto& a : cs.actors) {
             fprintf(f, "[actor]\n");
@@ -95,6 +94,11 @@ bool CutsceneLibrary::save(const std::string& path) const {
             writeF(f, "expl_x", e.explX); writeF(f, "expl_y", e.explY);
             writeStr(f, "dialog_id", e.dialogId);
             writeStr(f, "sfx", e.sfxPath);
+            writeF(f, "spawn_x", e.spawnX); writeF(f, "spawn_y", e.spawnY);
+            writeB(f, "spawn_override_pos", e.spawnOverridePos);
+            writeStr(f, "flag_name", e.flagName);
+            writeB(f, "flag_value", e.flagValue);
+            writeStr(f, "chain_cs_id", e.chainCsId);
         }
         // dialogs
         for (const auto& seq : cs.dialogs) {
@@ -107,6 +111,14 @@ bool CutsceneLibrary::save(const std::string& path) const {
                 writeStr(f, "text",     line.text);
                 writeB(f,   "pleft",    line.portraitLeft);
                 writeStr(f, "sfx",      line.sfxPath);
+                writeI(f, "num_choices", (int)line.choices.size());
+                for (int ci = 0; ci < (int)line.choices.size(); ci++) {
+                    fprintf(f, "[choice]\n");
+                    writeStr(f, "text",          line.choices[ci].text);
+                    writeStr(f, "next_seq",       line.choices[ci].nextSeqId);
+                    writeStr(f, "set_flag",       line.choices[ci].setFlag);
+                    writeB(f,   "set_flag_value", line.choices[ci].setFlagValue);
+                }
             }
         }
     }
@@ -127,24 +139,26 @@ bool CutsceneLibrary::load(const std::string& path) {
     cutscenes.clear();
 
     char buf[1024];
-    Cutscene* curCs     = nullptr;
-    CsActor*  curActor  = nullptr;
-    CsEvent*  curEvent  = nullptr;
-    CsDialogSeq* curSeq = nullptr;
-    CsDialogLine* curLine = nullptr;
+    Cutscene*     curCs     = nullptr;
+    CsActor*      curActor  = nullptr;
+    CsEvent*      curEvent  = nullptr;
+    CsDialogSeq*  curSeq    = nullptr;
+    CsDialogLine* curLine   = nullptr;
+    CsDialogChoice* curChoice = nullptr;
 
     while (fgets(buf, sizeof(buf), f)) {
         std::string line = trim(buf);
         if (line.empty() || line[0] == '#') continue;
 
         if (line[0] == '[') {
-            // section header
             std::string tag = line.substr(1, line.size() - 2);
             curActor = nullptr; curEvent = nullptr;
-            curSeq   = nullptr; curLine  = nullptr;
+            curChoice = nullptr;
+            if (tag != "line") curLine = nullptr;
             if (tag == "cutscene") {
                 cutscenes.push_back(Cutscene{});
                 curCs = &cutscenes.back();
+                curSeq = nullptr;
             } else if (tag == "actor" && curCs) {
                 curCs->actors.push_back(CsActor{});
                 curActor = &curCs->actors.back();
@@ -154,9 +168,13 @@ bool CutsceneLibrary::load(const std::string& path) {
             } else if (tag == "dialog" && curCs) {
                 curCs->dialogs.push_back(CsDialogSeq{});
                 curSeq = &curCs->dialogs.back();
+                curLine = nullptr;
             } else if (tag == "line" && curSeq) {
                 curSeq->lines.push_back(CsDialogLine{});
                 curLine = &curSeq->lines.back();
+            } else if (tag == "choice" && curLine) {
+                curLine->choices.push_back(CsDialogChoice{});
+                curChoice = &curLine->choices.back();
             }
             continue;
         }
@@ -164,35 +182,41 @@ bool CutsceneLibrary::load(const std::string& path) {
         size_t eq = line.find('=');
         if (eq == std::string::npos) continue;
         std::string key = trim(line.substr(0, eq));
-        std::string val = line.substr(eq + 1); // don't trim val - text may have spaces
+        std::string val = line.substr(eq + 1);
 
         auto fv = [&](){ return (float)atof(val.c_str()); };
         auto iv = [&](){ return atoi(val.c_str()); };
         auto bv = [&](){ return atoi(val.c_str()) != 0; };
         auto sv = [&](){ return trim(val); };
 
-        if (curLine) {
+        if (curChoice) {
+            if      (key == "text")          curChoice->text         = sv();
+            else if (key == "next_seq")      curChoice->nextSeqId    = sv();
+            else if (key == "set_flag")      curChoice->setFlag      = sv();
+            else if (key == "set_flag_value") curChoice->setFlagValue = bv();
+        } else if (curLine) {
             if      (key == "char")     curLine->character   = sv();
             else if (key == "portrait") curLine->portrait    = sv();
             else if (key == "text")     curLine->text        = sv();
             else if (key == "pleft")    curLine->portraitLeft = bv();
             else if (key == "sfx")      curLine->sfxPath     = sv();
+            // num_choices is informational, choices are loaded via [choice] sections
         } else if (curSeq) {
             if (key == "id") curSeq->id = sv();
         } else if (curActor) {
-            if      (key == "id")      curActor->id          = (uint32_t)iv();
-            else if (key == "name")    curActor->name        = sv();
-            else if (key == "type")    curActor->type        = (CsActorType)iv();
-            else if (key == "enemy_type") curActor->enemyType = (CsEnemyType)iv();
-            else if (key == "sprite")  curActor->spritePath  = sv();
-            else if (key == "sx")      curActor->startX      = fv();
-            else if (key == "sy")      curActor->startY      = fv();
-            else if (key == "srot")    curActor->startRot    = fv();
-            else if (key == "ssx")     curActor->startScaleX = fv();
-            else if (key == "ssy")     curActor->startScaleY = fv();
-            else if (key == "salpha")  curActor->startAlpha  = fv();
-            else if (key == "svis")    curActor->startVisible = bv();
-            else if (key == "fliph")   curActor->flipH        = bv();
+            if      (key == "id")         curActor->id          = (uint32_t)iv();
+            else if (key == "name")       curActor->name        = sv();
+            else if (key == "type")       curActor->type        = (CsActorType)iv();
+            else if (key == "enemy_type") curActor->enemyType   = (CsEnemyType)iv();
+            else if (key == "sprite")     curActor->spritePath  = sv();
+            else if (key == "sx")         curActor->startX      = fv();
+            else if (key == "sy")         curActor->startY      = fv();
+            else if (key == "srot")       curActor->startRot    = fv();
+            else if (key == "ssx")        curActor->startScaleX = fv();
+            else if (key == "ssy")        curActor->startScaleY = fv();
+            else if (key == "salpha")     curActor->startAlpha  = fv();
+            else if (key == "svis")       curActor->startVisible = bv();
+            else if (key == "fliph")      curActor->flipH        = bv();
         } else if (curEvent) {
             if      (key == "actor_id") curEvent->actorId   = (uint32_t)iv();
             else if (key == "type")     curEvent->type      = (CsEventType)iv();
@@ -216,18 +240,25 @@ bool CutsceneLibrary::load(const std::string& path) {
             else if (key == "flb") curEvent->flashB     = fv();
             else if (key == "fz")  curEvent->fromZoom   = fv();
             else if (key == "tz")  curEvent->toZoom     = fv();
-            else if (key == "shake")      curEvent->shakeStrength = fv();
-            else if (key == "fade_black") curEvent->fadeToBlack   = bv();
-            else if (key == "show_bars")  curEvent->showBars      = bv();
-            else if (key == "vis")        curEvent->visible       = bv();
-            else if (key == "frame")      curEvent->frame         = iv();
-            else if (key == "expl_x")     curEvent->explX         = fv();
-            else if (key == "expl_y")     curEvent->explY         = fv();
-            else if (key == "dialog_id")  curEvent->dialogId      = sv();
-            else if (key == "sfx")        curEvent->sfxPath       = sv();
+            else if (key == "shake")              curEvent->shakeStrength     = fv();
+            else if (key == "fade_black")         curEvent->fadeToBlack       = bv();
+            else if (key == "show_bars")          curEvent->showBars          = bv();
+            else if (key == "vis")                curEvent->visible           = bv();
+            else if (key == "frame")              curEvent->frame             = iv();
+            else if (key == "expl_x")             curEvent->explX             = fv();
+            else if (key == "expl_y")             curEvent->explY             = fv();
+            else if (key == "dialog_id")          curEvent->dialogId          = sv();
+            else if (key == "sfx")                curEvent->sfxPath           = sv();
+            else if (key == "spawn_x")            curEvent->spawnX            = fv();
+            else if (key == "spawn_y")            curEvent->spawnY            = fv();
+            else if (key == "spawn_override_pos") curEvent->spawnOverridePos  = bv();
+            else if (key == "flag_name")          curEvent->flagName          = sv();
+            else if (key == "flag_value")         curEvent->flagValue         = bv();
+            else if (key == "chain_cs_id")        curEvent->chainCsId         = sv();
         } else if (curCs) {
-            if      (key == "id")          curCs->id          = sv();
-            else if (key == "block_input") curCs->blockInput  = bv();
+            if      (key == "id")           curCs->id           = sv();
+            else if (key == "block_input")  curCs->blockInput   = bv();
+            else if (key == "chain_on_end") curCs->chainOnEnd   = sv();
         }
     }
     fclose(f);
@@ -285,7 +316,6 @@ void CutscenePlayback::start(const Cutscene* c, SDL_Renderer* r) {
     time     = 0;
     active   = true;
 
-    // Init actor states from start values
     actorStates.resize(c->actors.size());
     for (int i = 0; i < (int)c->actors.size(); i++) {
         const auto& a = c->actors[i];
@@ -305,6 +335,9 @@ void CutscenePlayback::start(const Cutscene* c, SDL_Renderer* r) {
     cinematicBarsAmt = 0;
     screenFadeAlpha  = 0;
     screenFadeToBlack = false;
+    scriptFlags.clear();
+    pendingChainId.clear();
+    pendingEnd = false;
     loadTextures(r);
 }
 
@@ -315,15 +348,19 @@ void CutscenePlayback::stop() {
     freeTextures();
     actorStates.clear();
     dialog = CsDialogPlayback{};
+    scriptFlags.clear();
+    pendingChainId.clear();
+    pendingEnd = false;
 }
 
 bool CutscenePlayback::isDone() const {
     if (!active || !cutscene) return true;
+    if (pendingEnd) return true;
     return time >= cutscene->totalDuration() && !dialog.active;
 }
 
 void CutscenePlayback::applyEvent(const CsEvent& ev, float localT,
-                                   const CutsceneLibrary& lib) {
+                                   const CutsceneLibrary& /*lib*/) {
     float t = applyEase(localT, ev.ease);
     auto lerp = [](float a, float b, float t){ return a + (b-a)*t; };
 
@@ -355,7 +392,6 @@ void CutscenePlayback::applyEvent(const CsEvent& ev, float localT,
             s.flashR  = ev.flashR;
             s.flashG  = ev.flashG;
             s.flashB  = ev.flashB;
-            // flash peaks at 0.5 then fades
             float ft  = (t < 0.5f) ? t * 2.0f : (1.0f - t) * 2.0f;
             s.flashAmt = ft;
             break;
@@ -396,7 +432,7 @@ void CutscenePlayback::update(float dt, const CutsceneLibrary& lib) {
 
     // If dialog is waiting for input, don't advance time
     if (dialog.active && !dialog.done) {
-        if (dialog.lineComplete) return; // waiting for advanceDialog()
+        if (dialog.lineComplete) return; // waiting for advance/choice
         dialog.typeTimer += dt;
         const float CHARS_PER_SEC = 40.0f;
         if (dialog.seq && dialog.lineIdx < (int)dialog.seq->lines.size()) {
@@ -414,7 +450,7 @@ void CutscenePlayback::update(float dt, const CutsceneLibrary& lib) {
         cam.shakeTimer -= dt;
         if (cam.shakeTimer <= 0) { cam.shakeX = cam.shakeY = 0; }
         else {
-            float a = cam.shakeTimer / 0.5f; // 0.5s shake duration
+            float a = cam.shakeTimer / 0.5f;
             cam.shakeX = ((rand() % 100) / 50.0f - 1.0f) * cam.shakeStrength * a;
             cam.shakeY = ((rand() % 100) / 50.0f - 1.0f) * cam.shakeStrength * a;
         }
@@ -429,12 +465,8 @@ void CutscenePlayback::update(float dt, const CutsceneLibrary& lib) {
     // Apply all active events at current time
     for (const auto& ev : cutscene->events) {
         if (time < ev.startTime) continue;
-        bool justStarted = (time - dt < ev.startTime); // crossed start this frame
+        bool justStarted = (time - dt < ev.startTime);
 
-        // One-shot events fire exactly once, when their start time is crossed.
-        // These are handled before the duration math below: a zero-duration
-        // event (PlaySFX/SpawnExplosion) would otherwise be "past its end" on
-        // the very first frame and never trigger.
         switch (ev.type) {
             case CsEventType::Dialog:
                 if (justStarted && !dialog.active) {
@@ -447,6 +479,7 @@ void CutscenePlayback::update(float dt, const CutsceneLibrary& lib) {
                         dialog.visibleChars = 0;
                         dialog.lineComplete = false;
                         dialog.done         = false;
+                        dialog.hoveredChoice = -1;
                     }
                 }
                 continue;
@@ -458,9 +491,6 @@ void CutscenePlayback::update(float dt, const CutsceneLibrary& lib) {
                 continue;
             case CsEventType::PlaySFX:
                 if (justStarted && !ev.sfxPath.empty()) {
-                    // Cache chunks by path (mirrors Assets::sfx) so a repeated
-                    // cue does not reload from disk, and so we never free a
-                    // chunk that may still be playing.
                     static std::unordered_map<std::string, Mix_Chunk*> s_sfxCache;
                     auto it = s_sfxCache.find(ev.sfxPath);
                     Mix_Chunk* sfx;
@@ -468,48 +498,132 @@ void CutscenePlayback::update(float dt, const CutsceneLibrary& lib) {
                         sfx = it->second;
                     } else {
                         sfx = Mix_LoadWAV(ev.sfxPath.c_str());
-                        s_sfxCache[ev.sfxPath] = sfx; // cache even null: don't retry bad paths
+                        s_sfxCache[ev.sfxPath] = sfx;
                     }
                     if (sfx) Mix_PlayChannel(-1, sfx, 0);
                 }
                 continue;
             case CsEventType::SpawnExplosion:
-                // Gameplay side spawns the explosion via a callback; nothing to do here.
                 continue;
             case CsEventType::Wait:
+                continue;
+            case CsEventType::SpawnActor:
+                if (justStarted) {
+                    auto& s = stateFor(ev.actorId);
+                    s.visible = true;
+                    if (ev.spawnOverridePos) {
+                        s.x = ev.spawnX;
+                        s.y = ev.spawnY;
+                    }
+                }
+                continue;
+            case CsEventType::DespawnActor:
+                if (justStarted) {
+                    auto& s = stateFor(ev.actorId);
+                    s.visible = false;
+                }
+                continue;
+            case CsEventType::SetFlag:
+                if (justStarted && !ev.flagName.empty())
+                    scriptFlags[ev.flagName] = ev.flagValue;
+                continue;
+            case CsEventType::ChainCutscene:
+                if (justStarted && !ev.chainCsId.empty()) {
+                    pendingChainId = ev.chainCsId;
+                }
+                continue;
+            case CsEventType::EndCutscene:
+                if (justStarted) pendingEnd = true;
                 continue;
             default:
                 break;
         }
 
-        // Continuous events: interpolate, clamping to the final state once
-        // we are past the event's end.
+        // Continuous events
         float end    = ev.startTime + std::max(ev.duration, 0.001f);
         float localT = (time >= end) ? 1.0f : (time - ev.startTime) / (end - ev.startTime);
         applyEvent(ev, localT, lib);
     }
+
+    // Auto-chain at end of cutscene
+    if (!cutscene->chainOnEnd.empty() && pendingChainId.empty()) {
+        if (time >= cutscene->totalDuration() && !dialog.active)
+            pendingChainId = cutscene->chainOnEnd;
+    }
 }
 
-void CutscenePlayback::advanceDialog() {
-    if (!dialog.active) return;
-    if (!dialog.seq) { dialog.active = false; return; }
+bool CutscenePlayback::advanceDialog() {
+    if (!dialog.active) return false;
+    if (!dialog.seq) { dialog.active = false; return false; }
+
+    // If choices are being shown, don't advance - player must choose
+    if (dialog.lineComplete && dialog.lineIdx < (int)dialog.seq->lines.size()) {
+        const auto& line = dialog.seq->lines[dialog.lineIdx];
+        if (!line.choices.empty()) {
+            return false; // must use selectDialogChoice
+        }
+    }
 
     if (!dialog.lineComplete) {
-        // Skip typewriter - show full text immediately
+        // Skip typewriter
         if (dialog.lineIdx < (int)dialog.seq->lines.size())
             dialog.visibleChars = (int)dialog.seq->lines[dialog.lineIdx].text.size();
         dialog.lineComplete = true;
-        return;
+        return true;
     }
 
     dialog.lineIdx++;
     dialog.typeTimer    = 0;
     dialog.visibleChars = 0;
     dialog.lineComplete = false;
+    dialog.hoveredChoice = -1;
 
     if (dialog.lineIdx >= (int)dialog.seq->lines.size()) {
         dialog.active = false;
         dialog.done   = true;
+    }
+    return true;
+}
+
+void CutscenePlayback::selectDialogChoice(int idx, const CutsceneLibrary& lib) {
+    if (!dialog.active || !dialog.seq) return;
+    if (dialog.lineIdx >= (int)dialog.seq->lines.size()) return;
+
+    const auto& line = dialog.seq->lines[dialog.lineIdx];
+    if (idx < 0 || idx >= (int)line.choices.size()) return;
+
+    const auto& choice = line.choices[idx];
+
+    // Set flag if specified
+    if (!choice.setFlag.empty())
+        scriptFlags[choice.setFlag] = choice.setFlagValue;
+
+    // Jump or end
+    if (choice.nextSeqId.empty()) {
+        dialog.active = false;
+        dialog.done   = true;
+    } else {
+        // Try to find in current cutscene first, then library
+        const CsDialogSeq* nextSeq = cutscene ? cutscene->findDialog(choice.nextSeqId) : nullptr;
+        if (!nextSeq) {
+            // Search all cutscenes in library
+            for (const auto& cs : lib.cutscenes) {
+                nextSeq = cs.findDialog(choice.nextSeqId);
+                if (nextSeq) break;
+            }
+        }
+        if (nextSeq && !nextSeq->lines.empty()) {
+            dialog.seq          = nextSeq;
+            dialog.lineIdx      = 0;
+            dialog.typeTimer    = 0;
+            dialog.visibleChars = 0;
+            dialog.lineComplete = false;
+            dialog.done         = false;
+            dialog.hoveredChoice = -1;
+        } else {
+            dialog.active = false;
+            dialog.done   = true;
+        }
     }
 }
 
@@ -539,7 +653,6 @@ void CutscenePlayback::renderActors(SDL_Renderer* r,
 
         int tw, th;
         SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
-        // Scale X and Y independently (avoids a divide-by-zero when scaleX is 0).
         int dw = (int)(tw * camZoom * s.scaleX);
         int dh = (int)(th * camZoom * s.scaleY);
 
@@ -563,6 +676,7 @@ void CutscenePlayback::renderActors(SDL_Renderer* r,
         SDL_SetTextureAlphaMod(tex, 255);
         SDL_SetTextureColorMod(tex, 255, 255, 255);
     }
+    (void)playerLegs;
 }
 
 void CutscenePlayback::renderDialogLine(SDL_Renderer* r,
@@ -570,21 +684,17 @@ void CutscenePlayback::renderDialogLine(SDL_Renderer* r,
                                          int visibleChars,
                                          int screenW, int screenH,
                                          const CutsceneLibrary& /*lib*/) const {
-    // Hotline Miami style: bottom-third black bar with portrait + text
     const int BAR_H   = 160;
     const int PAD     = 12;
     const int PORT_SZ = 128;
     int barY = screenH - BAR_H;
 
-    // Background
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(r, 0, 0, 0, 210);
     SDL_Rect barRect = { 0, barY, screenW, BAR_H };
     SDL_RenderFillRect(r, &barRect);
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
 
-    // Portrait
-    int textX = PAD;
     if (!line.portrait.empty()) {
         SDL_Texture* port = IMG_LoadTexture(r, line.portrait.c_str());
         if (port) {
@@ -592,12 +702,9 @@ void CutscenePlayback::renderDialogLine(SDL_Renderer* r,
             SDL_Rect portRect = { px, barY + (BAR_H - PORT_SZ)/2, PORT_SZ, PORT_SZ };
             SDL_RenderCopy(r, port, nullptr, &portRect);
             SDL_DestroyTexture(port);
-            textX = line.portraitLeft ? PAD + PORT_SZ + PAD : PAD;
         }
     }
-    // Character name and text are rendered by the game's drawText in renderOverlay
-    // We just pass screen coords here; actual font calls happen in game layer
-    (void)visibleChars; (void)textX;
+    (void)visibleChars; (void)PAD;
 }
 
 void CutscenePlayback::renderOverlay(SDL_Renderer* r,
@@ -617,19 +724,46 @@ void CutscenePlayback::renderOverlay(SDL_Renderer* r,
         SDL_RenderFillRect(r, &bottom);
     }
 
-    // Dialog (text rendering is done here; portrait was handled in renderDialogLine)
+    // Dialog
     if (dialog.active && dialog.seq &&
         dialog.lineIdx < (int)dialog.seq->lines.size()) {
         const auto& line = dialog.seq->lines[dialog.lineIdx];
         renderDialogLine(r, line, dialog.visibleChars, screenW, screenH, lib);
-        // Blinking "advance" indicator (bottom-right of bar)
-        if (dialog.lineComplete) {
+
+        // Choices (shown after typewriter completes)
+        if (dialog.lineComplete && !line.choices.empty()) {
+            const int CHOICE_H = 28;
+            const int CHOICE_W = 400;
+            int totalH = (int)line.choices.size() * CHOICE_H + 8;
+            int choiceX = (screenW - CHOICE_W) / 2;
+            int choiceY = screenH - 160 - totalH - 8;
+
+            SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(r, 0, 0, 0, 180);
+            SDL_Rect bg = {choiceX-4, choiceY-4, CHOICE_W+8, totalH+8};
+            SDL_RenderFillRect(r, &bg);
+            SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+
+            int mx, my;
+            SDL_GetMouseState(&mx, &my);
+
+            for (int ci = 0; ci < (int)line.choices.size(); ci++) {
+                int cy = choiceY + ci * CHOICE_H + 4;
+                SDL_Rect cr = {choiceX, cy, CHOICE_W, CHOICE_H - 2};
+                bool hov = (mx >= cr.x && mx <= cr.x+cr.w && my >= cr.y && my <= cr.y+cr.h);
+                SDL_Color bg2 = hov ? SDL_Color{60,80,120,255} : SDL_Color{20,24,36,255};
+                SDL_SetRenderDrawColor(r, bg2.r, bg2.g, bg2.b, 255);
+                SDL_RenderFillRect(r, &cr);
+                SDL_SetRenderDrawColor(r, 80, 100, 160, 255);
+                SDL_RenderDrawRect(r, &cr);
+            }
+        } else if (dialog.lineComplete && line.choices.empty()) {
+            // Blinking advance indicator
             Uint32 ticks = SDL_GetTicks();
             if ((ticks / 400) % 2 == 0) {
                 SDL_SetRenderDrawColor(r, 220, 220, 80, 255);
                 int ix = screenW - 30;
                 int iy = screenH - 24;
-                // Simple right-pointing triangle
                 SDL_RenderDrawLine(r, ix,   iy-8, ix+14, iy);
                 SDL_RenderDrawLine(r, ix,   iy+8, ix+14, iy);
                 SDL_RenderDrawLine(r, ix,   iy-8, ix,    iy+8);

@@ -3,6 +3,7 @@
 #include <SDL2/SDL_mixer.h>
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include <cstdint>
 
 // ---- Enums ----
@@ -39,14 +40,20 @@ enum class CsEventType : uint8_t {
     CinematicBars = 13,
     SetVisible    = 14,
     SetFrame      = 15,
-    COUNT         = 16,
+    SpawnActor    = 16,  // make actor appear at position (uses actorId)
+    DespawnActor  = 17,  // hide/remove actor (uses actorId)
+    SetFlag       = 18,  // set a named script flag
+    ChainCutscene = 19,  // trigger another cutscene by ID
+    EndCutscene   = 20,  // immediately end this cutscene
+    COUNT         = 21,
 };
 
 static inline const char* csEventTypeName(CsEventType t) {
     static const char* names[(int)CsEventType::COUNT] = {
         "Move","Rotate","Scale","Alpha","Flash","Wait",
-        "Dialog","PlaySFX","Explosion","Cam Move","Cam Zoom",
+        "Dialog","Play SFX","Explosion","Cam Move","Cam Zoom",
         "Cam Shake","Screen Fade","Cine Bars","Set Visible","Set Frame",
+        "Spawn Actor","Despawn","Set Flag","Chain CS","End CS",
     };
     int i = (int)t;
     if (i < 0 || i >= (int)CsEventType::COUNT) return "?";
@@ -114,6 +121,25 @@ struct CsEvent {
     std::string dialogId;
     // SFX path
     std::string sfxPath;
+
+    // SpawnActor: override position (uses actorId)
+    float spawnX = 0, spawnY = 0;
+    bool  spawnOverridePos = false;  // if true, move actor to spawnX/Y on spawn
+
+    // SetFlag
+    std::string flagName;
+    bool        flagValue = true;
+
+    // ChainCutscene
+    std::string chainCsId;
+};
+
+// Dialog branching choice
+struct CsDialogChoice {
+    std::string text;           // label shown to player
+    std::string nextSeqId;      // dialog seq to jump to (empty = end dialog)
+    std::string setFlag;        // flag name to set when chosen (empty = none)
+    bool        setFlagValue = true;
 };
 
 struct CsDialogLine {
@@ -122,6 +148,7 @@ struct CsDialogLine {
     std::string text;
     bool portraitLeft = true;
     std::string sfxPath;
+    std::vector<CsDialogChoice> choices;  // if non-empty, show choice list after typing
 };
 
 struct CsDialogSeq {
@@ -132,6 +159,7 @@ struct CsDialogSeq {
 struct Cutscene {
     std::string id;
     bool blockInput = true;
+    std::string chainOnEnd;  // cutscene ID to auto-chain when this one ends
     std::vector<CsActor>     actors;
     std::vector<CsEvent>     events;
     std::vector<CsDialogSeq> dialogs;
@@ -146,6 +174,10 @@ struct CutsceneLibrary {
     bool save(const std::string& path) const;
     bool load(const std::string& path);
     void clear() { cutscenes.clear(); }
+    const Cutscene* findById(const std::string& id) const {
+        for (const auto& cs : cutscenes) if (cs.id == id) return &cs;
+        return nullptr;
+    }
 };
 
 // ---- Runtime playback ----
@@ -178,6 +210,7 @@ struct CsDialogPlayback {
     int   visibleChars   = 0;
     bool  lineComplete   = false; // all chars shown
     bool  done           = false; // all lines done
+    int   hoveredChoice  = -1;    // mouse-hovered choice index
 };
 
 // Full runtime state
@@ -194,6 +227,13 @@ struct CutscenePlayback {
     float screenFadeAlpha  = 0;
     bool  screenFadeToBlack = false;
 
+    // Script flags set by SetFlag events or dialog choices
+    std::unordered_map<std::string, bool> scriptFlags;
+
+    // Chain request: set by ChainCutscene/EndCutscene, consumed by caller
+    std::string pendingChainId;
+    bool        pendingEnd = false;
+
     void start(const Cutscene* c, SDL_Renderer* r);
     void stop();
     bool isDone() const;
@@ -201,8 +241,11 @@ struct CutscenePlayback {
     // Advance time and evaluate all events
     void update(float dt, const CutsceneLibrary& lib);
 
-    // Advance dialog (called when confirm is pressed)
-    void advanceDialog();
+    // Advance dialog (called when confirm is pressed); returns true if a choice was accepted
+    bool advanceDialog();
+
+    // Select a dialog choice (0-3); call when choices are shown
+    void selectDialogChoice(int idx, const CutsceneLibrary& lib);
 
     // Render world-space actors (call between background and UI render)
     void renderActors(SDL_Renderer* r,
