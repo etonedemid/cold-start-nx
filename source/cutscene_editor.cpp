@@ -704,8 +704,8 @@ void CutsceneEditor::renderCutsceneList(int x, int y, int w, int h) {
     }
     SDL_RenderSetClipRect(r_, nullptr);
 
-    // Bottom buttons
-    int btnY = y + h - 20;
+    // Bottom buttons — offset by 18 extra px to clear the Win98 status bar
+    int btnY = y + h - 38;
     if (btn(40, "+New", x+2, btnY, 44, 18)) addCutscene();
     if (selectedCutscene_ >= 0 && btn(41, "Del", x+50, btnY, 36, 18))
         deleteCutscene(selectedCutscene_);
@@ -747,7 +747,7 @@ void CutsceneEditor::renderActorList(int x, int y, int w, int h) {
     }
     SDL_RenderSetClipRect(r_, nullptr);
 
-    int btnY = y + h - 20;
+    int btnY = y + h - 38;
     if (btn(42, "+Actor", x+2, btnY, 52, 18)) {
         showActorMenu_ = !showActorMenu_;
         showEnemyTypeMenu_ = false;
