@@ -402,11 +402,15 @@ void Game::render() {
             }
         }
 
-        // Story cutscene world-space actors (between world and HUD)
+        // Story cutscene world-space actors (between world and HUD).
+        // Actors live in map-world coordinates, so render them with the same
+        // camera as the world (cutscene CameraShake adds its own offset).
         if (csPlay_.active) {
             SDL_Texture* pbody = playerSprites_.empty() ? nullptr : playerSprites_[0];
             SDL_Texture* plegs = legSprites_.empty()    ? nullptr : legSprites_[0];
-            csPlay_.renderActors(renderer_, csPlay_.cam.x, csPlay_.cam.y, csPlay_.cam.zoom,
+            float ccx = camera_.pos.x - camera_.shakeOffset.x + csPlay_.cam.shakeX;
+            float ccy = camera_.pos.y - camera_.shakeOffset.y + csPlay_.cam.shakeY;
+            csPlay_.renderActors(renderer_, ccx, ccy, 1.0f,
                                  pbody, plegs, enemySprite_);
         }
 
@@ -2523,7 +2527,6 @@ void Game::renderMainMenu() {
                 artHeights[i] = (float)(headH + bh + 10);
                 totalNewsH   += artHeights[i];
             }
-            printf("News ticker: %d articles, totalNewsH=%.1f\n", kArtN, totalNewsH);
         }
 
         if (totalNewsH <= 0.0f) totalNewsH = 1.0f; // guard against zero-divide

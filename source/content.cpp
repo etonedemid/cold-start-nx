@@ -573,19 +573,13 @@ void Game::renderCharCreator() {
             if (ui_.win98Button(100 + idx * 2, "<", lBtnX, contentY + 2, arW, rowH - 4, false)) {
                 if (!modalOpen) {
                     cc.field = idx; menuSelection_ = idx;
-                    SDL_Event fakeKey; memset(&fakeKey, 0, sizeof(fakeKey));
-                    fakeKey.type = SDL_KEYDOWN;
-                    fakeKey.key.keysym.sym = SDLK_LEFT;
-                    SDL_PushEvent(&fakeKey);
+                    renderLeft_ = true;
                 }
             }
             if (ui_.win98Button(100 + idx * 2 + 1, ">", rBtnX, contentY + 2, arW, rowH - 4, false)) {
                 if (!modalOpen) {
                     cc.field = idx; menuSelection_ = idx;
-                    SDL_Event fakeKey; memset(&fakeKey, 0, sizeof(fakeKey));
-                    fakeKey.type = SDL_KEYDOWN;
-                    fakeKey.key.keysym.sym = SDLK_RIGHT;
-                    SDL_PushEvent(&fakeKey);
+                    renderRight_ = true;
                 }
             }
         } else {

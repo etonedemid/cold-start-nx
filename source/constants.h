@@ -2,7 +2,7 @@
 #include "vec2.h"
 
 // Version
-constexpr const char* GAME_VERSION = "2.5.1";
+constexpr const char* GAME_VERSION = "3.0.0";
 
 // Workshop
 constexpr const char* WORKSHOP_URL    = "https://coldstartworkshop.duckdns.org";
@@ -200,6 +200,13 @@ constexpr float CAM_OFFSET  = 75.0f;
 // Wander
 constexpr float WANDER_RADIUS = 300.0f;
 constexpr float WANDER_INTERVAL = 2.0f;
+constexpr float WANDER_SPEED_FRAC = 0.45f;  // roam slower than a full chase
+constexpr float WANDER_DIST_MIN   = 160.0f; // min length of a roam leg
+constexpr float WANDER_DIST_MAX   = 360.0f; // max length of a roam leg
+constexpr float WANDER_ARRIVE_DIST= 50.0f;  // pick a new roam point within this of target
+
+// Chase pathfinding: recompute the route around walls this often (seconds)
+constexpr float ENEMY_REPATH_INTERVAL = 0.4f;
 
 // Lose chase delay
 constexpr float LOSE_PLAYER_DELAY = 1.2f;

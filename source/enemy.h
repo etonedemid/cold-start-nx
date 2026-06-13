@@ -42,6 +42,11 @@ struct Enemy {
     Vec2  wanderTarget;
     float nextWanderTime = 0;
 
+    // Chase pathfinding: navigate around walls when the target is out of line of sight
+    Vec2  pathWaypoint;             // world-space point to steer toward (a routed corner)
+    bool  pathValid     = false;    // true while pathWaypoint holds a usable route
+    float pathRepathTimer = 0;      // countdown to next BFS recompute
+
     // Dash attack (melee)
     bool  isDashing    = false;
     bool  dashOnCd     = false;

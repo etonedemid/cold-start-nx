@@ -2871,7 +2871,7 @@ void Game::renderOnlineWorkshop() {
         ui_.drawText("Fetching mod list from server...", listX + 8, listY + listH/2 - 8, 12, UI::W98::Shadow);
     } else if (onlineModList_.empty()) {
         SDL_RenderSetClipRect(renderer_, nullptr);
-        ui_.drawText("Not ready yet", listX + 8, listY + listH/2 - 8, 12, UI::W98::Shadow);
+        ui_.drawText("Workshop closed: lack of usage", listX + 8, listY + listH/2 - 8, 12, UI::W98::Shadow);
     } else {
         int scrollOff = std::max(0, onlineWorkshopSelection_ - maxVisible + 1);
 
