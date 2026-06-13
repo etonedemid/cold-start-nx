@@ -39,6 +39,8 @@ enum class EditorTool : uint8_t {
     Erase    = 3,  // remove
     Select   = 4,  // select & configure
     Rect     = 5,  // fill / outline rectangle
+    Fill     = 6,  // flood fill connected tiles
+    TOOL_COUNT = 7,
 };
 
 // Entity spawn subtypes (used in EnemySpawn::enemyType)
@@ -130,6 +132,12 @@ public:
     bool wantsBack() const { return wantsBack_; }
     void clearWantsBack() { wantsBack_ = false; }
 
+    // True when a text field (config or cutscene editor) is capturing typing,
+    // so the host can keep ESC/Backspace/Enter from leaking into menu actions.
+    bool isTextEditing() const {
+        return config_.textEditing || (showCutsceneEditor_ && csEditor_.textEditing());
+    }
+
     std::string savePath() const { return savePath_; }
 
     // Mod-save handshake: game.cpp queries this, confirms with performModSave()
@@ -198,8 +206,9 @@ private:
     float origTrigW_ = 0, origTrigH_ = 0;
     float origTrigX_ = 0, origTrigY_ = 0;
 
-    // Move handles (grab ball + directional arrows)
+    // Move drag (grab ball or object body)
     bool  draggingMove_  = false;
+    bool  draggingMovePushed_ = false;  // undo snapshot taken for this drag
     float moveObjOrigX_  = 0;
     float moveObjOrigY_  = 0;
     int   moveDragSX_    = 0;
@@ -238,6 +247,13 @@ private:
     bool showGrid_      = true;
     bool showUI_        = true;
     bool showTopLayer_  = true;  // toggle top image layer visibility in editor
+    bool showHelp_      = false; // F1 shortcut overlay
+    bool dirty_         = false; // unsaved changes indicator
+
+    // Hit rects of floating panels measured during render (0 = not shown),
+    // used so canvas painting never happens under a panel.
+    int leftPanelH_   = 0;  // properties/context panel at x=8, y=TOOLBAR_H+8, w=220
+    int mapPropsH_    = 0;  // map properties panel height (right side)
 
     // Gamepad virtual cursor
     float cursorX_ = 640.0f;     // virtual cursor X
@@ -268,6 +284,10 @@ private:
     void pushUndo();
     void undo();
     void redo();
+    bool isOverUI(int sx, int sy) const;   // true when a UI panel covers this point
+    void floodFill(int tx, int ty);        // bucket fill with selected tile
+    void pickTileAt(int tx, int ty, float wx, float wy);  // eyedropper
+    void renderHelpOverlay(SDL_Renderer* renderer);
     void loadPalette();
     void buildTileTextureLookup();
     void scanTileFolder(const std::string& folder, const std::string& category, uint8_t defaultType);
@@ -301,6 +321,7 @@ private:
 
     // Config screen
     void handleConfigInput(SDL_Event& e);
+    void commitConfigEdit();   // write the in-progress text field to its value
     void updateConfigGamepad(float dt);
     void renderConfig(SDL_Renderer* renderer);
     void scanAvailableMaps();
@@ -324,7 +345,9 @@ private:
     void saveCutsceneLib();
     void loadCutsceneLib();
     // Bottom padding when cutscene editor is open (used to clip map viewport)
-    int csEditorBottom() const { return showCutsceneEditor_ ? CS_EDITOR_PANEL_H : 0; }
+    int csEditorBottom() const { return showCutsceneEditor_ ? csEditor_.panelHeight() : 0; }
     // Preview actor overlays on map canvas at current scrub time
     void renderCutsceneActorOverlays(SDL_Renderer* renderer);
+    // Representative sprite texture for a cutscene actor (player/enemy/free)
+    SDL_Texture* csActorTexture(const CsActor& a) const;
 };

@@ -47,16 +47,18 @@ enum class CsEventType : uint8_t {
     EndCutscene   = 20,  // immediately end this cutscene
     AdjustSignal  = 21,  // change the campaign SIGNAL meter by signalDelta
     BranchCutscene= 22,  // compare SIGNAL/route to a threshold, chain true/false
-    COUNT         = 23,
+    SpawnEnemy    = 23,  // spawn an enemy at a world position
+    SpawnPickup   = 24,  // spawn an upgrade pickup at a world position
+    COUNT         = 25,
 };
 
 static inline const char* csEventTypeName(CsEventType t) {
     static const char* names[(int)CsEventType::COUNT] = {
         "Move","Rotate","Scale","Alpha","Flash","Wait",
         "Dialog","Play SFX","Explosion","Cam Move","Cam Zoom",
-        "Cam Shake","Screen Fade","Cine Bars","Set Visible","Set Frame",
+        "Shake","Screen Fade","Cine Bars","Set Visible","Set Frame",
         "Spawn Actor","Despawn","Set Flag","Chain CS","End CS",
-        "Adj SIGNAL","Branch CS",
+        "Adj SIGNAL","Branch CS","Spawn Enemy","Spawn Pickup",
     };
     int i = (int)t;
     if (i < 0 || i >= (int)CsEventType::COUNT) return "?";
@@ -129,6 +131,13 @@ struct CsEvent {
     float spawnX = 0, spawnY = 0;
     bool  spawnOverridePos = false;  // if true, move actor to spawnX/Y on spawn
 
+    // SpawnEnemy: type (maps to EnemyType 0-5 = Melee/Shooter/Brute/Scout/Sniper/Gunner)
+    // position reuses explX/explY
+    uint8_t spawnEnemyTypeId  = 0;
+    // SpawnPickup: type (maps to UpgradeType)
+    // position reuses explX/explY
+    uint8_t spawnPickupTypeId = 0;
+
     // SetFlag
     std::string flagName;
     bool        flagValue = true;
@@ -183,6 +192,17 @@ struct Cutscene {
     const CsDialogSeq* findDialog(const std::string& id) const;
 };
 
+// Renders the in-game dialog box (bar + portrait + speaker + typed text +
+// choices) into the given screen rect. Shared by runtime playback and the
+// cutscene editor's WYSIWYG preview so the two always match.
+//   visibleChars < 0  -> show the whole line (no typewriter)
+//   lineComplete      -> show choices / advance arrow
+//   hoveredChoice     -> highlight that choice index (-1 = none)
+// The box is drawn at the bottom of the rect [x, y, w, h].
+void cutsceneRenderDialogBox(SDL_Renderer* r, int x, int y, int w, int h,
+                             const CsDialogLine& line, int visibleChars,
+                             bool lineComplete, int hoveredChoice);
+
 struct CutsceneLibrary {
     std::vector<Cutscene> cutscenes;
     bool save(const std::string& path) const;
@@ -236,6 +256,10 @@ struct CutscenePlayback {
     std::vector<CsActorState> actorStates;  // parallel to cutscene->actors
     std::vector<SDL_Texture*> actorTex;     // loaded textures (parallel)
     CsCamState        cam;
+    // True once a CameraMove/CameraZoom event has driven the camera.
+    // Until then the game anchors actor rendering to the live game camera,
+    // so actors placed in the map editor line up with the world.
+    bool camDriven = false;
     CsDialogPlayback  dialog;
     float cinematicBarsAmt = 0; // 0..1, target driven by events
     float screenFadeAlpha  = 0;
@@ -247,6 +271,14 @@ struct CutscenePlayback {
     // Chain request: set by ChainCutscene/EndCutscene, consumed by caller
     std::string pendingChainId;
     bool        pendingEnd = false;
+
+    // Pending one-shot spawns; drained by the game each frame.
+    struct PendingExplosion { float x, y; };
+    struct PendingEnemy     { float x, y; uint8_t typeId; };
+    struct PendingPickup    { float x, y; uint8_t typeId; };
+    std::vector<PendingExplosion> pendingExplosions;
+    std::vector<PendingEnemy>     pendingEnemies;
+    std::vector<PendingPickup>    pendingPickups;
 
     // SIGNAL delta accumulated by AdjustSignal events; drained by the game.
     int         pendingSignalDelta = 0;

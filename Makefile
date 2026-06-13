@@ -20,7 +20,7 @@ ROMFS		:=	romfs
 
 APP_TITLE	:=	COLD START
 APP_AUTHOR	:=	etonedemid
-APP_VERSION	:=	2.5.0
+APP_VERSION	:=	3.0.0
 
 #---------------------------------------------------------------------------------
 # Compiler flags
@@ -36,7 +36,7 @@ CFLAGS	+=	$(INCLUDE) -D__SWITCH__ \
 			-DHAS_GETNAMEINFO=1 -DHAS_INET_PTON=1 -DHAS_INET_NTOP=1 \
 			-DHAS_POLL=1 -DHAS_CURL=1
 
-CXXFLAGS	:=	$(CFLAGS) -std=gnu++17 -fno-rtti -fno-exceptions
+CXXFLAGS	:=	$(CFLAGS) -std=gnu++17 -fno-rtti -fexceptions
 
 ASFLAGS	:=	-g $(ARCH)
 LDFLAGS	=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) \

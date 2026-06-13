@@ -38,6 +38,8 @@ characters/Jacket/os
 fonts/Pixeled.ttf
 fonts/pixelmix.ttf
 fonts/pixelmix_bold.ttf
+maps/cold_start_a1.csc
+maps/cold_start_a1.csm
 maps/construct.csm
 sounds/FOTOSHOPPE CO. - Home Screen.mp3
 sounds/action/KyleDeadmanXWintware_YouWouldBetterObey.ogg
@@ -184,6 +186,13 @@ sprites/ui/browser_search.png
 sprites/ui/chat_host.png
 sprites/ui/chat_user.png
 sprites/ui/crosshair.png
+sprites/ui/ed_entity.png
+sprites/ui/ed_erase.png
+sprites/ui/ed_fill.png
+sprites/ui/ed_rect.png
+sprites/ui/ed_select.png
+sprites/ui/ed_tile.png
+sprites/ui/ed_trigger.png
 sprites/ui/gun.png
 sprites/ui/mainmenu.png
 sprites/ui/skull.png

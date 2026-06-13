@@ -21,12 +21,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "etonedemid"
             VALUE "FileDescription",  "COLD START"
-            VALUE "FileVersion",      "2.5.0.0"
+            VALUE "FileVersion",      "3.0.0.0"
             VALUE "InternalName",     "cold_start"
             VALUE "LegalCopyright",   "etonedemid"
             VALUE "OriginalFilename", "cold_start.exe"
             VALUE "ProductName",      "COLD START"
-            VALUE "ProductVersion",   "2.5.0.0"
+            VALUE "ProductVersion",   "3.0.0.0"
         END
     END
     BLOCK "VarFileInfo"

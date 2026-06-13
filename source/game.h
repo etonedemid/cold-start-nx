@@ -690,6 +690,12 @@ private:
     bool enemyCanSeeAnyPlayer(Enemy& e);      // sets e.targetPlayerId, returns true if any player visible
     Vec2 getEnemyTargetPos(const Enemy& e) const; // returns position of the enemy's current target
     Vec2 steerToward(Vec2 from, Vec2 to, float spd, float dt) const;
+    void pickWanderTarget(Enemy& e);          // choose a calm, wall-clear roam point
+    bool tileRayClear(Vec2 a, Vec2 b) const;  // true if no solid tile lies between a and b
+    // BFS a route around walls from 'from' to 'to'; outWaypoint is the furthest
+    // corner we can head straight for. Returns false if no path exists.
+    bool computeEnemyPath(Vec2 from, Vec2 to, Vec2& outWaypoint) const;
+    mutable std::vector<int> pathScratch_;    // reused BFS parent/visited buffer
 
     // Combat
     void spawnBullet(Vec2 pos, float angle);

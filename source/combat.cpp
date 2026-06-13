@@ -1123,27 +1123,45 @@ Vec2 Game::getEnemyTargetPos(const Enemy& e) const {
     return player_.pos; // single-player fallback or host's own position
 }
 
+// Choose a fresh roam point: biased toward the current heading so movement reads
+// as calm strolling rather than spinning in place, and validated so the point is
+// not inside a wall and is reachable in a straight line.
+void Game::pickWanderTarget(Enemy& e) {
+    float baseHeading = (e.vel.lengthSq() > 1.0f)
+        ? atan2f(e.vel.y, e.vel.x)
+        : (float)(rand() % 360) * (float)M_PI / 180.0f;
+
+    for (int attempt = 0; attempt < 8; attempt++) {
+        // Cone around the current heading; widen it as candidates fail so the
+        // enemy can still turn around when boxed in, but prefers gentle curves.
+        float spread = 0.5f + attempt * 0.35f;
+        float jitter = (((rand() % 1000) / 1000.0f) * 2.0f - 1.0f) * spread;
+        float angle  = baseHeading + jitter;
+        float dist   = WANDER_DIST_MIN + (rand() % (int)(WANDER_DIST_MAX - WANDER_DIST_MIN));
+        Vec2  cand   = e.pos + Vec2::fromAngle(angle) * dist;
+        cand.x = fmaxf(TILE_SIZE * 1.5f, fminf(map_.worldWidth()  - TILE_SIZE * 1.5f, cand.x));
+        cand.y = fmaxf(TILE_SIZE * 1.5f, fminf(map_.worldHeight() - TILE_SIZE * 1.5f, cand.y));
+        if (map_.isSolid(TileMap::toTile(cand.x), TileMap::toTile(cand.y))) continue;
+        if (!tileRayClear(e.pos, cand)) continue;
+        e.wanderTarget = cand;
+        return;
+    }
+    // Nothing clear found - take a short step ahead and let steering nudge us free.
+    e.wanderTarget = e.pos + Vec2::fromAngle(baseHeading) * WANDER_DIST_MIN;
+}
+
 void Game::enemyWander(Enemy& e, float dt) {
-    if (gameTime_ >= e.nextWanderTime) {
-        // Pick random nearby point
-        float angle = (float)(rand() % 360) * M_PI / 180.0f;
-        float dist = 100.0f + (rand() % 200);
-        e.wanderTarget = e.pos + Vec2::fromAngle(angle) * dist;
-        // Clamp to map
-        e.wanderTarget.x = fmaxf(TILE_SIZE * 2, fminf(map_.worldWidth() - TILE_SIZE * 2, e.wanderTarget.x));
-        e.wanderTarget.y = fmaxf(TILE_SIZE * 2, fminf(map_.worldHeight() - TILE_SIZE * 2, e.wanderTarget.y));
-        e.nextWanderTime = gameTime_ + WANDER_INTERVAL;
+    bool arrived = (e.wanderTarget - e.pos).lengthSq() < (WANDER_ARRIVE_DIST * WANDER_ARRIVE_DIST);
+    bool blocked = !tileRayClear(e.pos, e.wanderTarget);  // a wall slid between us and the goal
+    if (gameTime_ >= e.nextWanderTime || arrived || blocked) {
+        pickWanderTarget(e);
+        // Stagger re-picks so a pack does not turn in unison.
+        e.nextWanderTime = gameTime_ + WANDER_INTERVAL + ((rand() % 100) / 100.0f) * WANDER_INTERVAL;
     }
-    Vec2 desired = steerToward(e.pos, e.wanderTarget, e.speed * 0.5f, dt);
-    // Melee enemies: smooth velocity with inertia
-    if (isMeleeEnemyType(e.type)) {
-        float inertia = MELEE_INERTIA;
-        e.vel = Vec2::lerp(e.vel, desired, dt * inertia);
-    } else if (isShooterEnemyType(e.type)) {
-        e.vel = Vec2::lerp(e.vel, desired, dt * SHOOTER_INERTIA);
-    } else {
-        e.vel = desired;
-    }
+    Vec2 desired = steerToward(e.pos, e.wanderTarget, e.speed * WANDER_SPEED_FRAC, dt);
+    // Smooth velocity for every type so roaming looks unhurried (no instant turns).
+    float inertia = isShooterEnemyType(e.type) ? SHOOTER_INERTIA : MELEE_INERTIA;
+    e.vel = Vec2::lerp(e.vel, desired, dt * inertia * 0.6f);
 }
 
 void Game::enemyChase(Enemy& e, float dt) {
@@ -1151,8 +1169,32 @@ void Game::enemyChase(Enemy& e, float dt) {
     Vec2 toPlayer  = targetPos - e.pos;
     float dist     = toPlayer.length();
 
+    // Navigation target: head straight at the player when we have line of sight,
+    // otherwise route around walls with a throttled BFS instead of mashing into
+    // the geometry between us and them. navTarget feeds the approach steering;
+    // targetPos stays the real player for facing, ranging and dash decisions.
+    Vec2 navTarget = targetPos;
+    bool los = tileRayClear(e.pos, targetPos);
+    if (los) {
+        e.pathValid = false;  // clear any stale route the moment we can see them
+    } else {
+        e.pathRepathTimer -= dt;
+        if (e.pathRepathTimer <= 0 || !e.pathValid) {
+            e.pathValid = computeEnemyPath(e.pos, targetPos, e.pathWaypoint);
+            e.pathRepathTimer = ENEMY_REPATH_INTERVAL;
+        }
+        if (e.pathValid) navTarget = e.pathWaypoint;
+    }
+
     // Shooter: keep range and strafe while shooting
     if (isShooterEnemyType(e.type)) {
+        // No line of sight: cannot shoot through walls, so just route to the player.
+        if (!los) {
+            Vec2 desired = steerToward(e.pos, navTarget, e.speed, dt);
+            e.vel = Vec2::lerp(e.vel, desired, dt * SHOOTER_INERTIA);
+            e.rotation = atan2f(navTarget.y - e.pos.y, navTarget.x - e.pos.x);
+            return;
+        }
         // Sniper/BossSniper: panic dash-sprint away if player is dangerously close
         bool isSniper = (e.type == EnemyType::Sniper || e.type == EnemyType::BossSniper);
         float panicRange = isSniper ? (e.type == EnemyType::BossSniper ? BOSS_SNIPER_PANIC_RANGE : SNIPER_PANIC_RANGE) : 0.0f;
@@ -1203,7 +1245,7 @@ void Game::enemyChase(Enemy& e, float dt) {
     // Movement: close orbit -> boss wide strafe -> straight charge
     const float strafeInner = e.dashDistance + e.strafeOrbitOffset;
     const float strafeOuter = e.dashDistance + 100.0f + e.strafeOrbitOffset;
-    bool inOrbitBand = e.dashOnCd && dist > strafeInner && dist < strafeOuter;
+    bool inOrbitBand = los && e.dashOnCd && dist > strafeInner && dist < strafeOuter;
 
     if (inOrbitBand) {
         // Close-range prowl - mostly forward, slight sidestep
@@ -1213,7 +1255,7 @@ void Game::enemyChase(Enemy& e, float dt) {
         Vec2 orbit = (toTarget * 0.78f + perp * sideSign * 0.40f).normalized();
         Vec2 desired = steerToward(e.pos, e.pos + orbit * 200.0f, e.speed * 0.85f, dt);
         e.vel = Vec2::lerp(e.vel, desired, dt * MELEE_INERTIA);
-    } else if (e.type == EnemyType::BossBrute && e.bossChargeCdTimer > 0
+    } else if (los && e.type == EnemyType::BossBrute && e.bossChargeCdTimer > 0
                && dist > strafeOuter && dist < BOSS_BRUTE_CHARGE_RANGE
                && !e.dashCharging && !e.isDashing) {
         // Wide strafe while charge recharges - circle with light inward pressure
@@ -1225,12 +1267,13 @@ void Game::enemyChase(Enemy& e, float dt) {
         Vec2 desired = steerToward(e.pos, e.pos + orbit * 350.0f, e.speed, dt);
         e.vel = Vec2::lerp(e.vel, desired, dt * MELEE_INERTIA);
     } else {
-        Vec2 desired = steerToward(e.pos, targetPos, e.speed, dt);
+        // Straight approach (LOS) or routed approach (navTarget hugs corners around walls).
+        Vec2 desired = steerToward(e.pos, navTarget, e.speed, dt);
         e.vel = Vec2::lerp(e.vel, desired, dt * MELEE_INERTIA);
     }
 
-    // Start dash when close - lock direction immediately
-    if (dist < e.dashDistance && !e.dashOnCd && !e.dashCharging) {
+    // Start dash when close - lock direction immediately (never wind up through a wall)
+    if (los && dist < e.dashDistance && !e.dashOnCd && !e.dashCharging) {
         e.dashCharging   = true;
         e.dashDelayTimer = e.dashDelay;
         e.flashTimer     = e.dashDelay;
@@ -1328,6 +1371,96 @@ Vec2 Game::steerToward(Vec2 from, Vec2 to, float spd, float dt) const {
     }
 
     return dir * spd;
+}
+
+// True if a straight segment from a to b crosses no solid tile.
+bool Game::tileRayClear(Vec2 a, Vec2 b) const {
+    Vec2 d = b - a;
+    float dist = d.length();
+    if (dist < 1.0f) return true;
+    Vec2 dir = d / dist;
+    const float step = TILE_SIZE * 0.4f;
+    for (float t = step; t < dist; t += step) {
+        Vec2 pt = a + dir * t;
+        if (map_.isSolid(TileMap::toTile(pt.x), TileMap::toTile(pt.y))) return false;
+    }
+    return true;
+}
+
+// Breadth-first search a walkable route from 'from' to 'to' over the tile grid.
+// Returns the furthest tile along that route the enemy can head straight for
+// (string-pulling), so movement cuts corners naturally instead of stepping
+// tile-by-tile. Returns false when no route exists.
+bool Game::computeEnemyPath(Vec2 from, Vec2 to, Vec2& outWaypoint) const {
+    const int W = map_.width, H = map_.height;
+    int sx = TileMap::toTile(from.x), sy = TileMap::toTile(from.y);
+    int gx = TileMap::toTile(to.x),   gy = TileMap::toTile(to.y);
+    if (!map_.isInBounds(sx, sy) || !map_.isInBounds(gx, gy)) return false;
+    if (sx == gx && sy == gy) { outWaypoint = to; return true; }
+
+    // If the player stands on/over a solid tile, aim for the nearest open tile.
+    if (map_.isSolid(gx, gy)) {
+        bool found = false;
+        for (int r = 1; r <= 2 && !found; r++)
+            for (int dy = -r; dy <= r && !found; dy++)
+                for (int dx = -r; dx <= r && !found; dx++) {
+                    int nx = gx + dx, ny = gy + dy;
+                    if (map_.isInBounds(nx, ny) && !map_.isSolid(nx, ny)) { gx = nx; gy = ny; found = true; }
+                }
+        if (!found) return false;
+    }
+
+    auto idx = [&](int x, int y) { return y * W + x; };
+    pathScratch_.assign((size_t)W * H, -1);
+    std::vector<int> queue;
+    queue.reserve(256);
+    int start = idx(sx, sy);
+    pathScratch_[start] = start;  // self-parent marks the visited root
+    queue.push_back(start);
+
+    const int dx4[4] = {1, -1, 0, 0};
+    const int dy4[4] = {0, 0, 1, -1};
+    const int kMaxNodes = 2200;   // cap work on large maps
+    int head = 0, expanded = 0;
+    bool reached = false;
+    while (head < (int)queue.size() && expanded < kMaxNodes) {
+        int cur = queue[head++]; expanded++;
+        int cx = cur % W, cy = cur / W;
+        if (cx == gx && cy == gy) { reached = true; break; }
+        for (int i = 0; i < 4; i++) {
+            int nx = cx + dx4[i], ny = cy + dy4[i];
+            if (!map_.isInBounds(nx, ny) || map_.isSolid(nx, ny)) continue;
+            int ni = idx(nx, ny);
+            if (pathScratch_[ni] != -1) continue;
+            pathScratch_[ni] = cur;
+            queue.push_back(ni);
+        }
+    }
+    if (!reached) return false;
+
+    // Walk parents from goal back to start: path[0] = goal ... path.back() = start.
+    std::vector<int> path;
+    int cur = idx(gx, gy);
+    while (true) {
+        path.push_back(cur);
+        int p = pathScratch_[cur];
+        if (p == cur) break;            // reached the self-parented start
+        cur = p;
+        if ((int)path.size() > W * H) break;  // paranoia guard
+    }
+    // Furthest goal-ward tile we can reach in a straight line is the best waypoint.
+    for (int t : path) {
+        Vec2 wp{ TileMap::toWorld(t % W), TileMap::toWorld(t / W) };
+        if (tileRayClear(from, wp)) { outWaypoint = wp; return true; }
+    }
+    // Fallback: the first step off the start tile.
+    if (path.size() >= 2) {
+        int t = path[path.size() - 2];
+        outWaypoint = Vec2{ TileMap::toWorld(t % W), TileMap::toWorld(t / W) };
+        return true;
+    }
+    outWaypoint = to;
+    return true;
 }
 
 // Bullets

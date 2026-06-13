@@ -104,6 +104,8 @@ bool CutsceneLibrary::save(const std::string& path) const {
             writeI(f, "branch_cmp", (int)e.branchCmp);
             writeI(f, "branch_threshold", e.branchThreshold);
             writeStr(f, "chain_false_id", e.chainFalseId);
+            writeI(f, "spawn_enemy_type", (int)e.spawnEnemyTypeId);
+            writeI(f, "spawn_pickup_type", (int)e.spawnPickupTypeId);
         }
         // dialogs
         for (const auto& seq : cs.dialogs) {
@@ -265,6 +267,8 @@ bool CutsceneLibrary::load(const std::string& path) {
             else if (key == "branch_cmp")         curEvent->branchCmp         = (uint8_t)iv();
             else if (key == "branch_threshold")   curEvent->branchThreshold   = iv();
             else if (key == "chain_false_id")     curEvent->chainFalseId      = sv();
+            else if (key == "spawn_enemy_type")   curEvent->spawnEnemyTypeId  = (uint8_t)iv();
+            else if (key == "spawn_pickup_type")  curEvent->spawnPickupTypeId = (uint8_t)iv();
         } else if (curCs) {
             if      (key == "id")           curCs->id           = sv();
             else if (key == "block_input")  curCs->blockInput   = bv();
@@ -341,6 +345,7 @@ void CutscenePlayback::start(const Cutscene* c, SDL_Renderer* r) {
         s.flashAmt = 0;
     }
     cam = CsCamState{};
+    camDriven = false;
     dialog = CsDialogPlayback{};
     cinematicBarsAmt = 0;
     screenFadeAlpha  = 0;
@@ -420,9 +425,11 @@ void CutscenePlayback::applyEvent(const CsEvent& ev, float localT,
         case CsEventType::CameraMove:
             cam.x = lerp(ev.fromX, ev.toX, t);
             cam.y = lerp(ev.fromY, ev.toY, t);
+            camDriven = true;
             break;
         case CsEventType::CameraZoom:
             cam.zoom = lerp(ev.fromZoom, ev.toZoom, t);
+            camDriven = true;
             break;
         case CsEventType::ScreenFade: {
             float alpha = ev.fadeToBlack ? lerp(0, 1, t) : lerp(1, 0, t);
@@ -515,6 +522,13 @@ void CutscenePlayback::update(float dt, const CutsceneLibrary& lib) {
                 }
                 continue;
             case CsEventType::SpawnExplosion:
+                if (justStarted) pendingExplosions.push_back({ev.explX, ev.explY});
+                continue;
+            case CsEventType::SpawnEnemy:
+                if (justStarted) pendingEnemies.push_back({ev.explX, ev.explY, ev.spawnEnemyTypeId});
+                continue;
+            case CsEventType::SpawnPickup:
+                if (justStarted) pendingPickups.push_back({ev.explX, ev.explY, ev.spawnPickupTypeId});
                 continue;
             case CsEventType::Wait:
                 continue;
@@ -707,32 +721,121 @@ void CutscenePlayback::renderActors(SDL_Renderer* r,
     (void)playerLegs;
 }
 
+// Small text helper for the dialog box: renders via the shared Assets font.
+// Returns the rendered height (0 if nothing drawn).
+static int dlgText(SDL_Renderer* r, const char* text, int x, int y, int size,
+                   SDL_Color c, int wrapW = 0) {
+    TTF_Font* f = Assets::instance().font(size);
+    if (!f || !text || !text[0]) return 0;
+    SDL_Surface* surf = (wrapW > 0)
+        ? TTF_RenderText_Blended_Wrapped(f, text, c, wrapW)
+        : TTF_RenderText_Blended(f, text, c);
+    if (!surf) return 0;
+    SDL_Texture* t = SDL_CreateTextureFromSurface(r, surf);
+    int h = surf->h;
+    if (t) {
+        SDL_Rect dst = { x, y, surf->w, surf->h };
+        SDL_RenderCopy(r, t, nullptr, &dst);
+        SDL_DestroyTexture(t);
+    }
+    SDL_FreeSurface(surf);
+    return h;
+}
+
+void cutsceneRenderDialogBox(SDL_Renderer* r, int rx, int ry, int rw, int rh,
+                             const CsDialogLine& line, int visibleChars,
+                             bool lineComplete, int hoveredChoice) {
+    const int PAD     = 14;
+    const int PORT_SZ = (rh < 360) ? 96 : 128;
+    const int BAR_H   = PORT_SZ + 2 * 16;
+    int barY = ry + rh - BAR_H;
+
+    // Bar background + accent
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(r, 6, 8, 14, 225);
+    SDL_Rect bar = { rx, barY, rw, BAR_H };
+    SDL_RenderFillRect(r, &bar);
+    SDL_SetRenderDrawColor(r, 0, 200, 180, 200);
+    SDL_RenderDrawLine(r, rx, barY, rx + rw, barY);
+    SDL_SetRenderDrawColor(r, 0, 90, 80, 160);
+    SDL_RenderDrawLine(r, rx, barY + 1, rx + rw, barY + 1);
+
+    // Portrait (or placeholder so the layout is always visible in the editor)
+    int textX = rx + PAD;
+    int textRight = rx + rw - PAD;
+    bool hasPort = !line.portrait.empty();
+    if (hasPort) {
+        int px = line.portraitLeft ? (rx + PAD) : (rx + rw - PAD - PORT_SZ);
+        SDL_Rect pr = { px, barY + (BAR_H - PORT_SZ) / 2, PORT_SZ, PORT_SZ };
+        SDL_Texture* port = Assets::instance().loadRelTex(line.portrait);
+        if (port) {
+            SDL_SetTextureBlendMode(port, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureColorMod(port, 255, 255, 255);
+            SDL_SetTextureAlphaMod(port, 255);
+            SDL_RenderCopy(r, port, nullptr, &pr);
+        } else {
+            SDL_SetRenderDrawColor(r, 30, 34, 46, 255);
+            SDL_RenderFillRect(r, &pr);
+            dlgText(r, "(no portrait)", pr.x + 8, pr.y + PORT_SZ / 2 - 8, 12, {130, 135, 150, 255});
+        }
+        SDL_SetRenderDrawColor(r, 0, 200, 180, 220);
+        SDL_RenderDrawRect(r, &pr);
+        if (line.portraitLeft) textX     = px + PORT_SZ + PAD;
+        else                   textRight = px - PAD;
+    }
+    int textW = textRight - textX;
+    if (textW < 40) textW = 40;
+
+    // Speaker name
+    int ty = barY + 12;
+    if (!line.character.empty())
+        ty += dlgText(r, line.character.c_str(), textX, ty, 20, {0, 255, 228, 255}) + 4;
+    else
+        ty += 6;
+
+    // Typed text (typewriter when visibleChars >= 0)
+    std::string shown = line.text;
+    if (visibleChars >= 0 && visibleChars < (int)shown.size())
+        shown = shown.substr(0, visibleChars);
+    if (!shown.empty())
+        dlgText(r, shown.c_str(), textX, ty, 18, {235, 235, 242, 255}, textW);
+
+    // Choices (after the line finishes typing)
+    if (lineComplete && !line.choices.empty()) {
+        const int CH_H = 26, CH_W = std::min(420, rw - 2 * PAD);
+        int n = (int)line.choices.size();
+        int cx = rx + (rw - CH_W) / 2;
+        int cy = barY - n * (CH_H + 4) - 8;
+        for (int i = 0; i < n; i++) {
+            SDL_Rect cr = { cx, cy + i * (CH_H + 4), CH_W, CH_H };
+            bool hov = (i == hoveredChoice);
+            SDL_SetRenderDrawColor(r, hov ? 60 : 18, hov ? 80 : 22, hov ? 120 : 34, 235);
+            SDL_RenderFillRect(r, &cr);
+            SDL_SetRenderDrawColor(r, 90, 110, 170, 255);
+            SDL_RenderDrawRect(r, &cr);
+            dlgText(r, line.choices[i].text.c_str(), cr.x + 10, cr.y + 5, 16,
+                    hov ? SDL_Color{255, 255, 255, 255} : SDL_Color{200, 205, 220, 255});
+        }
+    } else if (lineComplete) {
+        // Blinking advance arrow
+        if ((SDL_GetTicks() / 400) % 2 == 0) {
+            SDL_SetRenderDrawColor(r, 220, 220, 80, 255);
+            int ix = rx + rw - 28, iy = barY + BAR_H - 18;
+            SDL_RenderDrawLine(r, ix, iy - 8, ix + 14, iy);
+            SDL_RenderDrawLine(r, ix, iy + 8, ix + 14, iy);
+            SDL_RenderDrawLine(r, ix, iy - 8, ix, iy + 8);
+        }
+    }
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+}
+
 void CutscenePlayback::renderDialogLine(SDL_Renderer* r,
                                          const CsDialogLine& line,
                                          int visibleChars,
                                          int screenW, int screenH,
                                          const CutsceneLibrary& /*lib*/) const {
-    const int BAR_H   = 160;
-    const int PAD     = 12;
-    const int PORT_SZ = 128;
-    int barY = screenH - BAR_H;
-
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(r, 0, 0, 0, 210);
-    SDL_Rect barRect = { 0, barY, screenW, BAR_H };
-    SDL_RenderFillRect(r, &barRect);
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
-
-    if (!line.portrait.empty()) {
-        SDL_Texture* port = IMG_LoadTexture(r, line.portrait.c_str());
-        if (port) {
-            int px = line.portraitLeft ? PAD : (screenW - PAD - PORT_SZ);
-            SDL_Rect portRect = { px, barY + (BAR_H - PORT_SZ)/2, PORT_SZ, PORT_SZ };
-            SDL_RenderCopy(r, port, nullptr, &portRect);
-            SDL_DestroyTexture(port);
-        }
-    }
-    (void)visibleChars; (void)PAD;
+    cutsceneRenderDialogBox(r, 0, 0, screenW, screenH, line, visibleChars,
+                            dialog.lineComplete, dialog.hoveredChoice);
 }
 
 void CutscenePlayback::renderOverlay(SDL_Renderer* r,
@@ -752,51 +855,12 @@ void CutscenePlayback::renderOverlay(SDL_Renderer* r,
         SDL_RenderFillRect(r, &bottom);
     }
 
-    // Dialog
+    // Dialog (the shared box renderer draws the bar, portrait, speaker, typed
+    // text, choices and advance arrow).
     if (dialog.active && dialog.seq &&
         dialog.lineIdx < (int)dialog.seq->lines.size()) {
         const auto& line = dialog.seq->lines[dialog.lineIdx];
         renderDialogLine(r, line, dialog.visibleChars, screenW, screenH, lib);
-
-        // Choices (shown after typewriter completes)
-        if (dialog.lineComplete && !line.choices.empty()) {
-            const int CHOICE_H = 28;
-            const int CHOICE_W = 400;
-            int totalH = (int)line.choices.size() * CHOICE_H + 8;
-            int choiceX = (screenW - CHOICE_W) / 2;
-            int choiceY = screenH - 160 - totalH - 8;
-
-            SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-            SDL_SetRenderDrawColor(r, 0, 0, 0, 180);
-            SDL_Rect bg = {choiceX-4, choiceY-4, CHOICE_W+8, totalH+8};
-            SDL_RenderFillRect(r, &bg);
-            SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
-
-            int mx, my;
-            SDL_GetMouseState(&mx, &my);
-
-            for (int ci = 0; ci < (int)line.choices.size(); ci++) {
-                int cy = choiceY + ci * CHOICE_H + 4;
-                SDL_Rect cr = {choiceX, cy, CHOICE_W, CHOICE_H - 2};
-                bool hov = (mx >= cr.x && mx <= cr.x+cr.w && my >= cr.y && my <= cr.y+cr.h);
-                SDL_Color bg2 = hov ? SDL_Color{60,80,120,255} : SDL_Color{20,24,36,255};
-                SDL_SetRenderDrawColor(r, bg2.r, bg2.g, bg2.b, 255);
-                SDL_RenderFillRect(r, &cr);
-                SDL_SetRenderDrawColor(r, 80, 100, 160, 255);
-                SDL_RenderDrawRect(r, &cr);
-            }
-        } else if (dialog.lineComplete && line.choices.empty()) {
-            // Blinking advance indicator
-            Uint32 ticks = SDL_GetTicks();
-            if ((ticks / 400) % 2 == 0) {
-                SDL_SetRenderDrawColor(r, 220, 220, 80, 255);
-                int ix = screenW - 30;
-                int iy = screenH - 24;
-                SDL_RenderDrawLine(r, ix,   iy-8, ix+14, iy);
-                SDL_RenderDrawLine(r, ix,   iy+8, ix+14, iy);
-                SDL_RenderDrawLine(r, ix,   iy-8, ix,    iy+8);
-            }
-        }
     }
 
     // Screen fade

@@ -457,7 +457,18 @@ void Game::handleInput() {
 #ifdef __SWITCH__
             bool wasEditing = editor_.getConfig().textEditing;
 #endif
+            // Capture text-editing state BEFORE handling: if a field was
+            // capturing typed input, ESC/Backspace/Enter must not leak into
+            // the global keymap (which would exit the editor and lose work).
+            bool wasTextEditing = editor_.isTextEditing();
             editor_.handleInput(e);
+            if (wasTextEditing && e.type == SDL_KEYDOWN &&
+                (e.key.keysym.sym == SDLK_ESCAPE ||
+                 e.key.keysym.sym == SDLK_BACKSPACE ||
+                 e.key.keysym.sym == SDLK_RETURN ||
+                 e.key.keysym.sym == SDLK_KP_ENTER)) {
+                continue;
+            }
 #ifdef __SWITCH__
             // If the editor just started text editing, open the system keyboard instead
             // of the custom char-palette (which can't receive input on Switch anyway).
@@ -1635,8 +1646,10 @@ void Game::handleInput() {
         // Config screen handles its own input; transitions checked in run loop
     }
     else if (state_ == GameState::Editor) {
-        // Editor handles its own input via SDL events above
-        if (pauseInput_ || backInput_) {
+        // Editor handles its own input via SDL events above. Only ESC exits,
+        // and never while a text field is being edited (Backspace must never
+        // exit - it is used to delete tiles/objects and edit fields).
+        if (pauseInput_ && !editor_.isTextEditing()) {
             editor_.setActive(false);
             state_ = GameState::MainMenu;
             menuSelection_ = 0;

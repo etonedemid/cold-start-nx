@@ -1017,10 +1017,52 @@ void Game::update() {
     // gameplay. Otherwise scan story triggers so zones can fire cutscenes.
     if (playingCustomMap_) {
         if (csPlay_.active) {
-            // Confirm advances dialog (skip typewriter, then next line).
-            if (confirmInput_ && csPlay_.dialog.active) {
-                csPlay_.advanceDialog();
-                confirmInput_ = false;
+            // Dialog input: confirm button or mouse click.
+            if (csPlay_.dialog.active) {
+                // Update hover for choices and handle clicks.
+                if (csPlay_.dialog.lineComplete &&
+                    csPlay_.dialog.seq &&
+                    csPlay_.dialog.lineIdx < (int)csPlay_.dialog.seq->lines.size()) {
+                    const auto& dline = csPlay_.dialog.seq->lines[csPlay_.dialog.lineIdx];
+                    if (!dline.choices.empty()) {
+                        // Choice box geometry (must match cutsceneRenderDialogBox constants).
+                        const int PAD    = 14;
+                        const int PORT_SZ= 128;
+                        const int BAR_H  = PORT_SZ + 32;
+                        const int CH_H   = 26;
+                        const int CH_W   = std::min(420, SCREEN_W - 2 * PAD);
+                        int n    = (int)dline.choices.size();
+                        int barY = SCREEN_H - BAR_H;
+                        int cx   = (SCREEN_W - CH_W) / 2;
+                        int cy   = barY - n * (CH_H + 4) - 8;
+                        int mx   = ui_.mouseX, my = ui_.mouseY;
+                        csPlay_.dialog.hoveredChoice = -1;
+                        for (int i = 0; i < n; i++) {
+                            SDL_Rect cr = {cx, cy + i*(CH_H+4), CH_W, CH_H};
+                            if (mx >= cr.x && mx < cr.x+cr.w && my >= cr.y && my < cr.y+cr.h)
+                                csPlay_.dialog.hoveredChoice = i;
+                        }
+                        if ((ui_.mouseClicked || confirmInput_) && csPlay_.dialog.hoveredChoice >= 0) {
+                            csPlay_.selectDialogChoice(csPlay_.dialog.hoveredChoice, storyCutscenes_);
+                            ui_.mouseClicked = false;
+                            confirmInput_ = false;
+                        }
+                    } else {
+                        // No choices: any confirm or click advances.
+                        if (confirmInput_ || ui_.mouseClicked) {
+                            csPlay_.advanceDialog();
+                            ui_.mouseClicked = false;
+                            confirmInput_ = false;
+                        }
+                    }
+                } else if (!csPlay_.dialog.lineComplete) {
+                    // Typewriter still running: confirm/click skips to end.
+                    if (confirmInput_ || ui_.mouseClicked) {
+                        csPlay_.advanceDialog();
+                        ui_.mouseClicked = false;
+                        confirmInput_ = false;
+                    }
+                }
             }
             updateStoryCutscene(dt);
             if (csPlay_.active && csPlay_.cutscene && csPlay_.cutscene->blockInput) {
@@ -1317,6 +1359,38 @@ void Game::updateStoryCutscene(float dt) {
     csPlay_.extSignal = signal_;
     csPlay_.extRoute  = storyRoute_;
     csPlay_.update(dt, storyCutscenes_);
+
+    // Camera events pan the real game camera (cam.x/y = world point to
+    // center on).  Without camera events the view stays where gameplay
+    // left it, and actors render in world space relative to it.
+    if (csPlay_.active && csPlay_.camDriven) {
+        camera_.pos.x = csPlay_.cam.x - SCREEN_W * 0.5f;
+        camera_.pos.y = csPlay_.cam.y - SCREEN_H * 0.5f;
+    }
+
+    // Drain one-shot spawn requests.
+    for (auto& pe : csPlay_.pendingExplosions)
+        spawnExplosion({pe.x, pe.y});
+    csPlay_.pendingExplosions.clear();
+
+    for (auto& en : csPlay_.pendingEnemies) {
+        int tid = (int)en.typeId;
+        if (tid < 0) tid = 0;
+        if (tid > (int)EnemyType::Gunner) tid = (int)EnemyType::Gunner;
+        spawnEnemy({en.x, en.y}, static_cast<EnemyType>(tid));
+    }
+    csPlay_.pendingEnemies.clear();
+
+    for (auto& pk : csPlay_.pendingPickups) {
+        Pickup p;
+        p.pos  = {pk.x, pk.y};
+        int tid = (int)pk.typeId;
+        if (tid < 0) tid = 0;
+        if (tid >= (int)UpgradeType::COUNT) tid = 0;
+        p.type = static_cast<UpgradeType>(tid);
+        pickups_.push_back(p);
+    }
+    csPlay_.pendingPickups.clear();
 
     // Drain SIGNAL deltas raised by AdjustSignal events.
     if (csPlay_.pendingSignalDelta != 0) {
