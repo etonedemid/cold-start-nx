@@ -1094,6 +1094,62 @@ void MapEditor::handleInput(SDL_Event& e) {
         }
     }
 
+    // Var name text editing for trigger condition
+    if (trigCondEditingName_) {
+        // Find live pointer
+        TriggerCondition* tc = nullptr;
+        for (auto& c : csLib_.triggerConditions)
+            if (c.triggerIndex == selectedTrigger_) { tc = &c; break; }
+        if (!tc) { trigCondEditingName_ = false; }
+        else if (e.type == SDL_TEXTINPUT) {
+            trigCondNameBuf_ += e.text.text;
+            return;
+        } else if (e.type == SDL_KEYDOWN) {
+            if (e.key.keysym.sym == SDLK_BACKSPACE && !trigCondNameBuf_.empty()) {
+                trigCondNameBuf_.pop_back();
+            } else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_ESCAPE) {
+                if (e.key.keysym.sym == SDLK_RETURN && !trigCondNameBuf_.empty())
+                    tc->varName = trigCondNameBuf_;
+                trigCondEditingName_ = false;
+#ifndef __SWITCH__
+                SDL_StopTextInput();
+#endif
+            }
+            return;
+        }
+    }
+
+    // Cooldown text editing for multi-fire config
+    if (trigMultiCooldownEditing_) {
+        TriggerMultiConfig* mc = nullptr;
+        for (auto& m : csLib_.triggerMultiConfigs)
+            if (m.triggerIndex == selectedTrigger_) { mc = &m; break; }
+        if (!mc) { trigMultiCooldownEditing_ = false; }
+        else if (e.type == SDL_TEXTINPUT) {
+            // Only allow digits and a single decimal point
+            for (const char* p = e.text.text; *p; ++p) {
+                if ((*p >= '0' && *p <= '9') || (*p == '.' && trigMultiCooldownBuf_.find('.') == std::string::npos))
+                    trigMultiCooldownBuf_ += *p;
+            }
+            return;
+        } else if (e.type == SDL_KEYDOWN) {
+            if (e.key.keysym.sym == SDLK_BACKSPACE && !trigMultiCooldownBuf_.empty()) {
+                trigMultiCooldownBuf_.pop_back();
+            } else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_ESCAPE) {
+                if (e.key.keysym.sym == SDLK_RETURN && !trigMultiCooldownBuf_.empty()) {
+                    float v = (float)atof(trigMultiCooldownBuf_.c_str());
+                    if (v < 0.0f) v = 0.0f;
+                    mc->cooldown = v;
+                }
+                trigMultiCooldownEditing_ = false;
+#ifndef __SWITCH__
+                SDL_StopTextInput();
+#endif
+            }
+            return;
+        }
+    }
+
     if (e.type == SDL_KEYDOWN && !e.key.repeat) {
         switch (e.key.keysym.sym) {
             case SDLK_1: currentTool_ = EditorTool::Tile; break;
@@ -1104,6 +1160,7 @@ void MapEditor::handleInput(SDL_Event& e) {
             case SDLK_6: currentTool_ = EditorTool::Rect; break;
             case SDLK_7: currentTool_ = EditorTool::Fill; break;
             case SDLK_g: showGrid_ = !showGrid_; break;
+            case SDLK_v: showVarList_ = !showVarList_; break;
             case SDLK_TAB: showUI_ = !showUI_; break;
             case SDLK_F1: showHelp_ = true; break;
 
@@ -2311,6 +2368,22 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
     leftPanelH_ = 0;
     if (!ui_) return;
 
+    // Cancel trigger text editing if the trigger is deselected
+    if (selectedTrigger_ < 0) {
+        if (trigCondEditingName_) {
+            trigCondEditingName_ = false;
+#ifndef __SWITCH__
+            SDL_StopTextInput();
+#endif
+        }
+        if (trigMultiCooldownEditing_) {
+            trigMultiCooldownEditing_ = false;
+#ifndef __SWITCH__
+            SDL_StopTextInput();
+#endif
+        }
+    }
+
     const int panelW = 220;
     const int panelX = 8;
     const int panelY = TOOLBAR_H + 8;
@@ -2409,12 +2482,14 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
             "SpnR","SpnB","SpnG","SpnY",
             "Fade","Collision",
             "Cutscene","Waypoint","Signal","Objective",
+            "SetVar","LoadMap",
         };
         static const TriggerType kTypes[] = {
             TriggerType::LevelStart, TriggerType::LevelEnd, TriggerType::Crate, TriggerType::Effect,
             TriggerType::TeamSpawnRed, TriggerType::TeamSpawnBlue, TriggerType::TeamSpawnGreen, TriggerType::TeamSpawnYellow,
             TriggerType::LayerFade, TriggerType::CollisionZone,
             TriggerType::Cutscene, TriggerType::Waypoint, TriggerType::SignalZone, TriggerType::Objective,
+            TriggerType::SetVariable, TriggerType::LoadMap,
         };
         constexpr int kTypeCount2 = (int)(sizeof(kTypes) / sizeof(kTypes[0]));
         int typeIdx = 0;
@@ -2423,9 +2498,28 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
         bool hasParamRow = (t.type == TriggerType::Cutscene ||
                             t.type == TriggerType::Waypoint ||
                             t.type == TriggerType::SignalZone ||
-                            t.type == TriggerType::Objective);
+                            t.type == TriggerType::Objective ||
+                            t.type == TriggerType::SetVariable);
+
+        // Find variable condition for this trigger (may be null)
+        TriggerCondition* trigCond = nullptr;
+        for (auto& tc : csLib_.triggerConditions)
+            if (tc.triggerIndex == selectedTrigger_) { trigCond = &tc; break; }
+        bool hasVarCond = (trigCond != nullptr);
+
+        // Find multi config for this trigger (may be null)
+        TriggerMultiConfig* trigMulti = nullptr;
+        for (auto& mc : csLib_.triggerMultiConfigs)
+            if (mc.triggerIndex == selectedTrigger_) { trigMulti = &mc; break; }
+        bool hasMulti = (trigMulti != nullptr);
+
         // TitleH(22) + top_pad(8) + rows + gap(8) + delete(26) + bot_pad(8)
-        const int panelH = UI::W98::TitleH + 8 + (3 + (hasCondRow ? 1 : 0) + (hasParamRow ? 1 : 0)) * rowH + 8 + 26 + 8;
+        int extraRows = (hasCondRow ? 1 : 0) + (hasParamRow ? 1 : 0)
+                      + 1                         // Var cond toggle
+                      + (hasVarCond ? 3 : 0)      // name + cmp + value when enabled
+                      + 1                         // Multi toggle
+                      + (hasMulti ? 1 : 0);       // cooldown when enabled
+        const int panelH = UI::W98::TitleH + 8 + (3 + extraRows) * rowH + 8 + 26 + 8;
         if (panelH > maxPanelH) return;
         leftPanelH_ = panelH;
         ui_->drawWin98Window(panelX, panelY, panelW, panelH, "Trigger");
@@ -2518,6 +2612,131 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
                 }
             }
             y += rowH;
+        }
+
+        // Var condition toggle + fields
+        {
+            ui_->drawText("Var cond", lx, y + 5, 11, UI::W98::Black);
+            if (ui_->win98Button(250, hasVarCond ? "ON" : "OFF", arLx, y, roFldW, btnSz, hasVarCond)) {
+                pushUndo();
+                if (hasVarCond) {
+                    // Remove condition
+                    for (auto it = csLib_.triggerConditions.begin(); it != csLib_.triggerConditions.end(); ++it) {
+                        if (it->triggerIndex == selectedTrigger_) {
+                            csLib_.triggerConditions.erase(it); break;
+                        }
+                    }
+                    trigCond = nullptr; hasVarCond = false;
+                    trigCondEditingName_ = false;
+                } else {
+                    // Add condition with defaults
+                    TriggerCondition nc;
+                    nc.triggerIndex = selectedTrigger_;
+                    nc.varName = "var";
+                    nc.value = 0; nc.cmp = 0;
+                    csLib_.triggerConditions.push_back(nc);
+                    trigCond = &csLib_.triggerConditions.back();
+                    hasVarCond = true;
+                }
+            }
+            y += rowH;
+
+            if (hasVarCond && trigCond) {
+                // Var name (inline editable)
+                ui_->drawText("Var", lx, y + 5, 11, UI::W98::Black);
+                bool editingThis = trigCondEditingName_;
+                const char* nameDisp = editingThis ? trigCondNameBuf_.c_str() : trigCond->varName.c_str();
+                float blink = editingThis ? (float)fmod(SDL_GetTicks() * 0.001, 1.0) : 0.0f;
+                ui_->drawWin98TextField(arLx, y, roFldW, btnSz, nameDisp, editingThis, false, blink);
+                if (ui_->mouseClicked && ui_->pointInRect(ui_->mouseX, ui_->mouseY, arLx, y, roFldW, btnSz)) {
+                    ui_->mouseClicked = false;
+                    ui_->clickCooldownFrames = 2;
+                    trigCondEditingName_ = true;
+                    trigCondNameBuf_ = trigCond->varName;
+#ifndef __SWITCH__
+                    SDL_StartTextInput();
+#endif
+                }
+                y += rowH;
+
+                // Cmp operator
+                static const char* cmpNames[] = {"==","!=",">","<",">=","<="};
+                ui_->drawText("Cmp", lx, y + 5, 11, UI::W98::Black);
+                if (ui_->win98Button(251, "<", arLx, y, btnSz, btnSz, false)) {
+                    pushUndo();
+                    trigCond->cmp = (uint8_t)((trigCond->cmp + 5) % 6);
+                }
+                ui_->drawWin98TextField(fldx, y, fieldW, btnSz, cmpNames[trigCond->cmp % 6], false);
+                if (ui_->win98Button(252, ">", arRx, y, btnSz, btnSz, false)) {
+                    pushUndo();
+                    trigCond->cmp = (uint8_t)((trigCond->cmp + 1) % 6);
+                }
+                y += rowH;
+
+                // Value
+                ui_->drawText("Value", lx, y + 5, 11, UI::W98::Black);
+                if (ui_->win98Button(253, "-", arLx, y, btnSz, btnSz, false)) {
+                    pushUndo();
+                    trigCond->value--;
+                }
+                snprintf(buf, sizeof(buf), "%d", trigCond->value);
+                ui_->drawWin98TextField(fldx, y, fieldW, btnSz, buf, false);
+                if (ui_->win98Button(254, "+", arRx, y, btnSz, btnSz, false)) {
+                    pushUndo();
+                    trigCond->value++;
+                }
+                y += rowH;
+            }
+        }
+
+        // Multi-fire toggle + cooldown field
+        {
+            ui_->drawText("Multi", lx, y + 5, 11, UI::W98::Black);
+            if (ui_->win98Button(260, hasMulti ? "ON" : "OFF", arLx, y, roFldW, btnSz, hasMulti)) {
+                pushUndo();
+                if (hasMulti) {
+                    for (auto it = csLib_.triggerMultiConfigs.begin(); it != csLib_.triggerMultiConfigs.end(); ++it) {
+                        if (it->triggerIndex == selectedTrigger_) {
+                            csLib_.triggerMultiConfigs.erase(it); break;
+                        }
+                    }
+                    trigMulti = nullptr; hasMulti = false;
+                    trigMultiCooldownEditing_ = false;
+                } else {
+                    TriggerMultiConfig mc;
+                    mc.triggerIndex = selectedTrigger_;
+                    mc.cooldown = 0.0f;
+                    csLib_.triggerMultiConfigs.push_back(mc);
+                    trigMulti = &csLib_.triggerMultiConfigs.back();
+                    hasMulti = true;
+                }
+            }
+            y += rowH;
+
+            if (hasMulti && trigMulti) {
+                // Cooldown (editable text field, seconds)
+                ui_->drawText("Cooldown", lx, y + 5, 11, UI::W98::Black);
+                bool editingCd = trigMultiCooldownEditing_;
+                char cdDisp[32];
+                if (editingCd) {
+                    snprintf(cdDisp, sizeof(cdDisp), "%s", trigMultiCooldownBuf_.c_str());
+                } else {
+                    snprintf(cdDisp, sizeof(cdDisp), "%.2fs", trigMulti->cooldown);
+                }
+                float blinkCd = editingCd ? (float)fmod(SDL_GetTicks() * 0.001, 1.0) : 0.0f;
+                ui_->drawWin98TextField(arLx, y, roFldW, btnSz, cdDisp, editingCd, false, blinkCd);
+                if (ui_->mouseClicked && ui_->pointInRect(ui_->mouseX, ui_->mouseY, arLx, y, roFldW, btnSz)) {
+                    ui_->mouseClicked = false;
+                    ui_->clickCooldownFrames = 2;
+                    trigMultiCooldownEditing_ = true;
+                    snprintf(cdDisp, sizeof(cdDisp), "%.2f", trigMulti->cooldown);
+                    trigMultiCooldownBuf_ = cdDisp;
+#ifndef __SWITCH__
+                    SDL_StartTextInput();
+#endif
+                }
+                y += rowH;
+            }
         }
 
         // Size (read-only)
@@ -2897,6 +3116,15 @@ void MapEditor::renderToolbar(SDL_Renderer* renderer) {
     if (ib(120, nullptr, TIcon::Scene, showCutsceneEditor_, "Cutscene editor")) {
         showCutsceneEditor_ = !showCutsceneEditor_;
         csEditor_.setActive(showCutsceneEditor_);
+    }
+    // Variable list toggle (ID 122)
+    {
+        // Draw a small "V" glyph manually since we have no icon
+        bool firedVars = ui_->win98Button(122, "Vars", x, 5, btnW + 8, btnH, showVarList_);
+        if (showVarList_) ui_->drawWin98Bevel(x, 5, btnW + 8, btnH, false);
+        if (ui_->pointInRect(ui_->mouseX, ui_->mouseY, x, 5, btnW + 8, btnH)) { tipName = "Variables"; tipX = x; }
+        x += btnW + 11;
+        if (firedVars) showVarList_ = !showVarList_;
     }
     // Help (F1)
     if (ib(121, nullptr, TIcon::Help, showHelp_, "Help (F1)")) showHelp_ = true;

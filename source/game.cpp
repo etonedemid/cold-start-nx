@@ -856,8 +856,8 @@ void Game::run() {
                 bgImageTex_  = customMap_.bgImagePath.empty()  ? nullptr : Assets::instance().loadRelTex(customMap_.bgImagePath);
                 topImageTex_ = customMap_.topImagePath.empty() ? nullptr : Assets::instance().loadRelTex(customMap_.topImagePath);
                 topLayerAlpha_ = 1.0f;
-                // Apply the map's saved game mode for test-play
-                sandboxMode_ = (customMap_.gameMode == 1);
+                // Editor playtest is always sandbox (no waves, no boss drops)
+                sandboxMode_ = true;
                 // Start playing it
                 state_ = GameState::PlayingCustom;
                 playingCustomMap_ = true;
@@ -1088,6 +1088,19 @@ void Game::update() {
 
     screenFlashTimer_  = std::max(0.0f, screenFlashTimer_ - dt);
     muzzleFlashTimer_  = std::max(0.0f, muzzleFlashTimer_ - dt);
+
+    // Acid FX fade in/out
+    {
+        bool running = (acidFXFade_ > 0.001f || acidFXTimer_ > 0.0f);
+        bool shouldFadeOut = (acidFXDuration_ > 0.0f && acidFXTimer_ >= acidFXDuration_);
+        if (shouldFadeOut) {
+            acidFXFade_ = std::max(0.0f, acidFXFade_ - dt * 2.0f);
+            if (acidFXFade_ <= 0.0f) { acidFXTimer_ = 0.0f; acidFXDuration_ = 0.0f; }
+        } else if (running) {
+            acidFXTimer_ += dt;
+            acidFXFade_ = std::min(1.0f, acidFXFade_ + dt * 2.0f);
+        }
+    }
 
     // Top-layer fade: detect if player is inside any LayerFade trigger
     if (topImageTex_) {
@@ -1336,6 +1349,7 @@ void Game::resetStoryRun() {
     signal_      = 50;
     storyRoute_  = 0;
     storyFlags_.clear();
+    packVars_.clear();
     csFiredZones_.clear();
     storyFiredTriggers_.clear();
     storyRunActive_ = true;
@@ -1343,6 +1357,11 @@ void Game::resetStoryRun() {
 
 void Game::loadStoryCutsceneLib(const std::string& csmPath) {
     storyCutscenes_.clear();
+    localVars_.clear();
+    csFiredZones_.clear();
+    storyFiredTriggers_.clear();
+    triggerPlayerInside_.clear();
+    triggerMultiCooldowns_.clear();
     csPlay_.stop();
     // Derive the sibling .csc path (same basename, .csc extension).
     std::string p = csmPath;
@@ -1359,6 +1378,13 @@ void Game::startStoryCutscene(const std::string& id) {
     if (!cs) return;
     csPlay_.extSignal = signal_;
     csPlay_.extRoute  = storyRoute_;
+    csPlay_.extVarGet = [this](const std::string& name) -> int {
+        auto it = localVars_.find(name);
+        if (it != localVars_.end()) return it->second;
+        auto it2 = packVars_.find(name);
+        if (it2 != packVars_.end()) return it2->second;
+        return 0;
+    };
     csPlay_.start(cs, renderer_);
     csControlBlend_ = 0.0f;
 }
@@ -1414,6 +1440,77 @@ void Game::updateStoryCutscene(float dt) {
         adjustSignal(csPlay_.pendingSignalDelta, "cutscene");
         csPlay_.pendingSignalDelta = 0;
     }
+    // Drain variable set actions.
+    for (const auto& vs : csPlay_.pendingVarSets) {
+        auto& map = (vs.scope == 1) ? packVars_ : localVars_;
+        switch (vs.op) {
+            case 1:  map[vs.key] += vs.value; break;
+            case 2:  map[vs.key] -= vs.value; break;
+            default: map[vs.key]  = vs.value; break;
+        }
+    }
+    csPlay_.pendingVarSets.clear();
+
+    // Acid FX requests from PostFXAcid events.
+    for (const auto& af : csPlay_.pendingAcidFX) {
+        if (af.enable) {
+            acidColor1_ = {(Uint8)af.c1r, (Uint8)af.c1g, (Uint8)af.c1b, 255};
+            acidColor2_ = {(Uint8)af.c2r, (Uint8)af.c2g, (Uint8)af.c2b, 255};
+            acidFXDuration_ = af.duration;
+            if (acidFXFade_ <= 0.001f) acidFXTimer_ = 0.0f;
+            acidFXFade_ = std::max(acidFXFade_, 0.001f);  // trigger fade-in
+        } else {
+            // Disable: start fade out by setting duration to a tiny value that is already elapsed
+            if (acidFXFade_ > 0.001f) acidFXDuration_ = acidFXTimer_ + 0.001f;
+        }
+    }
+    csPlay_.pendingAcidFX.clear();
+
+    // Console command requests from ConsoleCmd events.
+    for (const auto& rawCmd : csPlay_.pendingConsoleCmds) {
+        // Expand {varname} tokens
+        std::string cmd;
+        cmd.reserve(rawCmd.size());
+        for (size_t i = 0; i < rawCmd.size(); ) {
+            if (rawCmd[i] == '{') {
+                size_t end = rawCmd.find('}', i + 1);
+                if (end != std::string::npos) {
+                    std::string vn = rawCmd.substr(i + 1, end - i - 1);
+                    auto it = localVars_.find(vn);
+                    int vval = 0;
+                    if (it != localVars_.end()) vval = it->second;
+                    else {
+                        auto it2 = packVars_.find(vn);
+                        if (it2 != packVars_.end()) vval = it2->second;
+                    }
+                    char tmp[32]; snprintf(tmp, sizeof(tmp), "%d", vval);
+                    cmd += tmp;
+                    i = end + 1;
+                    continue;
+                }
+            }
+            cmd += rawCmd[i++];
+        }
+        consoleExec(cmd.c_str());
+    }
+    csPlay_.pendingConsoleCmds.clear();
+
+    // Map load request from LoadMap event.
+    if (!csPlay_.pendingLoadMap.empty()) {
+        std::string path = csPlay_.pendingLoadMap;
+        csPlay_.stop();
+        startCustomMap(path);
+        return;
+    }
+    // Death screen request from ondeath cutscene.
+    if (csPlay_.pendingDeathScreen) {
+        csPlay_.pendingDeathScreen = false;
+        csPlay_.stop();
+        if (state_ == GameState::PlayingCustom || state_ == GameState::CustomPaused ||
+            state_ == GameState::PlayingPack    || state_ == GameState::PackPaused)
+            state_ = GameState::CustomDead;
+        return;
+    }
     // Copy any script flags out into campaign-spanning state.
     for (auto& kv : csPlay_.scriptFlags) {
         storyFlags_[kv.first] = kv.second;
@@ -1457,10 +1554,19 @@ void Game::updateStoryCutscene(float dt) {
         std::string next = csPlay_.pendingChainId;
         startStoryCutscene(next);
     } else if (csPlay_.pendingEnd || csPlay_.isDone()) {
+        bool wasOnDeath = csPlay_.cutscene &&
+                          csPlay_.cutscene->id == storyCutscenes_.onDeathId;
         csPlay_.stop();
         // Reset cutscene overrides on the player when the cutscene ends.
         player_.csScale = 1.0f; player_.csAlpha = 1.0f;
         player_.csVisible = true; player_.csFlashAmt = 0.0f;
+        // If this was the ondeath cutscene and no DeathScreen event fired, show death screen now.
+        if (wasOnDeath) {
+            if (state_ == GameState::PlayingPack || state_ == GameState::PackPaused)
+                state_ = GameState::PackDead;
+            else
+                state_ = GameState::CustomDead;
+        }
     }
 }
 
@@ -1610,20 +1716,132 @@ bool Game::playerInTriggerRect(const MapTrigger& t) const {
 }
 
 void Game::updateStoryTriggers() {
+    auto getVar = [&](const std::string& key) -> int {
+        auto it = localVars_.find(key); if (it != localVars_.end()) return it->second;
+        auto it2 = packVars_.find(key); if (it2 != packVars_.end()) return it2->second;
+        return 0;
+    };
+    auto condMet = [&](int idx) -> bool {
+        for (const auto& tc : storyCutscenes_.triggerConditions) {
+            if (tc.triggerIndex != idx || tc.varName.empty()) continue;
+            int lhs = getVar(tc.varName);
+            bool ok;
+            switch (tc.cmp) {
+                case 1:  ok = lhs != tc.value; break;
+                case 2:  ok = lhs >  tc.value; break;
+                case 3:  ok = lhs <  tc.value; break;
+                case 4:  ok = lhs >= tc.value; break;
+                case 5:  ok = lhs <= tc.value; break;
+                default: ok = lhs == tc.value; break;
+            }
+            if (!ok) return false;
+        }
+        return true;
+    };
+
+    // Find multi-config for a trigger index (nullptr if not multi)
+    auto findMulti = [&](int idx) -> const TriggerMultiConfig* {
+        for (const auto& mc : storyCutscenes_.triggerMultiConfigs)
+            if (mc.triggerIndex == idx) return &mc;
+        return nullptr;
+    };
+
+    // Tick cooldowns
+    for (auto& kv : triggerMultiCooldowns_)
+        kv.second -= dt_;
+
+    // Build current inside set; detect leave events to start cooldown countdown
+    std::set<int> nowInside;
+    for (int i = 0; i < (int)customMap_.triggers.size(); i++)
+        if (playerInTriggerRect(customMap_.triggers[i]))
+            nowInside.insert(i);
+
+    // Triggers player just left: start/reset their cooldown timer
+    for (int i : triggerPlayerInside_) {
+        if (!nowInside.count(i)) {
+            const TriggerMultiConfig* mc = findMulti(i);
+            if (mc) triggerMultiCooldowns_[i] = mc->cooldown;
+        }
+    }
+
+    // Triggers player just entered this frame
+    std::set<int> justEntered;
+    for (int i : nowInside)
+        if (!triggerPlayerInside_.count(i))
+            justEntered.insert(i);
+
+    triggerPlayerInside_ = nowInside;
+
     for (int i = 0; i < (int)customMap_.triggers.size(); i++) {
         const MapTrigger& t = customMap_.triggers[i];
+        const TriggerMultiConfig* mc = findMulti(i);
+
+        bool inside = nowInside.count(i) > 0;
+        bool entered = justEntered.count(i) > 0;
+
+        // For multi triggers: fire on just-entered and cooldown expired (or no prior fire)
+        // For one-shot triggers: fire once while inside (original behavior)
+        auto canFire = [&](std::set<int>& firedSet) -> bool {
+            if (mc) {
+                // multi: must just enter AND not in active cooldown
+                if (!entered) return false;
+                auto cd = triggerMultiCooldowns_.find(i);
+                if (cd != triggerMultiCooldowns_.end() && cd->second > 0.0f) return false;
+                if (!condMet(i)) return false;
+                return true;
+            } else {
+                if (firedSet.count(i) || !inside || !condMet(i)) return false;
+                firedSet.insert(i);
+                return true;
+            }
+        };
+
         switch (t.type) {
             case TriggerType::Cutscene: {
-                if (csFiredZones_.count(i) || !playerInTriggerRect(t)) break;
-                csFiredZones_.insert(i);
+                if (mc) {
+                    if (!entered) break;
+                    auto cd = triggerMultiCooldowns_.find(i);
+                    if (cd != triggerMultiCooldowns_.end() && cd->second > 0.0f) break;
+                    if (!condMet(i)) break;
+                    // Reset cooldown to -inf so it doesn't re-arm until player leaves
+                    triggerMultiCooldowns_[i] = -1e9f;
+                } else {
+                    if (csFiredZones_.count(i) || !inside || !condMet(i)) break;
+                    csFiredZones_.insert(i);
+                }
                 int idx = t.param;
                 if (idx >= 0 && idx < (int)storyCutscenes_.cutscenes.size())
                     startStoryCutscene(storyCutscenes_.cutscenes[idx].id);
                 return;  // a cutscene started; stop scanning this frame
             }
+            case TriggerType::SetVariable: {
+                if (!canFire(storyFiredTriggers_)) break;
+                if (mc) triggerMultiCooldowns_[i] = -1e9f;
+                for (const auto& va : storyCutscenes_.triggerVarActions) {
+                    if (va.triggerIndex != i || va.key.empty()) continue;
+                    auto& m = (va.scope == 1) ? packVars_ : localVars_;
+                    switch (va.op) {
+                        case 1:  m[va.key] += va.value; break;
+                        case 2:  m[va.key] -= va.value; break;
+                        default: m[va.key]  = va.value; break;
+                    }
+                }
+                break;
+            }
+            case TriggerType::LoadMap: {
+                if (!canFire(storyFiredTriggers_)) break;
+                if (mc) triggerMultiCooldowns_[i] = -1e9f;
+                for (const auto& tm : storyCutscenes_.triggerMapLoads) {
+                    if (tm.triggerIndex == i && !tm.mapPath.empty()) {
+                        startCustomMap(tm.mapPath);
+                        return;
+                    }
+                }
+                break;
+            }
             case TriggerType::Waypoint: {
-                if (storyFiredTriggers_.count(i) || !playerInTriggerRect(t)) break;
-                storyFiredTriggers_.insert(i);
+                if (!canFire(storyFiredTriggers_)) break;
+                if (mc) triggerMultiCooldowns_[i] = -1e9f;
                 if (t.param == 2) { storyRoute_ = 2; storyFlags_["route_b"] = true; }
                 else              { storyRoute_ = 1; storyFlags_["route_a"] = true; }
                 consoleOut(storyRoute_ == 2 ? "Route committed: SIGNAL (B)"
@@ -1631,13 +1849,13 @@ void Game::updateStoryTriggers() {
                 break;
             }
             case TriggerType::SignalZone: {
-                if (storyFiredTriggers_.count(i) || !playerInTriggerRect(t)) break;
-                storyFiredTriggers_.insert(i);
+                if (!canFire(storyFiredTriggers_)) break;
+                if (mc) triggerMultiCooldowns_[i] = -1e9f;
                 adjustSignal((int)(int8_t)t.param, "signal zone");
                 break;
             }
             case TriggerType::Objective: {
-                if (storyFiredTriggers_.count(i) || !playerInTriggerRect(t)) break;
+                if (storyFiredTriggers_.count(i) || !inside) break;
                 if ((ObjectiveKind)t.param == ObjectiveKind::Recover) {
                     storyFiredTriggers_.insert(i);
                     storyFlags_["goal_open"] = true;
@@ -1662,6 +1880,11 @@ void Game::consoleExec(const char* cmd) {
     consoleOut(cmd);   // echo command
     char tok[64] = {}, rest[192] = {};
     sscanf(cmd, "%63s %191[^\n]", tok, rest);
+
+    // All spawn commands use current mouse world position
+    int mx = 0, my = 0;
+    SDL_GetMouseState(&mx, &my);
+    Vec2 mouseWorldPos = camera_.screenToWorld({(float)mx, (float)my});
 
     if (strcmp(tok, "wave") == 0) {
         int n = 0;
@@ -1705,14 +1928,20 @@ void Game::consoleExec(const char* cmd) {
         else { consoleOut("unknown type - melee/shooter/brute/scout/sniper/gunner/boss_brute/boss_sniper/boss_gunner"); known = false; }
         if (known) {
             count = std::max(1, std::min(count, 20));
-            for (int i = 0; i < count; i++) spawnEnemy(pickEnemySpawnPos(), etype);
+            for (int i = 0; i < count; i++) spawnEnemy(mouseWorldPos, etype);
             char msg[64]; snprintf(msg, sizeof(msg), "Spawned %d %s", count, typeName);
             consoleOut(msg);
         }
+    } else if (strcmp(tok, "spawn_box") == 0) {
+        PickupCrate box;
+        box.pos = mouseWorldPos;
+        box.hasContents = false;
+        crates_.push_back(box);
+        consoleOut("Spawned destructible box at mouse");
     } else if (strcmp(tok, "vehicle") == 0) {
         if (strcmp(rest, "car") == 0) {
             Vehicle v;
-            v.pos    = player_.pos + Vec2{120.0f, 0.0f};
+            v.pos    = mouseWorldPos;
             v.type   = VehicleType::Car;
             v.sprite = vehicleCarSprite_;
             if (v.sprite) SDL_QueryTexture(v.sprite, nullptr, nullptr, &v.spriteW, &v.spriteH);
@@ -1782,6 +2011,7 @@ void Game::consoleExec(const char* cmd) {
     } else if (strcmp(tok, "help") == 0) {
         consoleOut(" wave N | hp N | god | clear | bombs N | signal [N] | help");
         consoleOut(" spawn melee|shooter|brute|scout|sniper|gunner|boss_* [N]");
+        consoleOut(" spawn_box | vehicle car");
         consoleOut(" give <upgrade_name>");
     } else if (tok[0] != '\0') {
         char msg[128]; snprintf(msg, sizeof(msg), "Unknown command: %s  (type help)", tok);

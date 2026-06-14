@@ -831,7 +831,7 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             uint32_t netId = 0;
             memcpy(&netId, payload, 4);
             if (onBulletRemoved) onBulletRemoved(netId);
-            // Host relays reliably — lost packets leave ghost bullets on all clients
+            // Host relays reliably - lost packets leave ghost bullets on all clients
             if (isHost_) {
                 auto pkt = buildPacket(NetPacketType::BulletHit, payload, payloadLen);
                 for (auto& p : players_) {
@@ -1079,7 +1079,7 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
 
     case NetPacketType::PlayerHpSync: {
         // payload: playerId(1) + hp(4) + maxHp(4) + killerId(1)
-        // Host-authoritative only — reject any client-originated PlayerHpSync packets
+        // Host-authoritative only - reject any client-originated PlayerHpSync packets
         // to prevent HP spoofing.
         if (isHost_) break;
         if (payloadLen >= 10) {
@@ -1129,7 +1129,7 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
     }
 
     case NetPacketType::SubPlayerHpSync: {
-        // Host-authoritative only — clients must not forge HP updates.
+        // Host-authoritative only - clients must not forge HP updates.
         if (!isHost_ && from) break;
         if (payloadLen >= 11) {
             uint8_t ownerId = payload[0];

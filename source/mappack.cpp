@@ -28,8 +28,12 @@ bool MapPack::loadFromFile(const std::string& path) {
     std::string section;
     maps.clear();
     characterPaths.clear();
+    tags.clear();
+    iconPath.clear();
     int mapCount = 0;
     std::vector<std::pair<int,std::string>> musicEntries; // (0-indexed, resolved path)
+    std::vector<std::pair<int,std::string>> nameEntries;  // per-map displayName overrides
+    std::vector<std::pair<int,std::string>> descEntries;  // per-map descriptions
 
     while (fgets(buf, sizeof(buf), f)) {
         std::string line(buf);
@@ -51,6 +55,25 @@ bool MapPack::loadFromFile(const std::string& path) {
             else if (key == "creator") creator = value;
             else if (key == "description") description = value;
             else if (key == "version") version = atoi(value.c_str());
+            else if (key == "icon") {
+                iconPath = (!folder.empty() && !value.empty() && value[0] != '/')
+                    ? folder + value : value;
+            }
+            else if (key == "tags") {
+                // comma-separated list
+                std::string t = value;
+                tags.clear();
+                size_t pos = 0;
+                while (pos < t.size()) {
+                    size_t comma = t.find(',', pos);
+                    if (comma == std::string::npos) comma = t.size();
+                    std::string tag = t.substr(pos, comma - pos);
+                    while (!tag.empty() && tag.front() == ' ') tag = tag.substr(1);
+                    while (!tag.empty() && tag.back()  == ' ') tag.pop_back();
+                    if (!tag.empty()) tags.push_back(tag);
+                    pos = comma + 1;
+                }
+            }
         }
         else if (section == "character") {
             // Accept path, path1, path2, etc.
@@ -85,13 +108,25 @@ bool MapPack::loadFromFile(const std::string& path) {
                     musicEntries.push_back({n - 1, resolved});
                 }
             }
+            else if (key.size() > 4 && key.substr(0, 4) == "name") {
+                int n = atoi(key.substr(4).c_str());
+                if (n > 0) nameEntries.push_back({n - 1, value});
+            }
+            else if (key.size() > 4 && key.substr(0, 4) == "desc") {
+                int n = atoi(key.substr(4).c_str());
+                if (n > 0) descEntries.push_back({n - 1, value});
+            }
         }
     }
     fclose(f);
 
-    // Apply per-map music overrides
+    // Apply per-map overrides
     for (auto& me : musicEntries)
         if (me.first < (int)maps.size()) maps[me.first].musicPath = me.second;
+    for (auto& ne : nameEntries)
+        if (ne.first < (int)maps.size()) maps[ne.first].displayName = ne.second;
+    for (auto& de : descEntries)
+        if (de.first < (int)maps.size()) maps[de.first].description = de.second;
 
     currentMapIndex = 0;
     printf("MapPack loaded: %s (%d maps, %d characters)\n",
@@ -108,6 +143,21 @@ bool MapPack::saveToFile(const std::string& path) const {
     fprintf(f, "creator=%s\n", creator.c_str());
     fprintf(f, "description=%s\n", description.c_str());
     fprintf(f, "version=%d\n", version);
+    if (!iconPath.empty()) {
+        // Save as relative path if inside the pack folder
+        std::string rel = iconPath;
+        if (!folder.empty() && rel.substr(0, folder.size()) == folder)
+            rel = rel.substr(folder.size());
+        fprintf(f, "icon=%s\n", rel.c_str());
+    }
+    if (!tags.empty()) {
+        fprintf(f, "tags=");
+        for (int i = 0; i < (int)tags.size(); i++) {
+            if (i) fprintf(f, ",");
+            fprintf(f, "%s", tags[i].c_str());
+        }
+        fprintf(f, "\n");
+    }
 
     fprintf(f, "\n[character]\n");
     for (int i = 0; i < (int)characterPaths.size(); i++) {
@@ -121,6 +171,10 @@ bool MapPack::saveToFile(const std::string& path) const {
         fprintf(f, "map%d=%s\n", i + 1, maps[i].path.c_str());
     }
     for (int i = 0; i < (int)maps.size(); i++) {
+        if (!maps[i].displayName.empty())
+            fprintf(f, "name%d=%s\n", i + 1, maps[i].displayName.c_str());
+        if (!maps[i].description.empty())
+            fprintf(f, "desc%d=%s\n", i + 1, maps[i].description.c_str());
         if (!maps[i].musicPath.empty())
             fprintf(f, "music%d=%s\n", i + 1, maps[i].musicPath.c_str());
     }

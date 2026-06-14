@@ -23,10 +23,14 @@
 #include <vector>
 
 struct MapPackEntry {
-    std::string path;       // path to .csm file
-    std::string name;       // display name (loaded from .csm header or filename)
-    std::string musicPath;  // override music file (resolved absolute path, empty = use map/default)
+    std::string path;         // path to .csm file
+    std::string name;         // fallback display name (from .csm header or filename)
+    std::string displayName;  // per-map title override (empty = use name)
+    std::string description;  // short description shown in map select
+    std::string musicPath;    // override music file (resolved absolute path, empty = use map/default)
     bool        completed = false;
+
+    const std::string& title() const { return displayName.empty() ? name : displayName; }
 };
 
 struct MapPack {
@@ -35,6 +39,8 @@ struct MapPack {
     std::string description;
     int         version     = 1;
     std::string folder;     // path to pack folder
+    std::string iconPath;   // path to icon image (resolved absolute, empty = none)
+    std::vector<std::string> tags;  // searchable tags (e.g. "action", "story", "short")
 
     // Included character path(s)
     std::vector<std::string> characterPaths;

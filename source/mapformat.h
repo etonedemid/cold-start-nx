@@ -33,7 +33,9 @@ enum class TriggerType : uint8_t {
     Waypoint         = 17, // route-split commit; param = route id (1=Spearhead, 2=Signal)
     SignalZone       = 18, // one-time SIGNAL delta on enter; param = signed delta (int8)
     Objective        = 19, // side-request marker; param = subtype; completion sets a flag + SIGNAL
-    COUNT            = 20,
+    SetVariable      = 20, // one-shot: apply variable action from storyCutscenes_.triggerVarActions[param]
+    LoadMap          = 21, // load a new map; path from storyCutscenes_.triggerMapLoads matching this index
+    COUNT            = 22,
 };
 
 // Objective trigger subtypes (MapTrigger::param for TriggerType::Objective)

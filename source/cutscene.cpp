@@ -48,6 +48,35 @@ bool CutsceneLibrary::save(const std::string& path) const {
     if (!f) return false;
     fprintf(f, "# Cold Start Cutscene Library v2\n");
     fprintf(f, "[library]\nversion=2\n");
+    if (!onDeathId.empty()) {
+        fprintf(f, "\n[config]\n");
+        writeStr(f, "ondeath", onDeathId);
+    }
+    for (const auto& va : triggerVarActions) {
+        fprintf(f, "\n[trigger_var]\n");
+        writeI(f, "trigger", va.triggerIndex);
+        writeStr(f, "key", va.key);
+        writeI(f, "value", va.value);
+        writeI(f, "op", (int)va.op);
+        writeI(f, "scope", (int)va.scope);
+    }
+    for (const auto& tc : triggerConditions) {
+        fprintf(f, "\n[trigger_cond]\n");
+        writeI(f, "trigger", tc.triggerIndex);
+        writeStr(f, "var", tc.varName);
+        writeI(f, "value", tc.value);
+        writeI(f, "cmp", (int)tc.cmp);
+    }
+    for (const auto& tm : triggerMapLoads) {
+        fprintf(f, "\n[trigger_map]\n");
+        writeI(f, "trigger", tm.triggerIndex);
+        writeStr(f, "path", tm.mapPath);
+    }
+    for (const auto& mc : triggerMultiConfigs) {
+        fprintf(f, "\n[trigger_multi]\n");
+        writeI(f, "trigger", mc.triggerIndex);
+        writeF(f, "cooldown", mc.cooldown);
+    }
     for (const auto& cs : cutscenes) {
         fprintf(f, "\n[cutscene]\n");
         writeStr(f, "id", cs.id);
@@ -69,6 +98,7 @@ bool CutsceneLibrary::save(const std::string& path) const {
             writeF(f, "salpha", a.startAlpha);
             writeB(f, "svis",  a.startVisible);
             writeB(f, "fliph", a.flipH);
+            writeI(f, "layer", a.layer);
         }
         // events
         for (const auto& e : cs.events) {
@@ -106,6 +136,18 @@ bool CutsceneLibrary::save(const std::string& path) const {
             writeStr(f, "chain_false_id", e.chainFalseId);
             writeI(f, "spawn_enemy_type", (int)e.spawnEnemyTypeId);
             writeI(f, "spawn_pickup_type", (int)e.spawnPickupTypeId);
+            writeStr(f, "var_name", e.varName);
+            writeI(f, "var_value", e.varValue);
+            writeI(f, "var_op", (int)e.varOp);
+            writeI(f, "var_scope", (int)e.varScope);
+            writeStr(f, "map_path", e.mapPath);
+            writeF(f, "acid_c1r", e.acidColor1R);
+            writeF(f, "acid_c1g", e.acidColor1G);
+            writeF(f, "acid_c1b", e.acidColor1B);
+            writeF(f, "acid_c2r", e.acidColor2R);
+            writeF(f, "acid_c2g", e.acidColor2G);
+            writeF(f, "acid_c2b", e.acidColor2B);
+            writeStr(f, "console_cmd", e.consoleCmd);
         }
         // dialogs
         for (const auto& seq : cs.dialogs) {
@@ -129,6 +171,11 @@ bool CutsceneLibrary::save(const std::string& path) const {
             }
         }
     }
+    for (const auto& kv : varDefaults) {
+        fprintf(f, "\n[var_default]\n");
+        writeStr(f, "name", kv.first);
+        writeI(f, "value", kv.second);
+    }
     fclose(f);
     return true;
 }
@@ -144,6 +191,8 @@ bool CutsceneLibrary::load(const std::string& path) {
     FILE* f = fopen(path.c_str(), "r");
     if (!f) return false;
     cutscenes.clear();
+    onDeathId.clear();
+    triggerVarActions.clear();
 
     char buf[1024];
     Cutscene*     curCs     = nullptr;
@@ -152,6 +201,13 @@ bool CutsceneLibrary::load(const std::string& path) {
     CsDialogSeq*  curSeq    = nullptr;
     CsDialogLine* curLine   = nullptr;
     CsDialogChoice* curChoice = nullptr;
+    bool          inConfig    = false;
+    TriggerVarAction*  curTrigVar   = nullptr;
+    TriggerCondition*  curTrigCond  = nullptr;
+    TriggerMapLoad*    curTrigMap   = nullptr;
+    TriggerMultiConfig* curTrigMulti = nullptr;
+    bool          inVarDefault = false;
+    std::string   varDefaultName;
 
     while (fgets(buf, sizeof(buf), f)) {
         std::string line = trim(buf);
@@ -160,9 +216,27 @@ bool CutsceneLibrary::load(const std::string& path) {
         if (line[0] == '[') {
             std::string tag = line.substr(1, line.size() - 2);
             curActor = nullptr; curEvent = nullptr;
-            curChoice = nullptr;
+            curChoice = nullptr; inConfig = false; inVarDefault = false;
+            curTrigVar = nullptr; curTrigCond = nullptr; curTrigMap = nullptr; curTrigMulti = nullptr;
             if (tag != "line") curLine = nullptr;
-            if (tag == "cutscene") {
+            if (tag == "config") {
+                inConfig = true;
+            } else if (tag == "trigger_var") {
+                triggerVarActions.push_back(TriggerVarAction{});
+                curTrigVar = &triggerVarActions.back();
+            } else if (tag == "trigger_cond") {
+                triggerConditions.push_back(TriggerCondition{});
+                curTrigCond = &triggerConditions.back();
+            } else if (tag == "trigger_map") {
+                triggerMapLoads.push_back(TriggerMapLoad{});
+                curTrigMap = &triggerMapLoads.back();
+            } else if (tag == "trigger_multi") {
+                triggerMultiConfigs.push_back(TriggerMultiConfig{});
+                curTrigMulti = &triggerMultiConfigs.back();
+            } else if (tag == "var_default") {
+                inVarDefault = true;
+                varDefaultName.clear();
+            } else if (tag == "cutscene") {
                 cutscenes.push_back(Cutscene{});
                 curCs = &cutscenes.back();
                 curSeq = nullptr;
@@ -196,7 +270,30 @@ bool CutsceneLibrary::load(const std::string& path) {
         auto bv = [&](){ return atoi(val.c_str()) != 0; };
         auto sv = [&](){ return trim(val); };
 
-        if (curChoice) {
+        if (inVarDefault) {
+            if      (key == "name")  varDefaultName = sv();
+            else if (key == "value" && !varDefaultName.empty())
+                varDefaults[varDefaultName] = iv();
+        } else if (inConfig) {
+            if (key == "ondeath") onDeathId = sv();
+        } else if (curTrigVar) {
+            if      (key == "trigger") curTrigVar->triggerIndex = iv();
+            else if (key == "key")     curTrigVar->key   = sv();
+            else if (key == "value")   curTrigVar->value = iv();
+            else if (key == "op")      curTrigVar->op    = (uint8_t)iv();
+            else if (key == "scope")   curTrigVar->scope = (uint8_t)iv();
+        } else if (curTrigCond) {
+            if      (key == "trigger") curTrigCond->triggerIndex = iv();
+            else if (key == "var")     curTrigCond->varName = sv();
+            else if (key == "value")   curTrigCond->value = iv();
+            else if (key == "cmp")     curTrigCond->cmp   = (uint8_t)iv();
+        } else if (curTrigMap) {
+            if      (key == "trigger") curTrigMap->triggerIndex = iv();
+            else if (key == "path")    curTrigMap->mapPath = sv();
+        } else if (curTrigMulti) {
+            if      (key == "trigger")  curTrigMulti->triggerIndex = iv();
+            else if (key == "cooldown") curTrigMulti->cooldown     = fv();
+        } else if (curChoice) {
             if      (key == "text")          curChoice->text         = sv();
             else if (key == "next_seq")      curChoice->nextSeqId    = sv();
             else if (key == "set_flag")      curChoice->setFlag      = sv();
@@ -224,6 +321,7 @@ bool CutsceneLibrary::load(const std::string& path) {
             else if (key == "salpha")     curActor->startAlpha  = fv();
             else if (key == "svis")       curActor->startVisible = bv();
             else if (key == "fliph")      curActor->flipH        = bv();
+            else if (key == "layer")     curActor->layer        = iv();
         } else if (curEvent) {
             if      (key == "actor_id") curEvent->actorId   = (uint32_t)iv();
             else if (key == "type")     curEvent->type      = (CsEventType)iv();
@@ -267,8 +365,20 @@ bool CutsceneLibrary::load(const std::string& path) {
             else if (key == "branch_cmp")         curEvent->branchCmp         = (uint8_t)iv();
             else if (key == "branch_threshold")   curEvent->branchThreshold   = iv();
             else if (key == "chain_false_id")     curEvent->chainFalseId      = sv();
+            else if (key == "var_name")           curEvent->varName           = sv();
+            else if (key == "var_value")          curEvent->varValue          = iv();
+            else if (key == "var_op")             curEvent->varOp             = (uint8_t)iv();
+            else if (key == "var_scope")          curEvent->varScope          = (uint8_t)iv();
+            else if (key == "map_path")           curEvent->mapPath           = sv();
             else if (key == "spawn_enemy_type")   curEvent->spawnEnemyTypeId  = (uint8_t)iv();
             else if (key == "spawn_pickup_type")  curEvent->spawnPickupTypeId = (uint8_t)iv();
+            else if (key == "acid_c1r")           curEvent->acidColor1R       = fv();
+            else if (key == "acid_c1g")           curEvent->acidColor1G       = fv();
+            else if (key == "acid_c1b")           curEvent->acidColor1B       = fv();
+            else if (key == "acid_c2r")           curEvent->acidColor2R       = fv();
+            else if (key == "acid_c2g")           curEvent->acidColor2G       = fv();
+            else if (key == "acid_c2b")           curEvent->acidColor2B       = fv();
+            else if (key == "console_cmd")        curEvent->consoleCmd        = sv();
         } else if (curCs) {
             if      (key == "id")           curCs->id           = sv();
             else if (key == "block_input")  curCs->blockInput   = bv();
@@ -318,8 +428,10 @@ void CutscenePlayback::loadTextures(SDL_Renderer* r) {
     actorTex.resize(cutscene->actors.size(), nullptr);
     for (int i = 0; i < (int)cutscene->actors.size(); i++) {
         const auto& a = cutscene->actors[i];
-        if (a.type == CsActorType::FreeSprite && !a.spritePath.empty())
-            actorTex[i] = IMG_LoadTexture(r, a.spritePath.c_str());
+        if (a.type == CsActorType::FreeSprite && !a.spritePath.empty()) {
+            std::string full = Assets::instance().prefix() + a.spritePath;
+            actorTex[i] = IMG_LoadTexture(r, full.c_str());
+        }
     }
 }
 
@@ -353,7 +465,12 @@ void CutscenePlayback::start(const Cutscene* c, SDL_Renderer* r) {
     scriptFlags.clear();
     pendingChainId.clear();
     pendingEnd = false;
+    pendingVarSets.clear();
+    pendingDeathScreen = false;
+    pendingLoadMap.clear();
     pendingSignalDelta = 0;
+    pendingAcidFX.clear();
+    pendingConsoleCmds.clear();
     loadTextures(r);
 }
 
@@ -573,14 +690,45 @@ void CutscenePlayback::update(float dt, const CutsceneLibrary& lib) {
             case CsEventType::AdjustSignal:
                 if (justStarted) pendingSignalDelta += ev.signalDelta;
                 continue;
+            case CsEventType::SetVariable:
+                if (justStarted && !ev.varName.empty())
+                    pendingVarSets.push_back({ev.varName, ev.varValue, ev.varOp, ev.varScope});
+                continue;
+            case CsEventType::DeathScreen:
+                if (justStarted) pendingDeathScreen = true;
+                continue;
+            case CsEventType::LoadMap:
+                if (justStarted && !ev.mapPath.empty()) pendingLoadMap = ev.mapPath;
+                continue;
+            case CsEventType::PostFXAcid:
+                if (justStarted) {
+                    PendingAcidFX req;
+                    req.enable   = ev.flagValue;
+                    req.duration = ev.duration;
+                    req.c1r = ev.acidColor1R; req.c1g = ev.acidColor1G; req.c1b = ev.acidColor1B;
+                    req.c2r = ev.acidColor2R; req.c2g = ev.acidColor2G; req.c2b = ev.acidColor2B;
+                    pendingAcidFX.push_back(req);
+                }
+                continue;
+            case CsEventType::ConsoleCmd:
+                if (justStarted && !ev.consoleCmd.empty())
+                    pendingConsoleCmds.push_back(ev.consoleCmd);
+                continue;
             case CsEventType::BranchCutscene:
                 if (justStarted) {
-                    int  lhs = (ev.branchVar == 1) ? extRoute : extSignal;
+                    // branchVar: 0=SIGNAL, 1=route, 2=named var (extVars[flagName])
+                    int lhs;
+                    if (ev.branchVar == 1)       lhs = extRoute;
+                    else if (ev.branchVar == 2)  lhs = (extVarGet ? extVarGet(ev.flagName) : 0);
+                    else                         lhs = extSignal;
                     bool cond;
                     switch (ev.branchCmp) {
-                        case 1:  cond = (lhs <  ev.branchThreshold); break;
+                        case 1:  cond = (lhs != ev.branchThreshold); break;
                         case 2:  cond = (lhs == ev.branchThreshold); break;
-                        default: cond = (lhs >= ev.branchThreshold); break;
+                        case 3:  cond = (lhs <  ev.branchThreshold); break;
+                        case 4:  cond = (lhs >= ev.branchThreshold); break;
+                        case 5:  cond = (lhs <= ev.branchThreshold); break;
+                        default: cond = (lhs >  ev.branchThreshold); break;
                     }
                     const std::string& target = cond ? ev.chainCsId : ev.chainFalseId;
                     if (!target.empty()) pendingChainId = target;
@@ -711,8 +859,18 @@ void CutscenePlayback::renderActors(SDL_Renderer* r,
                                      SDL_Texture* playerLegs,
                                      SDL_Texture* enemyTex) const {
     if (!active || !cutscene) return;
-    for (int i = 0; i < (int)cutscene->actors.size(); i++) {
-        if (i >= (int)actorStates.size()) break;
+
+    // Build draw order sorted by layer (stable: same layer keeps array order)
+    std::vector<int> order;
+    order.reserve(cutscene->actors.size());
+    for (int i = 0; i < (int)cutscene->actors.size(); i++) order.push_back(i);
+    std::stable_sort(order.begin(), order.end(), [&](int a, int b) {
+        return cutscene->actors[a].layer < cutscene->actors[b].layer;
+    });
+
+    for (int ii : order) {
+        int i = ii;
+        if (i >= (int)actorStates.size()) continue;
         const auto& a = cutscene->actors[i];
         const auto& s = actorStates[i];
         if (!s.visible) continue;

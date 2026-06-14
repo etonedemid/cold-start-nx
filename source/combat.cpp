@@ -96,10 +96,17 @@ void Game::updatePlayer(float dt) {
                     state_ = GameState::MultiplayerDead;
                     respawnTimer_ = currentRules_.respawnTime;
                 }
-            } else if (state_ == GameState::PlayingCustom || state_ == GameState::CustomPaused) {
-                state_ = GameState::CustomDead;
-            } else if (state_ == GameState::PlayingPack || state_ == GameState::PackPaused) {
-                state_ = GameState::PackDead;
+            } else if (state_ == GameState::PlayingCustom || state_ == GameState::CustomPaused ||
+                       state_ == GameState::PlayingPack    || state_ == GameState::PackPaused) {
+                if (!storyCutscenes_.onDeathId.empty() && !csPlay_.active) {
+                    // Play ondeath cutscene; DeathScreen event triggers the actual death screen.
+                    // Fallback: if cutscene ends without DeathScreen, updateStoryCutscene does it.
+                    startStoryCutscene(storyCutscenes_.onDeathId);
+                } else if (state_ == GameState::PlayingPack || state_ == GameState::PackPaused) {
+                    state_ = GameState::PackDead;
+                } else {
+                    state_ = GameState::CustomDead;
+                }
             } else {
                 checkAndSaveBestRun();
                 state_ = GameState::Dead;
@@ -412,10 +419,12 @@ void Game::updatePlayer(float dt) {
             auto breakCrateAt = [&](PickupCrate& c, bool heavyBreak) {
                 c.takeDamage(99.0f);
                 if (!c.alive) {
-                    Pickup pu;
-                    pu.pos = c.pos;
-                    pu.type = c.contents;
-                    pickups_.push_back(pu);
+                    if (c.hasContents) {
+                        Pickup pu;
+                        pu.pos = c.pos;
+                        pu.type = c.contents;
+                        pickups_.push_back(pu);
+                    }
                     spawnMeleeImpact(c.pos, {170, 110, 55, 255}, heavyBreak ? 18 : 14, heavyBreak ? 1.35f : 1.05f);
                     queueMeleeImpactRumble(heavyBreak ? 0.34f : 0.28f,
                                            heavyBreak ? 105 : 82,
@@ -3540,8 +3549,8 @@ void Game::killEnemy(Enemy& e, bool trackKill) {
             player_.bombCount = std::min(MAX_BOMBS, player_.bombCount + 1);
         }
     }
-    // Drop 3 upgrade pickups when a boss is killed
-    if (isBossType(e.type)) {
+    // Drop 3 upgrade pickups when a boss is killed (not in sandbox)
+    if (isBossType(e.type) && !sandboxMode_) {
         for (int i = 0; i < 3; i++) {
             Pickup pu;
             float angle = (float)i / 3.0f * 2.0f * (float)M_PI;
