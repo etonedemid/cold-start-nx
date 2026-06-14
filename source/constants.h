@@ -2,7 +2,7 @@
 #include "vec2.h"
 
 // Version
-constexpr const char* GAME_VERSION = "3.1.1";
+constexpr const char* GAME_VERSION = "3.2.0";
 
 // Workshop
 constexpr const char* WORKSHOP_URL    = "https://coldstartworkshop.duckdns.org";

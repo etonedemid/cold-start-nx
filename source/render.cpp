@@ -954,6 +954,49 @@ void Game::renderPostFXComposite(bool gameplayView) {
                 SDL_RenderFillRect(renderer_, &rightBand);
             }
         }
+
+        // Acid PostFX
+        if (acidFXFade_ > 0.001f) {
+            float a = acidFXFade_;
+            float t = acidFXTimer_;
+
+            // 1. Green tint overlay using additive draw
+            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_ADD);
+            Uint8 tr = (Uint8)(acidColor1_.r * 0.18f * a);
+            Uint8 tg = (Uint8)(acidColor1_.g * 0.22f * a);
+            Uint8 tb = (Uint8)(acidColor1_.b * 0.12f * a);
+            SDL_SetRenderDrawColor(renderer_, tr, tg, tb, (Uint8)(60 * a));
+            SDL_RenderFillRect(renderer_, &full);
+
+            // 2. Animated wavy scan lines (acid ripple approximation)
+            int waveCount = 6;
+            for (int w = 0; w < waveCount; w++) {
+                float phase = t * 1.2f + w * (float)M_PI * 2.0f / waveCount;
+                int y = (int)((0.1f + 0.8f * (w / (float)waveCount)) * SCREEN_H);
+                float waveY = y + sinf(phase) * 12.0f * a;
+                int iy = (int)waveY;
+                Uint8 wr = (Uint8)(acidColor1_.r * 0.6f * a);
+                Uint8 wg = (Uint8)(acidColor1_.g * 0.7f * a);
+                Uint8 wb = (Uint8)(acidColor1_.b * 0.5f * a);
+                SDL_SetRenderDrawColor(renderer_, wr, wg, wb, (Uint8)(30 * a));
+                for (int h = 0; h < 3; h++)
+                    SDL_RenderDrawLine(renderer_, 0, iy + h, SCREEN_W, iy + h);
+            }
+
+            // 3. Edge foam (lime-green border glow)
+            float foamPulse = 0.5f + 0.5f * sinf(t * 3.0f);
+            Uint8 fr = (Uint8)(acidColor2_.r * foamPulse * a);
+            Uint8 fg = (Uint8)(acidColor2_.g * foamPulse * a);
+            Uint8 fb = (Uint8)(acidColor2_.b * foamPulse * a);
+            Uint8 fa = (Uint8)(40 * foamPulse * a);
+            for (int i = 0; i < 8; i++) {
+                SDL_SetRenderDrawColor(renderer_, fr, fg, fb, fa);
+                SDL_Rect border = {i, i, SCREEN_W - i * 2, SCREEN_H - i * 2};
+                SDL_RenderDrawRect(renderer_, &border);
+            }
+
+            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        }
     }
 }
 
@@ -3565,8 +3608,7 @@ void Game::renderConfigMenu() {
         {"Scanlines",         CONFIG_SHADER_SCANLINES_INDEX,  &config_.shaderScanlines},
         {"Glow Pass",         CONFIG_SHADER_GLOW_INDEX,       &config_.shaderGlow},
         {"Glitch Strips",     CONFIG_SHADER_GLITCH_INDEX,     &config_.shaderGlitch},
-        {"Neon Edge",         CONFIG_SHADER_NEON_INDEX,       &config_.shaderNeonEdge},
-        {"Save Incoming Mods",CONFIG_SAVE_INCOMING_MODS_INDEX,&config_.saveIncomingModsPermanently},
+        {"Neon Edge",         CONFIG_SHADER_NEON_INDEX,       &config_.shaderNeonEdge}
     };
     for (auto& row : toggleRows) {
         bool sel = (configSelection_ == row.idx);

@@ -135,7 +135,7 @@ public:
     // True when a text field (config or cutscene editor) is capturing typing,
     // so the host can keep ESC/Backspace/Enter from leaking into menu actions.
     bool isTextEditing() const {
-        return config_.textEditing || (showCutsceneEditor_ && csEditor_.textEditing());
+        return config_.textEditing || trigCondEditingName_ || trigMultiCooldownEditing_ || (showCutsceneEditor_ && csEditor_.textEditing());
     }
 
     std::string savePath() const { return savePath_; }
@@ -206,6 +206,12 @@ private:
     float origTrigW_ = 0, origTrigH_ = 0;
     float origTrigX_ = 0, origTrigY_ = 0;
 
+    // Inline text editing for trigger condition variable name
+    bool        trigCondEditingName_ = false;
+    std::string trigCondNameBuf_;
+    bool        trigMultiCooldownEditing_ = false;
+    std::string trigMultiCooldownBuf_;
+
     // Move drag (grab ball or object body)
     bool  draggingMove_  = false;
     bool  draggingMovePushed_ = false;  // undo snapshot taken for this drag
@@ -249,6 +255,14 @@ private:
     bool showTopLayer_  = true;  // toggle top image layer visibility in editor
     bool showHelp_      = false; // F1 shortcut overlay
     bool dirty_         = false; // unsaved changes indicator
+    bool showVarList_   = false; // Variable list panel toggle
+
+    // Var list inline editing state
+    int  varListSelected_       = -1;
+    bool varListEditingName_    = false;
+    bool varListEditingValue_   = false;
+    std::string varListNameBuf_;
+    std::string varListValueBuf_;
 
     // Hit rects of floating panels measured during render (0 = not shown),
     // used so canvas painting never happens under a panel.
@@ -306,6 +320,7 @@ private:
     void renderTriggers(SDL_Renderer* renderer);
     void renderEntitySpawns(SDL_Renderer* renderer);
     void renderPropertiesPanel(SDL_Renderer* renderer);
+    void renderVarListPanel(SDL_Renderer* renderer);
     void renderMoveHandles(SDL_Renderer* renderer);
     void rebuildFilteredPalette();
     void renderGrid(SDL_Renderer* renderer);

@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <functional>
 #include <cstdint>
 
 // ---- Enums ----
@@ -50,7 +51,12 @@ enum class CsEventType : uint8_t {
     SpawnEnemy    = 23,  // spawn an enemy at a world position
     SpawnPickup   = 24,  // spawn an upgrade pickup at a world position
     CameraRotate  = 25,  // rotate camera viewport (uses fromRot/toRot degrees)
-    COUNT         = 26,
+    SetVariable   = 26,  // set/add/subtract a named integer variable (local or pack scope)
+    DeathScreen   = 27,  // trigger death screen (only fires inside the ondeath cutscene)
+    LoadMap       = 28,  // transition to another map (uses mapPath field)
+    PostFXAcid    = 29,  // toggle/set acid post-FX (duration, colors)
+    ConsoleCmd    = 30,  // run a console command string with {varname} substitution
+    COUNT         = 31,
 };
 
 static inline const char* csEventTypeName(CsEventType t) {
@@ -60,7 +66,8 @@ static inline const char* csEventTypeName(CsEventType t) {
         "Shake","Screen Fade","Cine Bars","Set Visible","Set Frame",
         "Spawn Actor","Despawn","Set Flag","Chain CS","End CS",
         "Adj SIGNAL","Branch CS","Spawn Enemy","Spawn Pickup",
-        "Cam Rotate",
+        "Cam Rotate","Set Var","Death Screen","Load Map",
+        "Acid FX","Console Cmd",
     };
     int i = (int)t;
     if (i < 0 || i >= (int)CsEventType::COUNT) return "?";
@@ -89,6 +96,7 @@ struct CsActor {
     float startAlpha        = 1.0f;
     bool  startVisible      = true;
     bool  flipH             = false;
+    int   layer             = 0;   // draw order: higher = on top
 };
 
 struct CsEvent {
@@ -151,12 +159,31 @@ struct CsEvent {
     int signalDelta = 0;
 
     // BranchCutscene: compare branchVar to branchThreshold, chain chainCsId if
-    // the comparison holds, else chainFalseId. branchVar 0=SIGNAL, 1=route.
-    // branchCmp 0=">=", 1="<", 2="==".
+    // the comparison holds, else chainFalseId.
+    // branchVar 0=SIGNAL, 1=route, 2=named var (flagName).
+    // branchCmp 0=">", 1="!=", 2="==", 3="<", 4=">=", 5="<=".
     uint8_t     branchVar       = 0;
     uint8_t     branchCmp       = 0;
     int         branchThreshold = 50;
     std::string chainFalseId;
+
+    // LoadMap: path to .csm file to transition to
+    std::string mapPath;
+
+    // SetVariable: set/add/subtract a named integer variable
+    std::string varName;
+    int         varValue = 0;
+    uint8_t     varOp    = 0;  // 0=set, 1=add, 2=subtract
+    uint8_t     varScope = 0;  // 0=local (level), 1=pack (campaign)
+
+    // PostFXAcid: acid post-FX control
+    // flagValue=true means enable, false means disable
+    // duration field = how long to run (0=permanent until disabled)
+    float acidColor1R = 80,  acidColor1G = 220, acidColor1B = 40;
+    float acidColor2R = 200, acidColor2G = 255, acidColor2B = 50;
+
+    // ConsoleCmd: command string with {varname} substitution
+    std::string consoleCmd;
 };
 
 // Dialog branching choice
@@ -205,11 +232,53 @@ void cutsceneRenderDialogBox(SDL_Renderer* r, int x, int y, int w, int h,
                              const CsDialogLine& line, int visibleChars,
                              bool lineComplete, int hoveredChoice);
 
+struct TriggerVarAction {
+    int         triggerIndex = -1; // which trigger zone in map.triggers[]
+    std::string key;
+    int         value  = 0;
+    uint8_t     op     = 0;    // 0=set, 1=add, 2=subtract
+    uint8_t     scope  = 0;    // 0=local, 1=pack
+};
+
+// Condition that must be satisfied before a trigger zone fires.
+// cmp: 0=eq, 1=ne, 2=gt, 3=lt, 4=ge, 5=le
+struct TriggerCondition {
+    int         triggerIndex = -1;
+    std::string varName;
+    int         value  = 0;
+    uint8_t     cmp    = 0;
+};
+
+// Map path to load when a trigger zone is entered.
+struct TriggerMapLoad {
+    int         triggerIndex = -1;
+    std::string mapPath;
+};
+
+// Multi-fire config: trigger can fire more than once.
+// Player must leave and re-enter the zone. cooldown >= 0 adds a wait time (seconds)
+// between the last fire and when the trigger becomes armed again.
+struct TriggerMultiConfig {
+    int   triggerIndex = -1;
+    float cooldown     = 0.0f;  // 0 = arm as soon as player leaves
+};
+
 struct CutsceneLibrary {
-    std::vector<Cutscene> cutscenes;
+    std::vector<Cutscene>        cutscenes;
+    std::string                   onDeathId;           // cutscene id to play when player dies
+    std::vector<TriggerVarAction> triggerVarActions;  // SetVariable actions for trigger zones
+    std::vector<TriggerCondition> triggerConditions;  // conditions that gate trigger firing
+    std::vector<TriggerMapLoad>   triggerMapLoads;    // map path to load for LoadMap triggers
+    std::vector<TriggerMultiConfig> triggerMultiConfigs; // multi-fire configs
+    std::unordered_map<std::string, int> varDefaults; // default values shown/set in editor
+
     bool save(const std::string& path) const;
     bool load(const std::string& path);
-    void clear() { cutscenes.clear(); }
+    void clear() {
+        cutscenes.clear(); onDeathId.clear();
+        triggerVarActions.clear(); triggerConditions.clear(); triggerMapLoads.clear();
+        triggerMultiConfigs.clear(); varDefaults.clear();
+    }
     const Cutscene* findById(const std::string& id) const {
         for (const auto& cs : cutscenes) if (cs.id == id) return &cs;
         return nullptr;
@@ -287,12 +356,32 @@ struct CutscenePlayback {
     std::vector<PendingEnemy>     pendingEnemies;
     std::vector<PendingPickup>    pendingPickups;
 
+    // Variable set actions accumulated by SetVariable events; drained by the game.
+    struct PendingVarSet { std::string key; int value; uint8_t op; uint8_t scope; };
+    std::vector<PendingVarSet> pendingVarSets;
+    // Set by DeathScreen event; game transitions to CustomDead when true.
+    bool pendingDeathScreen = false;
+    // Set by LoadMap event; game calls startCustomMap(pendingLoadMap) when non-empty.
+    std::string pendingLoadMap;
+
+    // Pending acid FX request; drained by game.
+    struct PendingAcidFX {
+        bool  enable;
+        float duration;
+        float c1r, c1g, c1b;
+        float c2r, c2g, c2b;
+    };
+    std::vector<PendingAcidFX> pendingAcidFX;
+    // Pending console commands; drained by game.
+    std::vector<std::string>   pendingConsoleCmds;
+
     // SIGNAL delta accumulated by AdjustSignal events; drained by the game.
     int         pendingSignalDelta = 0;
     // Campaign values the game pushes in before update() so BranchCutscene can
-    // evaluate against live SIGNAL / route.
+    // evaluate against live SIGNAL / route / named vars.
     int         extSignal = 50;
     int         extRoute  = 0;
+    std::function<int(const std::string&)> extVarGet; // returns named var value
 
     void start(const Cutscene* c, SDL_Renderer* r);
     void stop();

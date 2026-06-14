@@ -444,6 +444,8 @@ private:
     int   storyRoute_    = 0;      // 0=undecided, 1=Spearhead (A), 2=Signal (B)
     bool  storyRunActive_ = false; // true once a story map has begun a run
     std::unordered_map<std::string, bool> storyFlags_;   // campaign-spanning flags
+    std::unordered_map<std::string, int>  localVars_;    // level-scope ints, reset on level load
+    std::unordered_map<std::string, int>  packVars_;     // pack-scope ints, survive level transitions
     enum class SignalTier : uint8_t { Low, Mid, High };
     SignalTier signalToneTier() const {
         if (signal_ <  34) return SignalTier::Low;
@@ -459,6 +461,9 @@ private:
     float            csControlBlend_ = 0.0f;  // 0=full control, 1=frozen; ramps over ~0.5s on cutscene entry
     std::set<int>    csFiredZones_;   // cutscene-trigger indices already fired
     std::set<int>    storyFiredTriggers_; // waypoint/signalzone/objective indices fired
+    // Multi-fire runtime state
+    std::set<int>                    triggerPlayerInside_;    // indices player is currently inside
+    std::unordered_map<int,float>    triggerMultiCooldowns_;  // index -> remaining cooldown (seconds)
     void startStoryCutscene(const std::string& id);   // begin playback by cutscene id
     void updateStoryCutscene(float dt);               // advance + drain effects
     void loadStoryCutsceneLib(const std::string& csmPath); // derive + load .csc
@@ -493,6 +498,8 @@ private:
         int   field = 0;      // currently selected field
         bool  textEditing = false;
         std::string textBuf;
+        int   statEditField = -1;  // which stat field is being typed (-1 = none)
+        std::string statEditBuf;   // raw text being entered for a stat
         int   gpCharIdx = 0;
 
         // Preview
@@ -616,6 +623,13 @@ private:
     SDL_Texture* glassTileTex_   = nullptr;
     SDL_Texture* vignetteTex_    = nullptr;
     SDL_Texture* sceneTarget_    = nullptr;
+
+    // Acid PostFX state
+    float acidFXTimer_    = 0.0f;
+    float acidFXDuration_ = 0.0f;
+    float acidFXFade_     = 0.0f;
+    SDL_Color acidColor1_ = {80, 220, 40, 255};
+    SDL_Color acidColor2_ = {200, 255, 50, 255};
     SDL_Texture* minimapCacheTex_ = nullptr;
     bool minimapCacheDirty_ = true;
     int minimapCacheMapW_ = 0;

@@ -540,15 +540,12 @@ void Game::renderCharCreator() {
         contentY += 16;
     };
 
-    // Helper: compact stat row - label (80px) | sunken value (50px) | < > (22px each)
+    // Helper: compact stat row - label (80px) | editable value field (rest)
     auto drawStatRow = [&](int idx, const char* label, const char* value, bool adjustable) {
         bool selected = (cc.field == idx);
         bool hovered  = ui_.pointInRect(ui_.mouseX, ui_.mouseY, lCX, contentY, lRW, rowH);
 
-        const int lblW  = 80;
-        const int valW  = 54;
-        const int arW   = 22;
-        const int arGap = 2;
+        const int lblW = 80;
 
         // Background fill for whole row
         SDL_Color rowBg = selected ? UI::W98::Navy
@@ -562,28 +559,28 @@ void Game::renderCharCreator() {
         ui_.drawText(label, lCX + 6, contentY + 5, 13, labelCol);
 
         if (adjustable) {
-            // Sunken value box
             int valX = lCX + lblW;
-            ui_.drawWin98TextField(valX, contentY + 2, valW, rowH - 4, value, false, false, 0.0f);
+            int valW = lRW - lblW - 4;
+            bool editing = (cc.statEditField == idx);
+            const char* disp = editing ? cc.statEditBuf.c_str() : value;
+            float blink = editing ? (float)fmod(SDL_GetTicks() * 0.001, 1.0) : 0.0f;
+            ui_.drawWin98TextField(valX, contentY + 2, valW, rowH - 4, disp, editing, false, blink);
 
-            // < > buttons on the right
-            int rightEdge = lCX + lRW - 4;
-            int rBtnX = rightEdge - arW;
-            int lBtnX = rBtnX - arGap - arW;
-            if (ui_.win98Button(100 + idx * 2, "<", lBtnX, contentY + 2, arW, rowH - 4, false)) {
-                if (!modalOpen) {
+            // Click to start editing
+            if (!modalOpen && ui_.mouseClicked &&
+                ui_.pointInRect(ui_.mouseX, ui_.mouseY, valX, contentY + 2, valW, rowH - 4)) {
+                ui_.mouseClicked = false;
+                ui_.clickCooldownFrames = 2;
+                if (cc.statEditField != idx) {
+                    cc.statEditField = idx;
+                    cc.statEditBuf   = value;
                     cc.field = idx; menuSelection_ = idx;
-                    renderLeft_ = true;
-                }
-            }
-            if (ui_.win98Button(100 + idx * 2 + 1, ">", rBtnX, contentY + 2, arW, rowH - 4, false)) {
-                if (!modalOpen) {
-                    cc.field = idx; menuSelection_ = idx;
-                    renderRight_ = true;
+#ifndef __SWITCH__
+                    SDL_StartTextInput();
+#endif
                 }
             }
         } else {
-            // Non-adjustable: show value as plain text
             SDL_Color valueCol = selected ? SDL_Color{180, 210, 255, 255} : UI::W98::Black;
             ui_.drawText(value, lCX + lblW, contentY + 5, 13, valueCol);
         }

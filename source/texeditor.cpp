@@ -1235,10 +1235,14 @@ void TextureEditor::handleEditingInput(const SDL_Event& e) {
                 updateCanvasTexture();
             }
         }
-        // Middle button panning
+        // Middle button panning - convert physical delta to logical before applying zoom
         if (e.motion.state & SDL_BUTTON_MMASK) {
-            panX_ -= e.motion.xrel / zoom_;
-            panY_ -= e.motion.yrel / zoom_;
+            int px0 = e.motion.x - e.motion.xrel, py0 = e.motion.y - e.motion.yrel;
+            int px1 = e.motion.x,                 py1 = e.motion.y;
+            physToLogical(px0, py0);
+            physToLogical(px1, py1);
+            panX_ -= (px1 - px0) / zoom_;
+            panY_ -= (py1 - py0) / zoom_;
         }
     }
     else if (e.type == SDL_CONTROLLERBUTTONDOWN) {

@@ -436,10 +436,15 @@ void CutsceneEditor::addEvent(CsEventType type) {
             break;
         case CsEventType::DespawnActor:  ev.duration = 0.0f; break;
         case CsEventType::SetFlag:       ev.duration = 0.0f; ev.flagName = "flag"; break;
+        case CsEventType::SetVariable:   ev.duration = 0.0f; ev.varName = "var"; ev.varValue = 1; break;
+        case CsEventType::DeathScreen:   ev.duration = 0.0f; break;
         case CsEventType::ChainCutscene: ev.duration = 0.0f; break;
+        case CsEventType::PostFXAcid:    ev.duration = 0.0f; ev.flagValue = true; break;
+        case CsEventType::ConsoleCmd:    ev.duration = 0.0f; break;
         case CsEventType::EndCutscene:   ev.duration = 0.0f; break;
         case CsEventType::AdjustSignal:  ev.duration = 0.0f; ev.signalDelta = 5; break;
         case CsEventType::BranchCutscene:ev.duration = 0.0f; break;
+        case CsEventType::LoadMap:       ev.duration = 0.0f; break;
         default: break;
     }
     cs->events.push_back(ev);
@@ -531,6 +536,11 @@ SDL_Color CutsceneEditor::eventColor(CsEventType t) const {
         case CsEventType::EndCutscene:    return {255, 120, 120, 255};
         case CsEventType::AdjustSignal:   return {120, 255, 120, 255};
         case CsEventType::BranchCutscene: return {255, 220, 140, 255};
+        case CsEventType::SetVariable:    return {180, 240, 180, 255};
+        case CsEventType::DeathScreen:    return {255,  80,  80, 255};
+        case CsEventType::LoadMap:        return {140, 220, 255, 255};
+        case CsEventType::PostFXAcid:     return { 80, 255, 120, 255};
+        case CsEventType::ConsoleCmd:     return {255, 210,  80, 255};
         case CsEventType::SpawnEnemy:    return {255, 100, 60,  255};
         case CsEventType::SpawnPickup:   return {60,  255, 140, 255};
         default:                          return {150, 150, 150, 255};
@@ -1072,6 +1082,10 @@ void CutsceneEditor::renderActorList() {
             drawText(typeTag[ti], x + 6, ry + 4, sel ? ThSelTx : tagCol[ti], 11);
             drawText(cs->actors[i].name.c_str(), x + 22, ry + 4,
                      sel ? ThSelTx : ThText, 11);
+            if (cs->actors[i].layer != 0) {
+                char lb[8]; snprintf(lb, sizeof(lb), "L%d", cs->actors[i].layer);
+                drawText(lb, x + w - 24, ry + 4, sel ? ThSelTx : SDL_Color{120,120,180,255}, 11);
+            }
             if (hov && ui_->mouseClicked) {
                 ui_->mouseClicked = false;
                 ui_->clickCooldownFrames = 2;
@@ -1319,7 +1333,24 @@ void CutsceneEditor::renderInspector() {
     drawBevel(x, contentTop, w, contentH, false);
 
     if (!cs) {
-        drawText("No cutscene selected.", x + 6, contentTop + 8, ThDim, 11);
+        if (lib_) {
+            int cy2 = contentTop + 8;
+            const int lx2 = x + 6, fx2 = x + 78, fw2 = w - 78 - 10, fh2 = 18;
+            drawText("LIBRARY", lx2, cy2 + 2, ThHead, 11);
+            cy2 += 20;
+            drawText("On Death CS:", lx2, cy2 + 3, ThText, 11);
+            textField(1260, fx2, cy2, fw2, fh2, lib_->onDeathId, [this](const std::string& s) {
+                lib_->onDeathId = s;
+            });
+            cy2 += 22;
+            drawText("Cutscene ID to play when player dies.", lx2, cy2 + 2, ThDim, 10);
+            cy2 += 14;
+            drawText("Add a Death Screen event inside it to", lx2, cy2 + 2, ThDim, 10);
+            cy2 += 14;
+            drawText("show the retry/quit screen.", lx2, cy2 + 2, ThDim, 10);
+        } else {
+            drawText("No cutscene selected.", x + 6, contentTop + 8, ThDim, 11);
+        }
         return;
     }
     contentTop += 2;
@@ -1493,6 +1524,13 @@ int CutsceneEditor::inspectActor(int x, int cy, int w, CsActor& a) {
         a.startVisible = !a.startVisible;
         recomputePreview();
     }
+    cy += step;
+
+    drawText("Layer:", lx, cy + 3, lab, 11);
+    if (button(670, "-", fx, cy, 20, fh, false) && a.layer > -99) a.layer--;
+    char layBuf[8]; snprintf(layBuf, sizeof(layBuf), "%d", a.layer);
+    drawText(layBuf, fx + 26, cy + 3, lab, 11);
+    if (button(671, "+", fx + 26 + 20, cy, 20, fh, false) && a.layer < 99) a.layer++;
     cy += step + 4;
 
     if (button(665, "Delete Actor", lx, cy, w - 16, 20, false)) {
@@ -1744,14 +1782,22 @@ int CutsceneEditor::inspectEvent(int x, int cy, int w, CsEvent& ev) {
             cy += step;
             break;
         case CsEventType::BranchCutscene: {
+            static const char* varNames3[] = {"SIGNAL", "Route", "Var"};
             drawText("Variable:", lx, cy + 3, lab, 11);
-            if (button(673, ev.branchVar == 1 ? "Route" : "SIGNAL", fx, cy, 70, fh, false))
-                ev.branchVar = ev.branchVar ? 0 : 1;
+            if (button(673, varNames3[ev.branchVar % 3], fx, cy, 70, fh, false))
+                ev.branchVar = (ev.branchVar + 1) % 3;
             cy += step;
+            if (ev.branchVar == 2) {
+                drawText("Var name:", lx, cy + 3, lab, 11);
+                textField(676, fx, cy, fw, fh, ev.flagName, [&ev](const std::string& s) {
+                    ev.flagName = s;
+                });
+                cy += step;
+            }
             drawText("Compare:", lx, cy + 3, lab, 11);
-            const char* cmp = ev.branchCmp == 1 ? "<" : ev.branchCmp == 2 ? "==" : ">=";
-            if (button(674, cmp, fx, cy, 44, fh, false))
-                ev.branchCmp = (uint8_t)(((int)ev.branchCmp + 1) % 3);
+            static const char* cmpNames6[] = {">","!=","==","<",">=","<="};
+            if (button(674, cmpNames6[ev.branchCmp % 6], fx, cy, 44, fh, false))
+                ev.branchCmp = (uint8_t)(((int)ev.branchCmp + 1) % 6);
             cy += step;
             drawText("Threshold:", lx, cy + 3, lab, 11);
             intField(1238, fx, cy, fw, fh, &ev.branchThreshold, 5, -1000, 1000);
@@ -1768,6 +1814,72 @@ int CutsceneEditor::inspectEvent(int x, int cy, int w, CsEvent& ev) {
             cy += step;
             break;
         }
+        case CsEventType::SetVariable: {
+            static const char* opNames[] = {"Set", "Add", "Sub"};
+            static const char* scopeNames[] = {"Local", "Pack"};
+            drawText("Var name:", lx, cy + 3, ThText, 11);
+            textField(1250, fx, cy, fw, fh, ev.varName, [&ev](const std::string& s) {
+                if (!s.empty()) ev.varName = s;
+            });
+            cy += step;
+            drawText("Value:", lx, cy + 3, ThText, 11);
+            intField(1251, fx, cy, half, fh, &ev.varValue, 1, -999999, 999999);
+            cy += step;
+            drawText("Op:", lx, cy + 3, ThText, 11);
+            if (button(1252, opNames[ev.varOp % 3], fx, cy, 46, fh, false))
+                ev.varOp = (ev.varOp + 1) % 3;
+            drawText("Scope:", fx + 54, cy + 3, ThText, 11);
+            if (button(1253, scopeNames[ev.varScope % 2], fx + 104, cy, 50, fh, ev.varScope == 1))
+                ev.varScope = ev.varScope ? 0 : 1;
+            cy += step;
+            break;
+        }
+        case CsEventType::DeathScreen:
+            drawText("Triggers death screen.", lx, cy + 3, {255, 100, 100, 255}, 11);
+            cy += step;
+            drawText("Only active in the ondeath cutscene.", lx, cy + 3, ThDim, 10);
+            cy += 14;
+            break;
+        case CsEventType::LoadMap:
+            drawText("Map path:", lx, cy + 3, lab, 11);
+            textField(1261, fx, cy, fw, fh, ev.mapPath, [&ev](const std::string& s) {
+                ev.mapPath = s;
+            });
+            cy += step;
+            drawText("Relative to romfs/ or absolute.", lx, cy + 3, ThDim, 10);
+            cy += 14;
+            break;
+        case CsEventType::PostFXAcid: {
+            drawText("Enable:", lx, cy + 3, lab, 11);
+            if (button(1270, ev.flagValue ? "ON" : "OFF", fx, cy, 50, fh, ev.flagValue))
+                ev.flagValue = !ev.flagValue;
+            cy += step;
+            drawText("Duration:", lx, cy + 3, lab, 11);
+            floatField(1271, fx, cy, fw, fh, &ev.duration, 0.5f, 0.0f, 9999.0f, "%.1f");
+            cy += step;
+            drawText("(0 = permanent until disabled)", lx, cy + 3, ThDim, 10);
+            cy += 14;
+            drawText("Color 1:", lx, cy + 3, lab, 11);
+            floatField(1272, fx,            cy, fw/3 - 2, fh, &ev.acidColor1R, 1, 0, 255, "%.0f");
+            floatField(1273, fx + fw/3,     cy, fw/3 - 2, fh, &ev.acidColor1G, 1, 0, 255, "%.0f");
+            floatField(1274, fx + fw/3*2,   cy, fw/3 - 2, fh, &ev.acidColor1B, 1, 0, 255, "%.0f");
+            cy += step;
+            drawText("Color 2:", lx, cy + 3, lab, 11);
+            floatField(1275, fx,            cy, fw/3 - 2, fh, &ev.acidColor2R, 1, 0, 255, "%.0f");
+            floatField(1276, fx + fw/3,     cy, fw/3 - 2, fh, &ev.acidColor2G, 1, 0, 255, "%.0f");
+            floatField(1277, fx + fw/3*2,   cy, fw/3 - 2, fh, &ev.acidColor2B, 1, 0, 255, "%.0f");
+            cy += step;
+            break;
+        }
+        case CsEventType::ConsoleCmd:
+            drawText("Cmd:", lx, cy + 3, lab, 11);
+            textField(1280, fx, cy, fw, fh, ev.consoleCmd, [&ev](const std::string& s) {
+                ev.consoleCmd = s;
+            });
+            cy += step;
+            drawText("Use {varname} for var substitution.", lx, cy + 3, ThDim, 10);
+            cy += 14;
+            break;
         default: break;
     }
 

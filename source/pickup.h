@@ -76,6 +76,7 @@ struct PickupCrate {
     float glowTimer    = 0;         // glow pulse
     bool  opened       = false;     // broken open, showing pickup
     float openTimer    = 0;         // time since opened (for despawn)
+    bool  hasContents  = true;      // false = destructible prop only, drops nothing
 
     UpgradeType contents = UpgradeType::SpeedUp;
 

@@ -558,6 +558,53 @@ void Game::handleInput() {
             continue;
         }
 
+        // Char creator: stat field inline text editing
+        if (state_ == GameState::CharCreator && charCreator_.statEditField >= 0) {
+            auto& cc = charCreator_;
+            auto commitStat = [&]() {
+                const std::string& s = cc.statEditBuf;
+                try {
+                    switch (cc.statEditField) {
+                        case 1: cc.speed      = std::max(100.0f, std::min(1200.0f, std::stof(s))); break;
+                        case 2: cc.hp         = std::max(1, std::min(1000, std::stoi(s)));          break;
+                        case 3: cc.ammo       = std::max(1, std::min(100, std::stoi(s)));           break;
+                        case 4: cc.fireRate   = std::max(1.0f, std::min(60.0f, std::stof(s)));      break;
+                        case 5: cc.reloadTime = std::max(0.1f, std::min(10.0f, std::stof(s)));      break;
+                        default: break;
+                    }
+                } catch (...) {}
+                cc.statEditField = -1;
+                cc.statEditBuf.clear();
+#ifndef __SWITCH__
+                SDL_StopTextInput();
+#endif
+            };
+            if (e.type == SDL_TEXTINPUT) {
+                for (const char* p = e.text.text; *p; p++) {
+                    if ((*p >= '0' && *p <= '9') || *p == '.')
+                        cc.statEditBuf += *p;
+                }
+                continue;
+            }
+            if (e.type == SDL_KEYDOWN) {
+                SDL_Keycode sym = e.key.keysym.sym;
+                if (sym == SDLK_BACKSPACE) {
+                    if (!cc.statEditBuf.empty()) cc.statEditBuf.pop_back();
+                } else if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER || sym == SDLK_TAB) {
+                    commitStat();
+                } else if (sym == SDLK_ESCAPE) {
+                    cc.statEditField = -1;
+                    cc.statEditBuf.clear();
+#ifndef __SWITCH__
+                    SDL_StopTextInput();
+#endif
+                }
+                continue;
+            }
+            // Any other event: commit and fall through
+            if (e.type == SDL_MOUSEBUTTONDOWN) commitStat();
+        }
+
         // Login screen text input
         if (state_ == GameState::LoginScreen) {
             std::string* target = (loginField_ == 0) ? &loginUsername_ : &loginPassword_;
@@ -1763,7 +1810,7 @@ void Game::handleInput() {
         if (modSaveDialog_.isOpen()) {
             if (cc.statusTimer > 0) cc.statusTimer -= dt_;
         }
-        else if (cc.textEditing) {
+        else if (cc.textEditing || cc.statEditField >= 0) {
             // Text input handled via SDL_TEXTINPUT events already processed
         } else {
             cc.field = menuSelection_;
