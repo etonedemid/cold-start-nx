@@ -12,8 +12,8 @@ Join our discord!
 https://discord.gg/dv28MgtaNn
 
 ## Roadmap
---1. Better enemy pathfinding and sound alert 
-2. Cutscenes and more triggers (maybe basic scripting) in editor--
+--1. Better enemy pathfinding and sound alert-- 
+--2. Cutscenes and more triggers (maybe basic scripting) in editor--
 3. Official content pack (Story mode) <- We're here
 4. Steam release (may be earlier, depends on the Ko-Fi goal)
 
