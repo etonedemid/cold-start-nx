@@ -431,6 +431,9 @@ void CutscenePlayback::applyEvent(const CsEvent& ev, float localT,
             cam.zoom = lerp(ev.fromZoom, ev.toZoom, t);
             camDriven = true;
             break;
+        case CsEventType::CameraRotate:
+            cam.rotation = lerp(ev.fromRot, ev.toRot, t);
+            break;
         case CsEventType::ScreenFade: {
             float alpha = ev.fadeToBlack ? lerp(0, 1, t) : lerp(1, 0, t);
             screenFadeAlpha  = alpha;
@@ -477,6 +480,13 @@ void CutscenePlayback::update(float dt, const CutsceneLibrary& lib) {
     // Decay actor flash
     for (auto& s : actorStates)
         if (s.flashAmt > 0) s.flashAmt = std::max(0.0f, s.flashAmt - dt * 4.0f);
+
+    // Snapshot positions for velocity-based leg animation
+    std::vector<float> prevX(actorStates.size()), prevY(actorStates.size());
+    for (int i = 0; i < (int)actorStates.size(); i++) {
+        prevX[i] = actorStates[i].x;
+        prevY[i] = actorStates[i].y;
+    }
 
     time += dt;
 
@@ -587,6 +597,30 @@ void CutscenePlayback::update(float dt, const CutsceneLibrary& lib) {
         applyEvent(ev, localT, lib);
     }
 
+    // Leg animation for Player actors (driven by position delta)
+    if (dt > 0.0001f) {
+        for (int i = 0; i < (int)cutscene->actors.size() &&
+                        i < (int)actorStates.size(); i++) {
+            if (cutscene->actors[i].type != CsActorType::Player) continue;
+            auto& s = actorStates[i];
+            float vx = (s.x - prevX[i]) / dt;
+            float vy = (s.y - prevY[i]) / dt;
+            float spd = sqrtf(vx * vx + vy * vy);
+            if (spd > 5.0f) {
+                s.legRotation = atan2f(vy, vx);
+                float legAnimSpeed = spd / 520.0f;
+                s.legAnimTimer += dt * legAnimSpeed;
+                if (s.legAnimTimer > 0.07f) {
+                    s.legAnimTimer = 0;
+                    s.legAnimFrame++;
+                }
+            } else {
+                s.legAnimTimer = 0;
+                s.legAnimFrame = 0;
+            }
+        }
+    }
+
     // Auto-chain at end of cutscene
     if (!cutscene->chainOnEnd.empty() && pendingChainId.empty()) {
         if (time >= cutscene->totalDuration() && !dialog.active)
@@ -687,7 +721,7 @@ void CutscenePlayback::renderActors(SDL_Renderer* r,
         if (a.type == CsActorType::FreeSprite) {
             tex = (i < (int)actorTex.size()) ? actorTex[i] : nullptr;
         } else if (a.type == CsActorType::Player) {
-            tex = playerBody;
+            continue;  // driven by the real player; see game.cpp updateStoryCutscene
         } else if (a.type == CsActorType::Enemy) {
             tex = enemyTex;
         }
@@ -718,7 +752,6 @@ void CutscenePlayback::renderActors(SDL_Renderer* r,
         SDL_SetTextureAlphaMod(tex, 255);
         SDL_SetTextureColorMod(tex, 255, 255, 255);
     }
-    (void)playerLegs;
 }
 
 // Small text helper for the dialog box: renders via the shared Assets font.

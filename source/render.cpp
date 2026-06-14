@@ -311,26 +311,42 @@ void Game::render() {
                 }
             }
         }
-        // Player rendering (same as Playing)
-        if (!player_.dead && !legSprites_.empty() && !inVehicle_) {
+        // Player rendering (same as Playing, plus cutscene visual overrides)
+        if (!player_.dead && !legSprites_.empty() && !inVehicle_ && player_.csVisible) {
             int idx = player_.legAnimFrame % (int)legSprites_.size();
-            renderSprite(legSprites_[idx], player_.pos, player_.legRotation + (float)M_PI/2, 1.5f);
+            Uint8 legA = (Uint8)(player_.csAlpha * 255);
+            SDL_SetTextureAlphaMod(legSprites_[idx], legA);
+            renderSprite(legSprites_[idx], player_.pos, player_.legRotation + (float)M_PI/2,
+                         1.5f * player_.csScale);
+            SDL_SetTextureAlphaMod(legSprites_[idx], 255);
         }
-        if (!player_.dead && !inVehicle_) {
+        if (!player_.dead && !inVehicle_ && player_.csVisible) {
             if (!playerSprites_.empty()) {
                 int idx = player_.animFrame % (int)playerSprites_.size();
                 Vec2 bodyPos = player_.pos + Vec2::fromAngle(player_.rotation) * 6.0f;
-                if (player_.invulnerable && ((int)(player_.invulnTimer * 10) % 2 == 0)) {
-                    SDL_Color tint = {255, 255, 255, 128};
-                    renderSpriteEx(playerSprites_[idx], bodyPos, player_.rotation + (float)M_PI/2, 1.5f, tint);
+                float sc = 1.5f * player_.csScale;
+                Uint8 ba = (Uint8)(player_.csAlpha * 255);
+                if (player_.csFlashAmt > 0.01f) {
+                    SDL_Color tint = {
+                        (Uint8)(255*(1-player_.csFlashAmt) + player_.csFlashR*player_.csFlashAmt),
+                        (Uint8)(255*(1-player_.csFlashAmt) + player_.csFlashG*player_.csFlashAmt),
+                        (Uint8)(255*(1-player_.csFlashAmt) + player_.csFlashB*player_.csFlashAmt),
+                        ba};
+                    renderSpriteEx(playerSprites_[idx], bodyPos, player_.rotation + (float)M_PI/2, sc, tint);
+                } else if (player_.invulnerable && ((int)(player_.invulnTimer * 10) % 2 == 0)) {
+                    renderSpriteEx(playerSprites_[idx], bodyPos, player_.rotation + (float)M_PI/2, sc,
+                                   {255, 255, 255, ba});
                 } else if (player_.isParrying) {
-                    SDL_Color tint = {128, 200, 255, 255};
-                    renderSpriteEx(playerSprites_[idx], bodyPos, player_.rotation + (float)M_PI/2, 1.5f, tint);
+                    renderSpriteEx(playerSprites_[idx], bodyPos, player_.rotation + (float)M_PI/2, sc,
+                                   {128, 200, 255, ba});
+                } else if (ba < 255) {
+                    renderSpriteEx(playerSprites_[idx], bodyPos, player_.rotation + (float)M_PI/2, sc,
+                                   {255, 255, 255, ba});
                 } else {
-                    renderSprite(playerSprites_[idx], bodyPos, player_.rotation + (float)M_PI/2, 1.5f);
+                    renderSprite(playerSprites_[idx], bodyPos, player_.rotation + (float)M_PI/2, sc);
                 }
             }
-        } else if (!inVehicle_ && !playerDeathSprites_.empty()) {
+        } else if (!inVehicle_ && !playerDeathSprites_.empty() && player_.csVisible) {
             int idx = player_.animFrame % (int)playerDeathSprites_.size();
             renderSprite(playerDeathSprites_[idx], player_.pos, player_.rotation + (float)M_PI/2, 1.5f);
         }
@@ -407,7 +423,19 @@ void Game::render() {
         // camera as the world (cutscene CameraShake adds its own offset).
         if (csPlay_.active) {
             SDL_Texture* pbody = playerSprites_.empty() ? nullptr : playerSprites_[0];
-            SDL_Texture* plegs = legSprites_.empty()    ? nullptr : legSprites_[0];
+            // Pick the animated leg frame for the Player actor.
+            SDL_Texture* plegs = legSprites_.empty() ? nullptr : legSprites_[0];
+            if (!legSprites_.empty() && csPlay_.cutscene) {
+                const auto& actors = csPlay_.cutscene->actors;
+                const auto& states = csPlay_.actorStates;
+                for (int i = 0; i < (int)actors.size() && i < (int)states.size(); i++) {
+                    if (actors[i].type == CsActorType::Player) {
+                        int fr = states[i].legAnimFrame % (int)legSprites_.size();
+                        plegs = legSprites_[fr];
+                        break;
+                    }
+                }
+            }
             float ccx = camera_.pos.x - camera_.shakeOffset.x + csPlay_.cam.shakeX;
             float ccy = camera_.pos.y - camera_.shakeOffset.y + csPlay_.cam.shakeY;
             csPlay_.renderActors(renderer_, ccx, ccy, 1.0f,
@@ -822,7 +850,14 @@ void Game::renderPostFXComposite(bool gameplayView) {
             SDL_RenderCopy(renderer_, sceneTarget_, &src, &dst);
         }
     } else {
-        SDL_RenderCopy(renderer_, sceneTarget_, nullptr, &full);
+        float csRot = csPlay_.active ? csPlay_.cam.rotation : 0.0f;
+        if (fabsf(csRot) > 0.01f) {
+            SDL_Point center = { SCREEN_W / 2, SCREEN_H / 2 };
+            SDL_RenderCopyEx(renderer_, sceneTarget_, nullptr, &full,
+                             (double)csRot, &center, SDL_FLIP_NONE);
+        } else {
+            SDL_RenderCopy(renderer_, sceneTarget_, nullptr, &full);
+        }
     }
 
     if (gameplayView) {

@@ -3,7 +3,7 @@
 // Layout:  [cutscene list][actor list][timeline...............][inspector]
 // The top edge of the panel can be dragged to resize it.  All text fields
 // are click-to-edit (type, Enter to commit, Esc to cancel).  Numeric fields
-// also have -/+ spinners.  Events are dragged on the timeline (0.1s snap,
+// also have -/+ spinners.  Events are dragged on the timeline (1ms snap,
 // hold Shift for free placement) and resized by their right edge.
 // Move/explosion/spawn positions and actor start positions can be picked by
 // clicking directly on the map canvas, and actor markers can be dragged.
@@ -286,7 +286,7 @@ void CutsceneEditor::recomputePreview() {
 float CutsceneEditor::snapTime(float t) const {
     bool shift = (SDL_GetModState() & KMOD_SHIFT) != 0;
     bool snap  = snapOn_ != shift;  // Shift temporarily inverts the toggle
-    if (snap) t = roundf(t * 10.0f) / 10.0f;
+    if (snap) t = roundf(t * 1000.0f) / 1000.0f;
     return std::max(0.0f, t);
 }
 
@@ -295,15 +295,22 @@ float CutsceneEditor::snapTime(float t) const {
 void CutsceneEditor::addCutscene() {
     if (!lib_) return;
     Cutscene cs;
-    // Find a free id
     for (;;) {
         cs.id = "cutscene_" + std::to_string(nextCsId_++);
         if (!lib_->findById(cs.id)) break;
     }
     cs.blockInput = true;
+    // Every cutscene gets an implicit Player actor as the first actor.
+    CsActor pa;
+    pa.id   = nextActorId_++;
+    pa.type = CsActorType::Player;
+    pa.name = "Player";
+    pa.startX = 320; pa.startY = 240;
+    cs.actors.push_back(pa);
     lib_->cutscenes.push_back(std::move(cs));
     selectedCutscene_ = (int)lib_->cutscenes.size() - 1;
-    selectedActor_ = selectedEvent_ = -1;
+    selectedActor_ = 0;
+    selectedEvent_ = -1;
     selectedDialogSeq_ = selectedDialogLine_ = -1;
     scrubTime_ = 0;
     recomputePreview();
@@ -418,6 +425,7 @@ void CutsceneEditor::addEvent(CsEventType type) {
             break;
         case CsEventType::CameraZoom:    ev.fromZoom = 1.0f; ev.toZoom = 1.5f; break;
         case CsEventType::CameraShake:   ev.shakeStrength = 8.0f; ev.duration = 0.5f; break;
+        case CsEventType::CameraRotate:  ev.fromRot = 0.0f; ev.toRot = 15.0f; break;
         case CsEventType::ScreenFade:    ev.fadeToBlack = true; break;
         case CsEventType::CinematicBars: ev.showBars = true; ev.duration = 0.5f; break;
         case CsEventType::SetVisible:    ev.duration = 0.0f; ev.visible = true; break;
@@ -511,6 +519,7 @@ SDL_Color CutsceneEditor::eventColor(CsEventType t) const {
         case CsEventType::CameraMove:     return {255, 160, 200, 255};
         case CsEventType::CameraZoom:     return {255, 130, 160, 255};
         case CsEventType::CameraShake:    return {255, 80,  160, 255};
+        case CsEventType::CameraRotate:   return {255, 100, 180, 255};
         case CsEventType::ScreenFade:     return {90,  90,  90,  255};
         case CsEventType::CinematicBars:  return {120, 120, 120, 255};
         case CsEventType::SetVisible:     return {180, 255, 180, 255};
@@ -704,10 +713,12 @@ void CutsceneEditor::update(float dt) {
 
     // Safety net: if the mouse button is no longer held (e.g. the up event
     // was suppressed by a click cooldown), end any drag in progress.
-    if (ui_ && !ui_->mouseDown && !ui_->touchActive &&
+    bool mousePhysDown = (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_LMASK) != 0;
+    if (!mousePhysDown && !(ui_ && ui_->touchActive) &&
         (draggingEvent_ || resizingEvent_ || draggingScrub_ || resizingPanel_ ||
-         dragActorIdx_ >= 0))
+         dragActorIdx_ >= 0)) {
         handleRelease();
+    }
 
     if (playing_) {
         scrubTime_ += dt;
@@ -1090,7 +1101,9 @@ void CutsceneEditor::renderActorList() {
         showEventMenu_ = false;
     }
     if (selectedActor_ >= 0) {
-        if (button(611, "Del", x + 74, by, 40, 18, false)) {
+        bool isPlayer = cs && selectedActor_ < (int)cs->actors.size() &&
+                        cs->actors[selectedActor_].type == CsActorType::Player;
+        if (!isPlayer && button(611, "Del", x + 74, by, 40, 18, false)) {
             releaseFocus(false);
             deleteActor(selectedActor_);
         }
@@ -1596,6 +1609,14 @@ int CutsceneEditor::inspectEvent(int x, int cy, int w, CsEvent& ev) {
             floatField(1227, fx, cy, fw, fh, &ev.shakeStrength, 1, 0, 100, "%.1f");
             cy += step;
             break;
+        case CsEventType::CameraRotate:
+            drawText("From deg:", lx, cy + 3, lab, 11);
+            floatField(1228, fx, cy, fw, fh, &ev.fromRot, 5, -360, 360, "%.0f");
+            cy += step;
+            drawText("To deg:", lx, cy + 3, lab, 11);
+            floatField(1229, fx, cy, fw, fh, &ev.toRot, 5, -360, 360, "%.0f");
+            cy += step;
+            break;
         case CsEventType::ScreenFade:
             drawText("Direction:", lx, cy + 3, lab, 11);
             if (button(673, ev.fadeToBlack ? "To black" : "From black", fx, cy, 100, fh, false))
@@ -1813,9 +1834,9 @@ void CutsceneEditor::renderMenus() {
 
     if (showActorMenu_) {
         static const char* opts[] = {
-            "Player", "Enemy: Melee", "Enemy: Shooter", "Enemy: Brute",
+            "Enemy: Melee", "Enemy: Shooter", "Enemy: Brute",
             "Enemy: Scout", "Enemy: Sniper", "Enemy: Gunner", "Free Sprite"};
-        const int n = 8, itemH = 18;
+        const int n = 7, itemH = 18;
         menuW_ = 130;
         menuH_ = n * itemH + 4;
         menuX_ = actorX_ + 3;
@@ -1904,14 +1925,13 @@ bool CutsceneEditor::handleEvent(SDL_Event& e, float mouseWorldX, float mouseWor
                         const int itemH = 18;
                         int idx = (my - menuY_ - 2) / itemH;
                         switch (idx) {
-                            case 0: addActor(CsActorType::Player); break;
-                            case 1: addActor(CsActorType::Enemy, CsEnemyType::Melee); break;
-                            case 2: addActor(CsActorType::Enemy, CsEnemyType::Shooter); break;
-                            case 3: addActor(CsActorType::Enemy, CsEnemyType::Brute); break;
-                            case 4: addActor(CsActorType::Enemy, CsEnemyType::Scout); break;
-                            case 5: addActor(CsActorType::Enemy, CsEnemyType::Sniper); break;
-                            case 6: addActor(CsActorType::Enemy, CsEnemyType::Gunner); break;
-                            case 7: addActor(CsActorType::FreeSprite); break;
+                            case 0: addActor(CsActorType::Enemy, CsEnemyType::Melee); break;
+                            case 1: addActor(CsActorType::Enemy, CsEnemyType::Shooter); break;
+                            case 2: addActor(CsActorType::Enemy, CsEnemyType::Brute); break;
+                            case 3: addActor(CsActorType::Enemy, CsEnemyType::Scout); break;
+                            case 4: addActor(CsActorType::Enemy, CsEnemyType::Sniper); break;
+                            case 5: addActor(CsActorType::Enemy, CsEnemyType::Gunner); break;
+                            case 6: addActor(CsActorType::FreeSprite); break;
                             default: break;
                         }
                     }
@@ -2117,7 +2137,6 @@ bool CutsceneEditor::handleTimelineClick(int mx, int my, bool rightClick) {
         int px0 = timeToPx(ev.startTime);
         int px1 = timeToPx(ev.startTime + std::max(ev.duration, 0.06f));
         if (px1 - px0 < 6) px1 = px0 + 6;
-
         if (mx >= px0 && mx <= px1 && my >= ry && my <= ry + rh) {
             if (rightClick) { deleteEvent(ei); return true; }
             selectedEvent_ = ei;
@@ -2135,8 +2154,9 @@ bool CutsceneEditor::handleTimelineClick(int mx, int my, bool rightClick) {
         }
     }
 
-    // Empty area: deselect event + scrub.
+    // Empty area: deselect event, update actor selection from the clicked row, scrub.
     selectedEvent_ = -1;
+    { int r = yToRow(my); if (r > 0) selectedActor_ = r - 1; }
     scrubTime_ = snapTime(pxToTime(mx));
     draggingScrub_ = true;
     playing_ = false;

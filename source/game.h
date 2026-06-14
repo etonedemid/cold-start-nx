@@ -456,6 +456,7 @@ private:
     // Story cutscene playback (the map's .csc library, played in-game)
     CutsceneLibrary  storyCutscenes_;
     CutscenePlayback csPlay_;
+    float            csControlBlend_ = 0.0f;  // 0=full control, 1=frozen; ramps over ~0.5s on cutscene entry
     std::set<int>    csFiredZones_;   // cutscene-trigger indices already fired
     std::set<int>    storyFiredTriggers_; // waypoint/signalzone/objective indices fired
     void startStoryCutscene(const std::string& id);   // begin playback by cutscene id

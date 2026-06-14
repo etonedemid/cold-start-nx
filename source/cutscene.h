@@ -49,7 +49,8 @@ enum class CsEventType : uint8_t {
     BranchCutscene= 22,  // compare SIGNAL/route to a threshold, chain true/false
     SpawnEnemy    = 23,  // spawn an enemy at a world position
     SpawnPickup   = 24,  // spawn an upgrade pickup at a world position
-    COUNT         = 25,
+    CameraRotate  = 25,  // rotate camera viewport (uses fromRot/toRot degrees)
+    COUNT         = 26,
 };
 
 static inline const char* csEventTypeName(CsEventType t) {
@@ -59,6 +60,7 @@ static inline const char* csEventTypeName(CsEventType t) {
         "Shake","Screen Fade","Cine Bars","Set Visible","Set Frame",
         "Spawn Actor","Despawn","Set Flag","Chain CS","End CS",
         "Adj SIGNAL","Branch CS","Spawn Enemy","Spawn Pickup",
+        "Cam Rotate",
     };
     int i = (int)t;
     if (i < 0 || i >= (int)CsEventType::COUNT) return "?";
@@ -226,11 +228,16 @@ struct CsActorState {
     // Flash overlay
     float flashR = 255, flashG = 255, flashB = 255;
     float flashAmt = 0;  // 0=none, 1=full flash color
+    // Leg animation (Player actor only)
+    float legAnimTimer = 0;
+    int   legAnimFrame = 0;
+    float legRotation  = 0;  // radians, movement direction
 };
 
 struct CsCamState {
     float x = 0, y = 0;
-    float zoom   = 1.0f;
+    float zoom     = 1.0f;
+    float rotation = 0.0f;  // degrees, clockwise
     float shakeX = 0, shakeY = 0;
     float shakeTimer    = 0;
     float shakeStrength = 0;

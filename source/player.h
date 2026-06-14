@@ -68,6 +68,13 @@ struct Player {
     bool  dead         = false;
     float deathTimer   = 0;
 
+    // Cutscene overrides — reset to defaults when no cutscene is running
+    float csScale    = 1.0f;
+    float csAlpha    = 1.0f;
+    bool  csVisible  = true;
+    float csFlashAmt = 0.0f;
+    float csFlashR   = 255, csFlashG = 255, csFlashB = 255;
+
     void takeDamage(int dmg);
     void die();
 };
