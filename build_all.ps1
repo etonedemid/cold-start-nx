@@ -96,7 +96,7 @@ if (-not $SkipWin) {
     foreach ($dll in $neededDlls) {
         $src = Join-Path $mingw $dll
         if (Test-Path $src) { Copy-Item $src $winStage }
-        # Missing DLLs are silently skipped — some are optional or version-specific
+        # Missing DLLs are silently skipped - some are optional or version-specific
     }
 
     # Auto-detect any additional imports the exe directly needs (requires objdump)

@@ -1017,6 +1017,9 @@ void Game::update() {
     // gameplay. Otherwise scan story triggers so zones can fire cutscenes.
     if (playingCustomMap_) {
         if (csPlay_.active) {
+            // No shooting during any active dialog.
+            if (csPlay_.dialog.active) fireInput_ = false;
+
             // Dialog input: confirm button or mouse click.
             if (csPlay_.dialog.active) {
                 // Update hover for choices and handle clicks.
@@ -1066,12 +1069,17 @@ void Game::update() {
             }
             updateStoryCutscene(dt);
             if (csPlay_.active && csPlay_.cutscene && csPlay_.cutscene->blockInput) {
-                // Consume gameplay inputs so the player doesn't shoot/move.
+                // Ramp up control-loss over ~0.5s so it feels like losing control,
+                // not a sudden freeze.
+                csControlBlend_ = std::min(1.0f, csControlBlend_ + dt * 2.0f);
                 fireInput_ = bombInput_ = parryInput_ = meleeInput_ = false;
                 confirmInput_ = false;
-                return;  // freeze world while the cutscene blocks input
+                moveInput_ = moveInput_ * (1.0f - csControlBlend_);
+                aimInput_  = aimInput_  * (1.0f - csControlBlend_);
+                if (csControlBlend_ >= 1.0f) return;
             }
         } else {
+            csControlBlend_ = 0.0f;
             updateStoryTriggers();  // may start a cutscene this frame
             if (csPlay_.active && csPlay_.cutscene && csPlay_.cutscene->blockInput)
                 return;
@@ -1352,6 +1360,7 @@ void Game::startStoryCutscene(const std::string& id) {
     csPlay_.extSignal = signal_;
     csPlay_.extRoute  = storyRoute_;
     csPlay_.start(cs, renderer_);
+    csControlBlend_ = 0.0f;
 }
 
 void Game::updateStoryCutscene(float dt) {
@@ -1360,12 +1369,20 @@ void Game::updateStoryCutscene(float dt) {
     csPlay_.extRoute  = storyRoute_;
     csPlay_.update(dt, storyCutscenes_);
 
-    // Camera events pan the real game camera (cam.x/y = world point to
-    // center on).  Without camera events the view stays where gameplay
-    // left it, and actors render in world space relative to it.
+    // Camera: CameraMove events override; otherwise follow the Player actor.
     if (csPlay_.active && csPlay_.camDriven) {
         camera_.pos.x = csPlay_.cam.x - SCREEN_W * 0.5f;
         camera_.pos.y = csPlay_.cam.y - SCREEN_H * 0.5f;
+    } else if (csPlay_.active && csPlay_.cutscene) {
+        for (int i = 0; i < (int)csPlay_.cutscene->actors.size() &&
+                        i < (int)csPlay_.actorStates.size(); i++) {
+            if (csPlay_.cutscene->actors[i].type == CsActorType::Player &&
+                csPlay_.actorStates[i].visible) {
+                Vec2 target = {csPlay_.actorStates[i].x, csPlay_.actorStates[i].y};
+                camera_.update(target, {0, 0}, dt);
+                break;
+            }
+        }
     }
 
     // Drain one-shot spawn requests.
@@ -1405,12 +1422,45 @@ void Game::updateStoryCutscene(float dt) {
         if (kv.second && kv.first == "route_b") storyRoute_ = 2;
     }
 
+    // Push Player actor state onto the real player so the normal render path
+    // handles position, rotation, animation, and visual overrides.
+    if (csPlay_.active && csPlay_.cutscene) {
+        bool foundPlayer = false;
+        for (int i = 0; i < (int)csPlay_.cutscene->actors.size() &&
+                        i < (int)csPlay_.actorStates.size(); i++) {
+            if (csPlay_.cutscene->actors[i].type != CsActorType::Player) continue;
+            const auto& s   = csPlay_.actorStates[i];
+            const float D2R = 3.14159265f / 180.0f;
+            player_.pos          = {s.x, s.y};
+            player_.rotation     = s.rot * D2R - (float)M_PI / 2;
+            player_.animFrame    = s.frame;
+            player_.legAnimFrame = s.legAnimFrame;
+            player_.legRotation  = s.legRotation;
+            player_.csScale      = s.scaleX;
+            player_.csAlpha      = s.alpha;
+            player_.csVisible    = s.visible;
+            player_.csFlashAmt   = s.flashAmt;
+            player_.csFlashR     = s.flashR;
+            player_.csFlashG     = s.flashG;
+            player_.csFlashB     = s.flashB;
+            foundPlayer = true;
+            break;
+        }
+        if (!foundPlayer) {
+            player_.csScale = 1.0f; player_.csAlpha = 1.0f;
+            player_.csVisible = true; player_.csFlashAmt = 0.0f;
+        }
+    }
+
     // Handle chain / end requests (start() resets pending fields, so read first).
     if (!csPlay_.pendingChainId.empty()) {
         std::string next = csPlay_.pendingChainId;
         startStoryCutscene(next);
     } else if (csPlay_.pendingEnd || csPlay_.isDone()) {
         csPlay_.stop();
+        // Reset cutscene overrides on the player when the cutscene ends.
+        player_.csScale = 1.0f; player_.csAlpha = 1.0f;
+        player_.csVisible = true; player_.csFlashAmt = 0.0f;
     }
 }
 
