@@ -1059,9 +1059,11 @@ void Game::renderAimCrosshair(const Camera& camera, const Player& player, Vec2 a
         {cx - gap - len, cy - half, len, 2},   // left
         {cx + gap,       cy - half, len, 2},   // right
     };
-    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 210);
+    // Honor the requested color/alpha: outline alpha scales with the fill alpha
+    // so a translucent crosshair fades its shadow too.
+    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, (Uint8)(color.a * 210 / 255));
     for (auto& r : arms) { SDL_Rect o = {r.x-1,r.y-1,r.w+2,r.h+2}; SDL_RenderFillRect(renderer_, &o); }
-    SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 235);
+    SDL_SetRenderDrawColor(renderer_, color.r, color.g, color.b, color.a);
     for (auto& r : arms) SDL_RenderFillRect(renderer_, &r);
 }
 
@@ -2153,7 +2155,8 @@ void Game::renderUI() {
         if (wantsGamepadCrosshair) {
             Vec2 aimDir = resolveAimDirection(player_, aimInput_);
             if (aimDir.lengthSq() > 0.01f) {
-                renderAimCrosshair(camera_, player_, aimDir, 96.0f, {0, 255, 228, 200}, 12);
+                // Smaller and translucent so it doesn't dominate the screen.
+                renderAimCrosshair(camera_, player_, aimDir, 96.0f, {0, 255, 228, 100}, 7);
                 drewGamepadCrosshair = true;
             }
         }
