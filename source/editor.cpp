@@ -367,6 +367,11 @@ void MapEditor::loadPalette() {
         {"romfs:/tiles/walls",   "walls",   TILE_WALL},
         {"romfs:/tiles/ceiling", "ceiling", TILE_GLASS},
         {"romfs:/tiles/props",   "props",   TILE_DESK},
+        // Wii U content paths (fs:/vol/content/)
+        {"fs:/vol/content/tiles/ground",  "ground",  TILE_GRASS},
+        {"fs:/vol/content/tiles/walls",   "walls",   TILE_WALL},
+        {"fs:/vol/content/tiles/ceiling", "ceiling", TILE_GLASS},
+        {"fs:/vol/content/tiles/props",   "props",   TILE_DESK},
     };
 
     for (auto& fd : folders) {
@@ -3648,7 +3653,7 @@ void MapEditor::showConfig() {
 
 void MapEditor::scanAvailableMaps() {
     config_.availableMaps.clear();
-    const char* dirs[] = {"maps", "romfs/maps", "romfs:/maps"};
+    const char* dirs[] = {"maps", "romfs/maps", "romfs:/maps", "fs:/vol/content/maps"};
     for (const char* dir : dirs) {
         DIR* d = opendir(dir);
         if (!d) continue;

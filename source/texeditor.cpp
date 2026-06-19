@@ -650,7 +650,9 @@ bool TextureEditor::loadImage(const std::string& path) {
 
 void TextureEditor::scanImageFiles() {
     loadFiles_.clear();
-    const char* dirs[] = { "romfs/sprites", "romfs/tiles", "romfs/characters", "sprites", "tiles", "characters" };
+    const char* dirs[] = { "romfs/sprites", "romfs/tiles", "romfs/characters", "sprites", "tiles", "characters",
+                           "romfs:/sprites", "romfs:/tiles", "romfs:/characters",
+                           "fs:/vol/content/sprites", "fs:/vol/content/tiles", "fs:/vol/content/characters" };
     for (auto& dirPath : dirs) {
         DIR* d = opendir(dirPath);
         if (!d) continue;
