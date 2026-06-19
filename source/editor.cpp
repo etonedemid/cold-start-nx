@@ -6,6 +6,24 @@
 #include <algorithm>
 #include <dirent.h>
 #include <sys/stat.h>
+#ifdef __WIIU__
+#include <SDL2/SDL_syswm.h>  // native swkbd OK/CANCEL events
+#endif
+
+// Open the platform text-input/IME for a config text field, seeding it with the
+// current value. Switch uses the gamepad char-palette (no IME). Wii U shows the
+// native nn::swkbd; the OK/CANCEL it raises is handled in handleConfigInput.
+static inline void editorBeginTextInput(const std::string& initial) {
+#if defined(__SWITCH__)
+    (void)initial;
+#else
+#  if defined(__WIIU__)
+    SDL_WiiUSetSWKBDInitialText(initial.c_str());
+    SDL_WiiUSetSWKBDOKLabel("OK");
+#  endif
+    SDL_StartTextInput();
+#endif
+}
 #ifdef _WIN32
 #  define cs_stricmp _stricmp
 #else
@@ -3694,6 +3712,25 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
     // Text input mode for name/creator/width/height fields
     if (cfg.textEditing) {
         bool isNumField = (cfg.field == 1 || cfg.field == 2);
+#ifdef __WIIU__
+        // Native swkbd raises these on OK/Cancel. Without handling them textEditing
+        // never clears and the keyboard reopens every frame ("OK infinitely enters").
+        if (e.type == SDL_SYSWMEVENT && e.syswm.msg) {
+            switch (e.syswm.msg->msg.wiiu.event) {
+                case SDL_WIIU_SYSWM_SWKBD_OK_START_EVENT:
+                    cfg.textBuf.clear();   // swkbd delivers the whole string; replace
+                    break;
+                case SDL_WIIU_SYSWM_SWKBD_OK_FINISH_EVENT:
+                    commitConfigEdit();    // commit + textEditing=false + StopTextInput
+                    break;
+                case SDL_WIIU_SYSWM_SWKBD_CANCEL_EVENT:
+                    cfg.textEditing = false;
+                    SDL_StopTextInput();
+                    break;
+            }
+            return;
+        }
+#endif
         if (e.type == SDL_TEXTINPUT) {
             const char* t = e.text.text;
             if (isNumField) {
@@ -3823,15 +3860,11 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
                 if ((cfg.field == 1 || cfg.field == 2) && cfg.action == EditorConfig::Action::NewMap) {
                     cfg.textEditing = true;
                     cfg.textBuf = std::to_string(cfg.field == 1 ? cfg.mapWidth : cfg.mapHeight);
-#ifndef __SWITCH__
-                    SDL_StartTextInput();
-#endif
+                    editorBeginTextInput(cfg.textBuf);
                 } else if ((cfg.field == 3 || cfg.field == 4) && cfg.action == EditorConfig::Action::NewMap) {
                     cfg.textEditing = true;
                     cfg.textBuf = (cfg.field == 3) ? cfg.mapName : cfg.creator;
-#ifndef __SWITCH__
-                    SDL_StartTextInput();
-#endif
+                    editorBeginTextInput(cfg.textBuf);
                 }
                 else if (cfg.field == 6) { // OK
                     if (cfg.action == EditorConfig::Action::LoadMap && !cfg.availableMaps.empty()) {
@@ -3915,6 +3948,7 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
                 if ((cfg.field == 3 || cfg.field == 4) && cfg.action == EditorConfig::Action::NewMap) {
                     cfg.textEditing = true;
                     cfg.textBuf = (cfg.field == 3) ? cfg.mapName : cfg.creator;
+                    editorBeginTextInput(cfg.textBuf);
                 }
                 else if (cfg.field == 6) { // OK
                     if (cfg.action == EditorConfig::Action::LoadMap && !cfg.availableMaps.empty()) {
@@ -4059,9 +4093,7 @@ void MapEditor::renderConfig(SDL_Renderer* renderer) {
             cfg.field = idx;
             cfg.textEditing = true;
             cfg.textBuf = std::to_string(idx == 1 ? cfg.mapWidth : cfg.mapHeight);
-#ifndef __SWITCH__
-            SDL_StartTextInput();
-#endif
+            editorBeginTextInput(cfg.textBuf);
         }
 
         // < button (hidden while value box is being typed)
@@ -4114,9 +4146,7 @@ void MapEditor::renderConfig(SDL_Renderer* renderer) {
                 cfg.field = idx;
                 cfg.textEditing = true;
                 cfg.textBuf = (idx == 3) ? cfg.mapName : cfg.creator;
-#ifndef __SWITCH__
-                SDL_StartTextInput();
-#endif
+                editorBeginTextInput(cfg.textBuf);
             }
             y += rowH + rowGap;
         
