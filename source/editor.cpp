@@ -1150,6 +1150,108 @@ void MapEditor::handleInput(SDL_Event& e) {
         }
     }
 
+    // Var list name editing
+    if (varListEditingName_ && showVarList_) {
+        // Collect current var name list for context
+        std::vector<std::string> vnames;
+        for (const auto& va : csLib_.triggerVarActions) {
+            bool found = false;
+            for (const auto& n : vnames) if (n == va.key) { found = true; break; }
+            if (!found && !va.key.empty()) vnames.push_back(va.key);
+        }
+        for (const auto& tc : csLib_.triggerConditions) {
+            bool found = false;
+            for (const auto& n : vnames) if (n == tc.varName) { found = true; break; }
+            if (!found && !tc.varName.empty()) vnames.push_back(tc.varName);
+        }
+        for (const auto& kv : csLib_.varDefaults) {
+            bool found = false;
+            for (const auto& n : vnames) if (n == kv.first) { found = true; break; }
+            if (!found) vnames.push_back(kv.first);
+        }
+        std::sort(vnames.begin(), vnames.end());
+
+        bool isNew = (varListSelected_ == (int)vnames.size());
+
+        if (e.type == SDL_TEXTINPUT) {
+            varListNameBuf_ += e.text.text;
+            return;
+        } else if (e.type == SDL_KEYDOWN) {
+            if (e.key.keysym.sym == SDLK_BACKSPACE && !varListNameBuf_.empty()) {
+                varListNameBuf_.pop_back();
+            } else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_ESCAPE) {
+                if (e.key.keysym.sym == SDLK_RETURN && !varListNameBuf_.empty()) {
+                    pushUndo();
+                    std::string oldName = isNew ? "" : vnames[varListSelected_];
+                    std::string newName = varListNameBuf_;
+                    if (!isNew) {
+                        // Rename: update all triggerVarActions and triggerConditions
+                        for (auto& va : csLib_.triggerVarActions)
+                            if (va.key == oldName) va.key = newName;
+                        for (auto& tc : csLib_.triggerConditions)
+                            if (tc.varName == oldName) tc.varName = newName;
+                        auto node = csLib_.varDefaults.extract(oldName);
+                        if (!node.empty()) { node.key() = newName; csLib_.varDefaults.insert(std::move(node)); }
+                    } else {
+                        // New variable: add to varDefaults with default value 0
+                        csLib_.varDefaults[newName] = 0;
+                    }
+                }
+                varListEditingName_ = false;
+#ifndef __SWITCH__
+                SDL_StopTextInput();
+#endif
+            }
+            return;
+        }
+    }
+
+    // Var list value editing
+    if (varListEditingValue_ && showVarList_) {
+        if (e.type == SDL_TEXTINPUT) {
+            for (const char* p = e.text.text; *p; ++p) {
+                if ((*p >= '0' && *p <= '9') ||
+                    (*p == '-' && varListValueBuf_.empty()))
+                    varListValueBuf_ += *p;
+            }
+            return;
+        } else if (e.type == SDL_KEYDOWN) {
+            if (e.key.keysym.sym == SDLK_BACKSPACE && !varListValueBuf_.empty()) {
+                varListValueBuf_.pop_back();
+            } else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_ESCAPE) {
+                if (e.key.keysym.sym == SDLK_RETURN) {
+                    // Find the var name at varListSelected_
+                    std::vector<std::string> vnames2;
+                    for (const auto& va : csLib_.triggerVarActions) {
+                        bool found = false;
+                        for (const auto& n : vnames2) if (n == va.key) { found = true; break; }
+                        if (!found && !va.key.empty()) vnames2.push_back(va.key);
+                    }
+                    for (const auto& tc : csLib_.triggerConditions) {
+                        bool found = false;
+                        for (const auto& n : vnames2) if (n == tc.varName) { found = true; break; }
+                        if (!found && !tc.varName.empty()) vnames2.push_back(tc.varName);
+                    }
+                    for (const auto& kv : csLib_.varDefaults) {
+                        bool found = false;
+                        for (const auto& n : vnames2) if (n == kv.first) { found = true; break; }
+                        if (!found) vnames2.push_back(kv.first);
+                    }
+                    std::sort(vnames2.begin(), vnames2.end());
+                    if (varListSelected_ >= 0 && varListSelected_ < (int)vnames2.size()) {
+                        pushUndo();
+                        csLib_.varDefaults[vnames2[varListSelected_]] = atoi(varListValueBuf_.c_str());
+                    }
+                }
+                varListEditingValue_ = false;
+#ifndef __SWITCH__
+                SDL_StopTextInput();
+#endif
+            }
+            return;
+        }
+    }
+
     if (e.type == SDL_KEYDOWN && !e.key.repeat) {
         switch (e.key.keysym.sym) {
             case SDLK_1: currentTool_ = EditorTool::Tile; break;
@@ -1749,6 +1851,10 @@ void MapEditor::render(SDL_Renderer* renderer) {
     // Map properties floating panel
     if (!dlgModal)
         renderMapPropsPanel(renderer);
+
+    // Variable list floating panel
+    if (showVarList_ && !dlgModal)
+        renderVarListPanel(renderer);
 
     // Status bar (hidden while the cutscene panel covers the bottom strip)
     if (!showCutsceneEditor_) {
@@ -3019,6 +3125,166 @@ void MapEditor::renderMapPropsPanel(SDL_Renderer* renderer) {
     y += 34;
 
     if (ui_->buttonFired && !firedBefore) dirty_ = true;
+}
+
+void MapEditor::renderVarListPanel(SDL_Renderer* renderer) {
+    if (!ui_) return;
+
+    // Collect all variable names referenced in the current .csc
+    std::vector<std::string> varNames;
+    auto addName = [&](const std::string& n) {
+        if (n.empty()) return;
+        for (const auto& existing : varNames)
+            if (existing == n) return;
+        varNames.push_back(n);
+    };
+    for (const auto& va : csLib_.triggerVarActions)  addName(va.key);
+    for (const auto& tc : csLib_.triggerConditions)   addName(tc.varName);
+    // Also include anything already in varDefaults (user may have added manually)
+    for (const auto& kv : csLib_.varDefaults)         addName(kv.first);
+    // Sort alphabetically
+    std::sort(varNames.begin(), varNames.end());
+
+    const int panelW  = 256;
+    const int pad     = 8;
+    const int rowH    = 28;
+    const int btnSz   = 22;
+    const int maxRows = 10;
+    // +1 for "add" button row, +1 for close button
+    bool addingNew = (varListSelected_ == (int)varNames.size() && varListEditingName_);
+    int visRows = std::min((int)varNames.size(), maxRows - 1) + 1;  // data rows + add row
+    const int panelH  = UI::W98::TitleH + pad + 20 + visRows * rowH + pad + btnSz + pad;
+    const int panelX  = screenW_ - uiPaletteW() - panelW - 8;
+    int panelY        = uiToolbarH() + 8;
+    // If map props panel is open and would overlap, push below it
+    if (mapPropsH_ > 0) panelY += mapPropsH_ + 8;
+    if (panelY + panelH > screenH_ - csEditorBottom() - 8) return;
+
+    ui_->drawWin98Window(panelX, panelY, panelW, panelH, "Variables");
+
+    int y   = panelY + UI::W98::TitleH + pad;
+    int lx  = panelX + pad;
+    // Inner usable width accounting for Win98 border (2px each side)
+    int rvw = panelW - pad * 2 - 4;  // 236
+    // Column layout inside rvw: name | value | scope | del
+    // nameW + gap(3) + valW + gap(2) + scopeW + gap(2) + delW = 236
+    const int delW   = btnSz;    // 22
+    const int scopeW = 26;
+    const int valW   = 54;
+    const int nameW  = rvw - valW - scopeW - delW - 3 - 2 - 2;  // 127
+    const int valX   = lx + nameW + 3;
+    const int scopeX = valX + valW + 2;
+    const int delX   = scopeX + scopeW + 2;
+
+    char buf[64];
+
+    // Header row
+    ui_->drawText("Name", lx,     y + 6, 10, UI::Color::Gray);
+    ui_->drawText("Default",valX, y + 6, 10, UI::Color::Gray);
+    ui_->drawText("Scp",  scopeX, y + 6, 10, UI::Color::Gray);
+    y += 20;
+
+    for (int i = 0; i < (int)varNames.size() && i < maxRows - 1; i++) {
+        const std::string& vn = varNames[i];
+        bool sel = (varListSelected_ == i);
+
+        // Determine scope from triggerVarActions (local=0, pack=1)
+        uint8_t scope = 0;
+        for (const auto& va : csLib_.triggerVarActions)
+            if (va.key == vn) { scope = va.scope; break; }
+
+        int defVal = 0;
+        auto dit = csLib_.varDefaults.find(vn);
+        if (dit != csLib_.varDefaults.end()) defVal = dit->second;
+
+        // Name field
+        bool editingName = (sel && varListEditingName_);
+        const char* nameDisp = editingName ? varListNameBuf_.c_str() : vn.c_str();
+        float blinkN = editingName ? (float)fmod(SDL_GetTicks() * 0.001, 1.0) : 0.0f;
+        ui_->drawWin98TextField(lx, y, nameW, btnSz, nameDisp, editingName, false, blinkN);
+        if (ui_->mouseClicked && ui_->pointInRect(ui_->mouseX, ui_->mouseY, lx, y, nameW, btnSz)) {
+            ui_->mouseClicked = false;
+            ui_->clickCooldownFrames = 2;
+            if (!editingName) {
+                varListSelected_ = i;
+                varListEditingName_ = true;
+                varListEditingValue_ = false;
+                varListNameBuf_ = vn;
+#ifndef __SWITCH__
+                SDL_StartTextInput();
+#endif
+            }
+        }
+
+        // Value field
+        bool editingVal = (sel && varListEditingValue_);
+        if (editingVal) {
+            snprintf(buf, sizeof(buf), "%s", varListValueBuf_.c_str());
+        } else {
+            snprintf(buf, sizeof(buf), "%d", defVal);
+        }
+        float blinkV = editingVal ? (float)fmod(SDL_GetTicks() * 0.001, 1.0) : 0.0f;
+        ui_->drawWin98TextField(valX, y, valW, btnSz, buf, editingVal, false, blinkV);
+        if (ui_->mouseClicked && ui_->pointInRect(ui_->mouseX, ui_->mouseY, valX, y, valW, btnSz)) {
+            ui_->mouseClicked = false;
+            ui_->clickCooldownFrames = 2;
+            if (!editingVal) {
+                varListSelected_ = i;
+                varListEditingName_ = false;
+                varListEditingValue_ = true;
+                snprintf(buf, sizeof(buf), "%d", defVal);
+                varListValueBuf_ = buf;
+#ifndef __SWITCH__
+                SDL_StartTextInput();
+#endif
+            }
+        }
+
+        // Scope toggle (L=local, P=pack)
+        if (ui_->win98Button(700 + i * 3 + 1, scope == 1 ? "P" : "L", scopeX, y, scopeW, btnSz, scope == 1)) {
+            pushUndo();
+            uint8_t newScope = scope == 1 ? 0 : 1;
+            for (auto& va : csLib_.triggerVarActions)
+                if (va.key == vn) va.scope = newScope;
+        }
+
+        // Delete button
+        if (ui_->win98Button(700 + i * 3 + 2, "X", delX, y, delW, btnSz, false)) {
+            pushUndo();
+            // Remove from varDefaults only (not from trigger actions - those are authored data)
+            csLib_.varDefaults.erase(vn);
+            if (varListSelected_ == i) {
+                varListSelected_ = -1;
+                varListEditingName_ = false;
+                varListEditingValue_ = false;
+            }
+        }
+
+        y += rowH;
+    }
+
+    // "Add new variable" row
+    if (addingNew) {
+        // Show name text field spanning full width while typing
+        float blinkNew = (float)fmod(SDL_GetTicks() * 0.001, 1.0);
+        ui_->drawWin98TextField(lx, y, rvw, btnSz, varListNameBuf_.c_str(), true, false, blinkNew);
+    } else {
+        if (ui_->win98Button(800, "+ Add Variable", lx, y, rvw, btnSz, false)) {
+            varListSelected_ = (int)varNames.size();
+            varListEditingName_ = true;
+            varListEditingValue_ = false;
+            varListNameBuf_.clear();
+#ifndef __SWITCH__
+            SDL_StartTextInput();
+#endif
+        }
+    }
+    y += rowH;
+
+    // Close button
+    y += 4;
+    if (ui_->win98Button(699, "Close", lx, y, rvw, btnSz, false))
+        showVarList_ = false;
 }
 
 void MapEditor::renderToolbar(SDL_Renderer* renderer) {

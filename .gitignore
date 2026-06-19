@@ -31,6 +31,11 @@ tools/butler/
 *.nso
 *.pfs0
 
+# ─── Wii U binaries ──────────────────────────────────────────────────────────
+*.rpx
+*.wuhb
+build-wiiu/
+
 # ─── PC binaries ────────────────────────────────────────────────────────────
 cold_start
 cold_start.exe
