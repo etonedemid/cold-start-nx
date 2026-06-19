@@ -88,7 +88,14 @@ int main(int argc, char* argv[]) {
 #endif
     }
 
+#if defined(__WIIU__) || defined(__SWITCH__)
+    // Consoles can't afford an unbatched draw call per sprite (Wii U ~15 fps).
+    // Batching is safe here: the Linux-OpenGL SDL_RenderCopyExF vertex-collapse
+    // bug that forces it off on PC does not affect the console render backends.
+    SDL_SetHint(SDL_HINT_RENDER_BATCHING, "1");
+#else
     SDL_SetHint(SDL_HINT_RENDER_BATCHING, "0");
+#endif
 #ifdef _WIN32
     // Prevent Windows IME initialisation from freezing the game on first text input.
     // SDL internally calls ImmAssociateContext which blocks until the IME is ready;
