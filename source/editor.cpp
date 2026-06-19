@@ -4417,7 +4417,7 @@ void MapEditor::renderCursor(SDL_Renderer* renderer) {
     float cx = useGamepad_ ? cursorX_ : touchX_;
     float cy = useGamepad_ ? cursorY_ : touchY_;
 
-    const int gap = 5, len = 12, half = 1;
+    const int gap = 3, len = 7, half = 1;
     int icx = (int)cx, icy = (int)cy;
     SDL_Rect arms[4] = {
         {icx - half, icy - gap - len, 2, len},
@@ -4425,9 +4425,9 @@ void MapEditor::renderCursor(SDL_Renderer* renderer) {
         {icx - gap - len, icy - half, len, 2},
         {icx + gap,       icy - half, len, 2},
     };
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 210);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 200);
     for (auto& r : arms) { SDL_Rect o = {r.x-1,r.y-1,r.w+2,r.h+2}; SDL_RenderFillRect(renderer, &o); }
-    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 235);
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 230);
     for (auto& r : arms) SDL_RenderFillRect(renderer, &r);
 }
 

@@ -2231,8 +2231,8 @@ void TextureEditor::renderCursor() {
     // Gamepad crosshair (always visible when using gamepad)
     if (useGamepadCursor_) {
         SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 200);
-        SDL_RenderDrawLine(renderer_, mx - 10, my, mx + 10, my);
-        SDL_RenderDrawLine(renderer_, mx, my - 10, mx, my + 10);
+        SDL_RenderDrawLine(renderer_, mx - 6, my, mx + 6, my);
+        SDL_RenderDrawLine(renderer_, mx, my - 6, mx, my + 6);
 
         // Color dot at center
         SDL_SetRenderDrawColor(renderer_, currentColor_.r, currentColor_.g, currentColor_.b, 200);
