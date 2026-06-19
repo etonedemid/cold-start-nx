@@ -218,6 +218,11 @@ bool Game::init() {
         WIIU_FATAL("SDL_Init failed:\n%s", SDL_GetError());
         return false;
     }
+#ifdef __WIIU__
+    // Native swkbd reports OK/Cancel via SysWM events, which SDL suppresses by
+    // default. Enable them once so the editor and SoftKeyboard can close on OK.
+    SDL_EventState(SDL_SYSWMEVENT, SDL_ENABLE);
+#endif
 #ifdef PLATFORM_ANDROID
     Assets::androidInitRomfs();
 #endif
