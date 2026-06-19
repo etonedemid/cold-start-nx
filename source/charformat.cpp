@@ -375,7 +375,8 @@ bool createCharacterTemplate(const std::string& baseDir, const std::string& char
 
             std::string srcPath;
             // Try romfs first, then local
-            const char* srcDirs[] = {"romfs/sprites/player/", "sprites/player/"};
+            const char* srcDirs[] = {"romfs/sprites/player/", "sprites/player/",
+                                     "romfs:/sprites/player/", "fs:/vol/content/sprites/player/"};
             for (const char* sd : srcDirs) {
                 srcPath = std::string(sd) + src;
                 if (fileExists(srcPath)) break;
