@@ -867,6 +867,7 @@ private:
     // Unified onscreen keyboard (movable window, QWERTY layout)
     struct SoftKeyboard {
         bool  active  = false;
+        bool  nativeApplet = false;  // Wii U: native nn::swkbd via wiiu-sdl2, not the custom overlay
         std::string* target = nullptr;
         int   maxLen  = 32;
         std::function<void(bool)> onDone;

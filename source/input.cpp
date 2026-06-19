@@ -5,6 +5,10 @@
 #ifdef __SWITCH__
 #include <switch.h>
 #endif
+#ifdef __WIIU__
+#include <sysapp/launch.h>   // SYSLaunchMenu for clean return to Wii U Menu
+#include <SDL2/SDL_syswm.h>  // swkbd OK/CANCEL events
+#endif
 
 // Key layout
 // act: 0=insert ch, 1=backspace, 2=enter/OK, 3=shift, 4=space, 5=cancel
@@ -56,6 +60,16 @@ void Game::SoftKeyboard::open(std::string* tgt, int max,
         if (done) done(false);
     }
     // active stays false - no custom keyboard overlay needed
+#elif defined(__WIIU__)
+    // Native Wii U system keyboard (nn::swkbd, drawn by wiiu-sdl2). Non-blocking:
+    // SDL_StartTextInput shows it; OK/Cancel arrive as SDL_SYSWMEVENTs, the typed
+    // string as SDL_TEXTINPUT. active=true so existing call sites treat it as open;
+    // nativeApplet routes the handlers (see handleSoftKBEvent/renderSoftKB).
+    active = true; nativeApplet = true; target = tgt; maxLen = max; onDone = done;
+    SDL_EventState(SDL_SYSWMEVENT, SDL_ENABLE);
+    SDL_WiiUSetSWKBDInitialText(tgt ? tgt->c_str() : "");
+    SDL_WiiUSetSWKBDOKLabel("OK");
+    SDL_StartTextInput();
 #else
     active = true; target = tgt; maxLen = max; onDone = done;
     shiftOn = false; heldNav = -1; repeatAt = 0;
@@ -66,6 +80,7 @@ void Game::SoftKeyboard::open(std::string* tgt, int max,
 
 void Game::SoftKeyboard::close(bool confirmed) {
     active = false;
+    nativeApplet = false;
 #ifndef __SWITCH__
     SDL_StopTextInput();
 #endif
@@ -81,6 +96,7 @@ void Game::SoftKeyboard::close(bool confirmed) {
 
 void Game::updateSoftKBRepeat() {
     auto& kb = softKB_;
+    if (kb.nativeApplet) return;  // native swkbd has its own navigation
     if (!kb.active || kb.heldNav < 0) return;
     if (SDL_GetTicks() < kb.repeatAt) return;
     int btn = kb.heldNav;
@@ -105,6 +121,28 @@ void Game::updateSoftKBRepeat() {
 bool Game::handleSoftKBEvent(SDL_Event& e) {
     auto& kb = softKB_;
     if (!kb.active || !kb.target) return false;
+
+#ifdef __WIIU__
+    // Native swkbd: OK is bracketed by START/FINISH SYSWM events with the typed
+    // string delivered as TEXTINPUT in between; clear at START so it replaces
+    // rather than appends. CANCEL discards.
+    if (kb.nativeApplet) {
+        if (e.type == SDL_SYSWMEVENT && e.syswm.msg) {
+            switch (e.syswm.msg->msg.wiiu.event) {
+                case SDL_WIIU_SYSWM_SWKBD_OK_START_EVENT: kb.target->clear(); break;
+                case SDL_WIIU_SYSWM_SWKBD_OK_FINISH_EVENT: kb.close(true);  break;
+                case SDL_WIIU_SYSWM_SWKBD_CANCEL_EVENT:    kb.close(false); break;
+            }
+            return true;
+        }
+        if (e.type == SDL_TEXTINPUT) {
+            kb.target->append(e.text.text);
+            if ((int)kb.target->size() > kb.maxLen) kb.target->resize(kb.maxLen);
+            return true;
+        }
+        return false;  // let navigation/other events fall through
+    }
+#endif
 
     // Apply a key action (insert char, backspace, shift, etc.)
     auto doAct = [&](int act, char ch, char chSh) {
@@ -264,6 +302,7 @@ bool Game::handleSoftKBEvent(SDL_Event& e) {
 // Rendering
 
 void Game::renderSoftKB() {
+    if (softKB_.nativeApplet) return;  // Wii U: wiiu-sdl2 draws the native swkbd
 #ifndef __SWITCH__
     if (!usingGamepad_ && !ui_.touchActive) return;
 #endif
@@ -1245,7 +1284,17 @@ void Game::handleInput() {
             if (leftInput_  || moveInput_.y < -0.5f) menuSelection_ = 90;
             if (rightInput_ || moveInput_.y >  0.5f) menuSelection_ = 91;
             if (confirmInput_) {
-                if (menuSelection_ == 90) { running_ = false; }
+                if (menuSelection_ == 90) {
+#ifdef __WIIU__
+                    // Returning from main() while ProcUI is still in the
+                    // foreground crashes the console. Ask the system to return
+                    // to the Wii U Menu; wiiu-sdl2 releases the foreground and
+                    // emits SDL_QUIT, which then sets running_=false cleanly.
+                    SYSLaunchMenu();
+#else
+                    running_ = false;
+#endif
+                }
 #ifdef __SWITCH__
                 else { logOffConfirm_ = false; menuSelection_ = 10; }
 #else
