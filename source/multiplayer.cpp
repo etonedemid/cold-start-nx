@@ -187,7 +187,10 @@ void Game::renderMultiplayerSplitscreen() {
             Player& cp = coopSlots_[i].player;
             Vec2 aimDir = resolveAimDirection(cp, coopSlots_[i].aimInput);
             float crosshairDistance = (i == 0) ? 96.0f : 80.0f;
-            renderAimCrosshair(camera_, cp, aimDir, crosshairDistance, pColors[i]);
+            // Smaller + translucent to match single-player; keep each player's
+            // color so crosshairs stay distinguishable in splitscreen.
+            SDL_Color chColor = pColors[i]; chColor.a = 120;
+            renderAimCrosshair(camera_, cp, aimDir, crosshairDistance, chColor, 7);
         }
 
         // Per-slot HUD (bottom of viewport): restore 1:1 scale for UI overlay
