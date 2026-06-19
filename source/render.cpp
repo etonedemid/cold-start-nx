@@ -4459,7 +4459,7 @@ void Game::scanMapFiles() {
     mapFiles_.clear();
 
     // Scan "maps" directory for .csm files
-    const char* dirs[] = {"maps", "romfs/maps", "romfs:/maps"};
+    const char* dirs[] = {"maps", "romfs/maps", "romfs:/maps", "fs:/vol/content/maps"};
     for (const char* dir : dirs) {
         DIR* d = opendir(dir);
         if (!d) continue;

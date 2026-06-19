@@ -7,7 +7,7 @@ void Game::scanCharacters() {
     availableChars_.clear();
 
     // Scan standard character directories
-    const char* dirs[] = {"characters", "romfs/characters", "romfs:/characters"};
+    const char* dirs[] = {"characters", "romfs/characters", "romfs:/characters", "fs:/vol/content/characters"};
     for (const char* dir : dirs) {
         auto found = ::scanCharacters(dir, renderer_);
         for (auto& cd : found)
@@ -1086,7 +1086,8 @@ void Game::saveCharacterToFolder(const std::string& folderPath) {
                     char src[256], dst[256];
                     snprintf(src, sizeof(src), srcPat, i);
                     snprintf(dst, sizeof(dst), dstPat, i);
-                    const char* srcDirs[] = {"romfs/sprites/player/", "sprites/player/"};
+                    const char* srcDirs[] = {"romfs/sprites/player/", "sprites/player/",
+                                             "romfs:/sprites/player/", "fs:/vol/content/sprites/player/"};
                     for (const char* dir : srcDirs) {
                         copyFile(std::string(dir) + src, normDest + dst);
                     }

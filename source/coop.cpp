@@ -6,7 +6,8 @@
 void Game::scanMapPacks() {
     availablePacks_.clear();
     // Scan several possible directories
-    std::vector<std::string> dirs = {"packs", "maps/packs", "romfs/packs", "romfs:/packs"};
+    std::vector<std::string> dirs = {"packs", "maps/packs", "romfs/packs", "romfs:/packs",
+                                     "fs:/vol/content/packs", "fs:/vol/content/maps/packs"};
     for (auto& d : dirs) {
         auto found = ::scanMapPacks(d);
         for (auto& p : found) availablePacks_.push_back(std::move(p));
