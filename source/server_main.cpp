@@ -10,7 +10,7 @@
 #include <ctime>
 #include <string>
 
-#if !defined(__SWITCH__)
+#if !defined(__SWITCH__) && !defined(__WIIU__)
 
 #ifdef _WIN32
 #define NOMINMAX

@@ -16,8 +16,11 @@
 #  define mkdir(p, m) _mkdir(p)
 #endif
 
-#ifdef __SWITCH__
+#if defined(__SWITCH__)
 #include <switch.h>
+#elif defined(__WIIU__)
+#include <sys/socket.h>
+#include <arpa/inet.h>
 #elif defined(_WIN32)
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -27,7 +30,7 @@
 #include <arpa/inet.h>
 #endif
 
-#ifdef HAS_CURL
+#if HAS_CURL
 #include <curl/curl.h>
 #endif
 
@@ -206,12 +209,13 @@ bool Game::init() {
 #ifdef __SWITCH__
     romfsInit();
 #endif
-#ifdef HAS_CURL
+#if HAS_CURL
     curl_global_init(CURL_GLOBAL_ALL);
 #endif
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_AUDIO) < 0) {
         printf("SDL_Init: %s\n", SDL_GetError());
+        WIIU_FATAL("SDL_Init failed:\n%s", SDL_GetError());
         return false;
     }
 #ifdef PLATFORM_ANDROID
@@ -219,6 +223,7 @@ bool Game::init() {
 #endif
     if (TTF_Init() < 0) {
         printf("TTF_Init: %s\n", TTF_GetError());
+        WIIU_FATAL("TTF_Init failed:\n%s", TTF_GetError());
         return false;
     }
     if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 4096) < 0) {
@@ -246,7 +251,7 @@ bool Game::init() {
         SDL_WINDOW_RESIZABLE
 #endif
     );
-    if (!window_) { printf("SDL_CreateWindow: %s\n", SDL_GetError()); return false; }
+    if (!window_) { printf("SDL_CreateWindow: %s\n", SDL_GetError()); WIIU_FATAL("SDL_CreateWindow failed:\n%s", SDL_GetError()); return false; }
 
 #ifdef __SWITCH__
     renderer_ = SDL_CreateRenderer(window_, -1,
@@ -287,7 +292,7 @@ bool Game::init() {
     // Re-assert nearest-neighbor after renderer creation for texture loads
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
 #endif
-    if (!renderer_) { printf("SDL_CreateRenderer: %s\n", SDL_GetError()); return false; }
+    if (!renderer_) { printf("SDL_CreateRenderer: %s\n", SDL_GetError()); WIIU_FATAL("SDL_CreateRenderer failed:\n%s", SDL_GetError()); return false; }
 
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
 
@@ -414,7 +419,7 @@ void Game::shutdown() {
     if (renderer_) SDL_DestroyRenderer(renderer_);
     if (window_)   SDL_DestroyWindow(window_);
     SDL_Quit();
-#ifdef HAS_CURL
+#if HAS_CURL
     curl_global_cleanup();
 #endif
 #ifdef __SWITCH__
@@ -1089,8 +1094,8 @@ void Game::update() {
     screenFlashTimer_  = std::max(0.0f, screenFlashTimer_ - dt);
     muzzleFlashTimer_  = std::max(0.0f, muzzleFlashTimer_ - dt);
 
-    // Acid FX fade in/out
-    {
+    // Acid FX fade in/out (skipped when a story cutscene is active -- updateStoryCutscene handles it)
+    if (!(playingCustomMap_ && csPlay_.active)) {
         bool running = (acidFXFade_ > 0.001f || acidFXTimer_ > 0.0f);
         bool shouldFadeOut = (acidFXDuration_ > 0.0f && acidFXTimer_ >= acidFXDuration_);
         if (shouldFadeOut) {
@@ -1458,13 +1463,27 @@ void Game::updateStoryCutscene(float dt) {
             acidColor2_ = {(Uint8)af.c2r, (Uint8)af.c2g, (Uint8)af.c2b, 255};
             acidFXDuration_ = af.duration;
             if (acidFXFade_ <= 0.001f) acidFXTimer_ = 0.0f;
-            acidFXFade_ = std::max(acidFXFade_, 0.001f);  // trigger fade-in
+            acidFXFade_ = std::max(acidFXFade_, 0.002f);  // > 0.001f so running check triggers fade-in
         } else {
             // Disable: start fade out by setting duration to a tiny value that is already elapsed
             if (acidFXFade_ > 0.001f) acidFXDuration_ = acidFXTimer_ + 0.001f;
         }
     }
     csPlay_.pendingAcidFX.clear();
+
+    // Advance acid FX timer here so it progresses even during blocking cutscenes
+    // (update() returns early in that path, skipping the copy below).
+    {
+        bool running = (acidFXFade_ > 0.001f || acidFXTimer_ > 0.0f);
+        bool shouldFadeOut = (acidFXDuration_ > 0.0f && acidFXTimer_ >= acidFXDuration_);
+        if (shouldFadeOut) {
+            acidFXFade_ = std::max(0.0f, acidFXFade_ - dt * 2.0f);
+            if (acidFXFade_ <= 0.0f) { acidFXTimer_ = 0.0f; acidFXDuration_ = 0.0f; }
+        } else if (running) {
+            acidFXTimer_ += dt;
+            acidFXFade_ = std::min(1.0f, acidFXFade_ + dt * 2.0f);
+        }
+    }
 
     // Console command requests from ConsoleCmd events.
     for (const auto& rawCmd : csPlay_.pendingConsoleCmds) {
@@ -2008,11 +2027,51 @@ void Game::consoleExec(const char* cmd) {
                 storyRoute_ == 1 ? "Spearhead" : storyRoute_ == 2 ? "Signal" : "undecided");
             consoleOut(msg);
         }
+    } else if (strcmp(tok, "set") == 0) {
+        char sub[32] = {}, vkey[64] = {};
+        int vval = 0;
+        // set var <name> <value>   -- sets local variable
+        // set pvar <name> <value>  -- sets pack (campaign) variable
+        sscanf(rest, "%31s %63s %d", sub, vkey, &vval);
+        if ((strcmp(sub, "var") == 0 || strcmp(sub, "pvar") == 0) && vkey[0]) {
+            auto& m = (strcmp(sub, "pvar") == 0) ? packVars_ : localVars_;
+            m[vkey] = vval;
+            char msg[128]; snprintf(msg, sizeof(msg), "set %s %s = %d", sub, vkey, vval);
+            consoleOut(msg);
+        } else {
+            consoleOut(" usage: set var <name> <value>  |  set pvar <name> <value>");
+        }
+    } else if (strcmp(tok, "get") == 0) {
+        char sub[32] = {}, vkey[64] = {};
+        sscanf(rest, "%31s %63s", sub, vkey);
+        if ((strcmp(sub, "var") == 0 || strcmp(sub, "pvar") == 0) && vkey[0]) {
+            auto& m = (strcmp(sub, "pvar") == 0) ? packVars_ : localVars_;
+            auto it = m.find(vkey);
+            int vval = (it != m.end()) ? it->second : 0;
+            char msg[128]; snprintf(msg, sizeof(msg), "%s %s = %d%s",
+                sub, vkey, vval, (it == m.end()) ? " (not set)" : "");
+            consoleOut(msg);
+        } else {
+            // Print all local vars
+            if (localVars_.empty() && packVars_.empty()) {
+                consoleOut(" no variables set");
+            } else {
+                for (const auto& kv : localVars_) {
+                    char msg[128]; snprintf(msg, sizeof(msg), " local  %s = %d", kv.first.c_str(), kv.second);
+                    consoleOut(msg);
+                }
+                for (const auto& kv : packVars_) {
+                    char msg[128]; snprintf(msg, sizeof(msg), " pack   %s = %d", kv.first.c_str(), kv.second);
+                    consoleOut(msg);
+                }
+            }
+        }
     } else if (strcmp(tok, "help") == 0) {
         consoleOut(" wave N | hp N | god | clear | bombs N | signal [N] | help");
         consoleOut(" spawn melee|shooter|brute|scout|sniper|gunner|boss_* [N]");
-        consoleOut(" spawn_box | vehicle car");
-        consoleOut(" give <upgrade_name>");
+        consoleOut(" spawn_box | vehicle car | give <upgrade_name>");
+        consoleOut(" set var <name> <value>  |  set pvar <name> <value>");
+        consoleOut(" get var <name>  |  get  (lists all vars)");
     } else if (tok[0] != '\0') {
         char msg[128]; snprintf(msg, sizeof(msg), "Unknown command: %s  (type help)", tok);
         consoleOut(msg);

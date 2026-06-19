@@ -11,8 +11,11 @@
 
 float Cutscene::totalDuration() const {
     float t = 0;
-    for (const auto& e : events)
-        t = std::max(t, e.startTime + e.duration);
+    for (const auto& e : events) {
+        // PostFXAcid duration is an effect lifespan, not a cutscene hold time.
+        float dur = (e.type == CsEventType::PostFXAcid) ? 0.0f : e.duration;
+        t = std::max(t, e.startTime + dur);
+    }
     return t;
 }
 

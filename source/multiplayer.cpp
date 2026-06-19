@@ -8,6 +8,11 @@
 #elif defined(__SWITCH__)
 #include <switch.h>
 #include <arpa/inet.h>
+#elif defined(__WIIU__)
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <unistd.h>
 #else
 #ifndef __ANDROID__
 #include <ifaddrs.h>
@@ -1053,7 +1058,7 @@ void Game::setupNetworkCallbacks() {
         mpUsernameTyping_ = false;
         portTyping_ = false;
         if (softKB_.active) softKB_.close(false);
-#ifndef __SWITCH__
+#if !defined(__SWITCH__) && !defined(__WIIU__)
         SDL_StopTextInput();
 #endif
         // Apply lobby settings received from host
@@ -1611,7 +1616,7 @@ void Game::hostGame() {
 }
 
 std::string Game::getLocalIP() {
-#ifdef __SWITCH__
+#if defined(__SWITCH__)
     // libnx: nifmGetCurrentIpAddress
     u32 ip = 0;
     nifmInitialize(NifmServiceType_User);
@@ -1621,6 +1626,21 @@ std::string Game::getLocalIP() {
     char buf[32];
     snprintf(buf, sizeof(buf), "%d.%d.%d.%d", ip & 0xFF, (ip >> 8) & 0xFF, (ip >> 16) & 0xFF, (ip >> 24) & 0xFF);
     return buf;
+#elif defined(__WIIU__)
+    // UDP connect trick: OS fills in the source address without sending a packet
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) return "N/A";
+    struct sockaddr_in dst = {};
+    dst.sin_family = AF_INET;
+    dst.sin_port = htons(53);
+    dst.sin_addr.s_addr = inet_addr("8.8.8.8");
+    if (connect(sock, (struct sockaddr*)&dst, sizeof(dst)) != 0) { close(sock); return "N/A"; }
+    struct sockaddr_in local = {};
+    socklen_t len = sizeof(local);
+    getsockname(sock, (struct sockaddr*)&local, &len);
+    close(sock);
+    char* ip = inet_ntoa(local.sin_addr);
+    return ip ? ip : "N/A";
 #elif defined(_WIN32)
     // Use Winsock to find the first non-loopback IPv4 address
     char hostname[256] = {};

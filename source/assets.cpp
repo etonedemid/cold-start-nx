@@ -194,8 +194,10 @@ std::string Assets::androidRomfsRoot() { return ""; }
 
 // Platform-specific asset root prefix
 static std::string assetPrefix() {
-#ifdef __SWITCH__
+#if defined(__SWITCH__)
     return "romfs:/";
+#elif defined(__WIIU__)
+    return "fs:/vol/content/";
 #elif defined(PLATFORM_ANDROID)
     return g_androidRomfsPath; // set by androidInitRomfs()
 #else

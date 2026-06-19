@@ -3,7 +3,7 @@
 #include "assets.h"
 #include <algorithm>
 #include <filesystem>
-#ifdef HAS_CURL
+#if HAS_CURL
 #include <curl/curl.h>
 #endif
 #ifdef __SWITCH__
@@ -2283,7 +2283,7 @@ static std::string httpGetString(const std::string& url, int timeoutSec = 15) {
     return androidHttpGetString(url, timeoutSec);
 }
 
-#elif defined(HAS_CURL)
+#elif HAS_CURL
 static size_t curl_write_file(void* ptr, size_t size, size_t nmemb, FILE* stream) {
     return fwrite(ptr, size, nmemb, stream);
 }
@@ -2348,7 +2348,7 @@ static std::string wsTmpPath(const std::string& name) {
 void Game::fetchOnlineModList() {
     if (workshopFetchingMods_) return;
 
-#ifdef HAS_CURL
+#if HAS_CURL
     // curl_global_init is not thread-safe; call it once from the main thread
     // before spawning any background fetch threads.
     static std::once_flag s_curlInitOnce;

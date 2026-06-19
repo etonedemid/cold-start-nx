@@ -135,7 +135,9 @@ public:
     // True when a text field (config or cutscene editor) is capturing typing,
     // so the host can keep ESC/Backspace/Enter from leaking into menu actions.
     bool isTextEditing() const {
-        return config_.textEditing || trigCondEditingName_ || trigMultiCooldownEditing_ || (showCutsceneEditor_ && csEditor_.textEditing());
+        return config_.textEditing || trigCondEditingName_ || trigMultiCooldownEditing_ ||
+               varListEditingName_ || varListEditingValue_ ||
+               (showCutsceneEditor_ && csEditor_.textEditing());
     }
 
     std::string savePath() const { return savePath_; }

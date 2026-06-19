@@ -1,6 +1,22 @@
 #pragma once
 #include "vec2.h"
 
+// Wii U boot diagnostics under Cemu: printf goes nowhere, wut's OSReport is
+// client-side (Cemu never sees it), and Cemu stubs OSFatal as a no-op. The one
+// channel Cemu always prints is the PPC thread dump on crash. So encode progress
+// into the current thread's NAME - the last marker set before exit shows up in
+// that dump's "PPC threads" list. Buffer must be static: Cemu reads the name
+// pointer at crash time, long after the marking function has returned.
+#ifdef __WIIU__
+#include <coreinit/thread.h>
+#include <cstdio>
+#define WIIU_LOG(...) do { static char _wn[160]; snprintf(_wn, sizeof(_wn), __VA_ARGS__); OSSetThreadName(OSGetCurrentThread(), _wn); } while (0)
+#define WIIU_FATAL(...) WIIU_LOG(__VA_ARGS__)
+#else
+#define WIIU_LOG(...) ((void)0)
+#define WIIU_FATAL(...) ((void)0)
+#endif
+
 // Version
 constexpr const char* GAME_VERSION = "3.2.0";
 

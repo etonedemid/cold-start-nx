@@ -1,0 +1,131 @@
+#---------------------------------------------------------------------------------
+# COLD START - Nintendo Wii U Homebrew Build (WUT)
+#---------------------------------------------------------------------------------
+ifeq ($(strip $(DEVKITPRO)),)
+$(error "Please set DEVKITPRO in your environment. export DEVKITPRO=<path to>/devkitpro")
+endif
+
+TOPDIR ?= $(CURDIR)
+include $(DEVKITPRO)/wut/share/wut_rules
+
+#---------------------------------------------------------------------------------
+# Build configuration
+#---------------------------------------------------------------------------------
+TARGET      :=  cold_start
+BUILD       :=  build-wiiu
+SOURCES     :=  source
+DATA        :=  data
+INCLUDES    :=  source $(DEVKITPRO)/portlibs/wiiu/include
+CONTENT     :=  romfs
+
+APP_NAME    :=  COLD START
+APP_AUTHOR  :=  etonedemid
+APP_VERSION :=  3.2.0
+APP_ICON    :=  $(TOPDIR)/icon.png
+
+#---------------------------------------------------------------------------------
+# Compiler flags
+#---------------------------------------------------------------------------------
+ARCH    :=  -mcpu=750 -meabi -mhard-float
+
+CFLAGS  :=  -Wall -O2 -ffunction-sections \
+            $(ARCH) $(DEFINES)
+
+WIIU_PKGCFG_PATH    :=  $(DEVKITPRO)/portlibs/wiiu/lib/pkgconfig:$(DEVKITPRO)/portlibs/ppc/lib/pkgconfig
+WIIU_PKG            :=  PKG_CONFIG_LIBDIR=$(WIIU_PKGCFG_PATH) pkg-config
+
+CFLAGS  +=  $(INCLUDE) -D__WIIU__ -D__WUT__ \
+            $(shell $(WIIU_PKG) --cflags SDL2_image SDL2_ttf SDL2_mixer sdl2) \
+            -DHAS_SOCKLEN_T=1 -DHAS_FCNTL=1 -DHAS_GETADDRINFO=1 \
+            -DHAS_GETNAMEINFO=1 -DHAS_INET_PTON=1 -DHAS_INET_NTOP=1 \
+            -DHAS_POLL=1 -DHAS_CURL=0 -DHAS_UPNP=0 -DHAS_ENET=0
+
+CXXFLAGS    :=  $(CFLAGS) -std=gnu++17 -fno-rtti -fexceptions
+
+ASFLAGS :=  $(ARCH)
+# RPXSPECS pulls in wut.specs (the RPX linker script). Without it the linker
+# keeps every -ffunction-sections fragment, producing a 2800+ section ELF that
+# elf2rpl turns into a malformed RPX Cemu aborts on while loading.
+LDFLAGS  =  $(ARCH) $(RPXSPECS) -Wl,-Map,$(notdir $*.map)
+
+# WUT has no pthreads; filter it out of the SDL2 dependency chain.
+_SDL_LIBS   :=  $(shell $(WIIU_PKG) --static --libs SDL2_image SDL2_ttf SDL2_mixer sdl2)
+LIBS        :=  $(filter-out -pthread,$(_SDL_LIBS)) -lSDL2main
+
+#---------------------------------------------------------------------------------
+# Library search paths
+#---------------------------------------------------------------------------------
+LIBDIRS :=  $(WUT_ROOT) $(PORTLIBS) $(DEVKITPRO)/portlibs/ppc
+
+#---------------------------------------------------------------------------------
+# Build rules
+#---------------------------------------------------------------------------------
+ifneq ($(BUILD),$(notdir $(CURDIR)))
+
+export OUTPUT   :=  $(CURDIR)/$(TARGET)
+export TOPDIR   :=  $(CURDIR)
+
+export VPATH    :=  $(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
+                    $(foreach dir,$(DATA),$(CURDIR)/$(dir))
+
+export DEPSDIR  :=  $(CURDIR)/$(BUILD)
+
+CFILES      :=  $(filter-out win32.c,$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c))))
+CPPFILES    :=  $(filter-out server_main.cpp,$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp))))
+SFILES      :=  $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
+BINFILES    :=  $(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
+
+ifeq ($(strip $(CPPFILES)),)
+    export LD   :=  $(CC)
+else
+    export LD   :=  $(CXX)
+endif
+
+export OFILES_BIN   :=  $(addsuffix .o,$(BINFILES))
+export OFILES_SRC   :=  $(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
+export OFILES       :=  $(OFILES_BIN) $(OFILES_SRC)
+export HFILES_BIN   :=  $(addsuffix .h,$(subst .,_,$(BINFILES)))
+
+export INCLUDE  :=  $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
+                    $(foreach dir,$(LIBDIRS),-I$(dir)/include) \
+                    -I$(CURDIR)/$(BUILD)
+
+export LIBPATHS :=  $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
+
+.PHONY: $(BUILD) clean all
+
+all: $(TARGET).wuhb
+
+$(BUILD):
+	@[ -d $@ ] || mkdir -p $@
+	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile.wiiu
+
+$(TARGET).wuhb: $(BUILD)
+	@wuhbtool $(OUTPUT).rpx $@ \
+	    --name "$(APP_NAME)" --author "$(APP_AUTHOR)" \
+	    --icon $(APP_ICON) --content $(TOPDIR)/$(CONTENT)
+	@echo built $(notdir $@)
+
+clean:
+	@echo clean ...
+	@rm -fr $(BUILD) $(TARGET).rpx $(TARGET).wuhb $(TARGET).elf
+
+else
+
+.PHONY: all
+
+DEPENDS :=  $(OFILES:.o=.d)
+
+all: $(OUTPUT).rpx
+
+$(OUTPUT).elf   :   $(OFILES)
+
+$(OFILES_SRC)   :   $(HFILES_BIN)
+
+%.bin.o %_bin.h :   %.bin
+	@echo $(notdir $<)
+	@$(bin2o)
+
+-include $(DEPENDS)
+
+endif
