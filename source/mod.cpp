@@ -379,6 +379,8 @@ void ModManager::scanMods() {
             dirs.push_back(base + "mods");
         }
     }
+#  elif defined(__WIIU__)
+    dirs.push_back("fs:/vol/content/mods");
 #  endif
 #endif
 

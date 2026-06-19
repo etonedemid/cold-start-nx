@@ -17,9 +17,9 @@ inline int mkdir(const char* path, int /*mode*/) { return _mkdir(path); }
 #include <switch.h>
 #endif
 
-// On Switch, A/B and X/Y are physically swapped compared to Xbox layout
+// On Nintendo hardware, A/B and X/Y are physically swapped vs Xbox layout
 inline Uint8 remapButton(Uint8 btn) {
-#ifdef __SWITCH__
+#if defined(__SWITCH__) || defined(__WIIU__)
     switch (btn) {
         case SDL_CONTROLLER_BUTTON_A: return SDL_CONTROLLER_BUTTON_B;
         case SDL_CONTROLLER_BUTTON_B: return SDL_CONTROLLER_BUTTON_A;

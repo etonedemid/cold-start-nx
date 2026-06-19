@@ -35,6 +35,7 @@ static void handleFatalSignal(int sig) {
 #include <unistd.h>
 #endif
 
+
 int main(int argc, char* argv[]) {
     bool dedicated = false;
     uint16_t dedicatedPort = 7777;
@@ -65,9 +66,11 @@ int main(int argc, char* argv[]) {
     freopen("NUL", "r", stdin);
     setvbuf(stdout, nullptr, _IONBF, 0);
 #endif
-#if !defined(__SWITCH__) && !defined(_WIN32) && !defined(__ANDROID__)
+#if !defined(__SWITCH__) && !defined(_WIN32) && !defined(__ANDROID__) && !defined(__WIIU__)
     // Prefer Wayland over X11 when running in a Wayland session (Linux only).
     // setenv with overwrite=0 so a user-set SDL_VIDEODRIVER is still respected.
+    // Wii U excluded: its only SDL video driver is "wiiu"; forcing wayland/x11
+    // makes SDL_Init(VIDEO) fail with "wayland,x11 not available".
     setenv("SDL_VIDEODRIVER", "wayland,x11", 0);
 #endif
 
