@@ -17,9 +17,13 @@ inline int mkdir(const char* path, int /*mode*/) { return _mkdir(path); }
 #include <switch.h>
 #endif
 
-// On Nintendo hardware, A/B and X/Y are physically swapped vs Xbox layout
+// On Nintendo hardware, A/B and X/Y are physically swapped vs Xbox layout.
+// Switch (libnx SDL) reports position-based buttons, so we swap. Wii U's
+// wiiu-sdl2 already maps by Nintendo label (SDL_GAMECONTROLLER_USE_BUTTON_LABELS
+// defaults on: a:b0 = the A-labeled button), so swapping there double-flips and
+// puts confirm on B - do NOT swap on Wii U. (matches editor.cpp/texeditor.cpp)
 inline Uint8 remapButton(Uint8 btn) {
-#if defined(__SWITCH__) || defined(__WIIU__)
+#if defined(__SWITCH__)
     switch (btn) {
         case SDL_CONTROLLER_BUTTON_A: return SDL_CONTROLLER_BUTTON_B;
         case SDL_CONTROLLER_BUTTON_B: return SDL_CONTROLLER_BUTTON_A;
