@@ -53,7 +53,7 @@ static std::string httpGet(const char* host, const char* path) {
     #ifdef _WIN32
     DWORD timeout = 5000;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
-    #else
+    #elif !defined(__WIIU__)
     struct timeval tv = {5, 0};
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     #endif

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # build_all.sh - Build Cold Start for all platforms and bundle into release-out/
-# Platforms: Windows (via MinGW cross-compile), Linux, Switch (via devkitPro), Android
-# Usage: ./build_all.sh [--skip-win] [--skip-linux] [--skip-switch] [--skip-android]
+# Platforms: Windows (via MinGW cross-compile), Linux, Switch (via devkitPro), Android, Wii U (via WUT)
+# Usage: ./build_all.sh [--skip-win] [--skip-linux] [--skip-switch] [--skip-android] [--skip-wiiu]
 # Run from the cold-start-nx directory.
 
 set -euo pipefail
@@ -11,6 +11,7 @@ SKIP_WIN=false
 SKIP_LINUX=false
 SKIP_SWITCH=false
 SKIP_ANDROID=false
+SKIP_WIIU=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -18,6 +19,7 @@ while [[ $# -gt 0 ]]; do
     --skip-linux)   SKIP_LINUX=true;   shift ;;
     --skip-switch)  SKIP_SWITCH=true;  shift ;;
     --skip-android) SKIP_ANDROID=true; shift ;;
+    --skip-wiiu)    SKIP_WIIU=true;    shift ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -30,6 +32,7 @@ WIN_ZIP="$OUT/cold_start-windows-$VER.zip"
 LIN_ZIP="$OUT/cold_start-linux-$VER.zip"
 NRO_OUT="$OUT/cold-start-nx.nro"
 APK_OUT="$OUT/cold_start-android-$VER.apk"
+WUHB_OUT="$OUT/cold_start-wiiu-$VER.wuhb"
 
 MINGW_DEPS="$HOME/mingw-deps"
 SDL2_ROOT="$MINGW_DEPS/SDL2-2.30.11/x86_64-w64-mingw32"
@@ -190,6 +193,23 @@ if [[ "$SKIP_ANDROID" == false ]]; then
         [[ -f "$APK_OUT" ]] || fail "Signed APK not found at $APK_OUT"
         sz=$(du -h "$APK_OUT" | cut -f1)
         ok "$APK_OUT ($sz)"
+    fi
+fi
+
+# ── Wii U ────────────────────────────────────────────────────────────────────
+if [[ "$SKIP_WIIU" == false ]]; then
+    if [[ ! -d /opt/devkitpro/wut ]]; then
+        echo -e "\e[33m    SKIP: WUT not found at /opt/devkitpro/wut (install via dkp-pacman: wiiu-dev)\e[0m"
+    else
+        banner "Building Wii U WUHB..."
+
+        bash "$ROOT/.build_wiiu.sh"
+
+        wuhbSrc="$ROOT/cold_start.wuhb"
+        [[ -f "$wuhbSrc" ]] || fail "cold_start.wuhb not found after Wii U build"
+        cp "$wuhbSrc" "$WUHB_OUT"
+        sz=$(du -h "$WUHB_OUT" | cut -f1)
+        ok "$WUHB_OUT ($sz)"
     fi
 fi
 
