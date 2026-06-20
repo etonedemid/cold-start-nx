@@ -34,6 +34,11 @@ static void handleFatalSignal(int sig) {
 #include <switch.h>
 #include <unistd.h>
 #endif
+#ifdef __WIIU__
+#include <unistd.h>
+#include <nn/ac/ac_c.h>
+#include <nn/result.h>
+#endif
 
 
 int main(int argc, char* argv[]) {
@@ -123,6 +128,21 @@ int main(int argc, char* argv[]) {
         nroDir[sizeof(nroDir) - 1] = '\0';
         char* lastSlash = strrchr(nroDir, '/');
         if (lastSlash) { *lastSlash = '\0'; chdir(nroDir); }
+    }
+#endif
+#ifdef __WIIU__
+    // Bring up the network so ENet's BSD sockets work. nn::ac assigns an IP via
+    // the system's saved connection; non-fatal if there's no network (the game
+    // just can't host/join). The socket library itself auto-inits on first use.
+    if (NNResult_IsSuccess(ACInitialize())) {
+        if (NNResult_IsFailure(ACConnect())) {
+            printf("Wii U: ACConnect failed - multiplayer unavailable\n");
+        } else {
+            uint32_t ip = 0;
+            ACGetAssignedAddress(&ip);
+            printf("Wii U network up: %u.%u.%u.%u\n",
+                   (ip >> 24) & 0xFF, (ip >> 16) & 0xFF, (ip >> 8) & 0xFF, ip & 0xFF);
+        }
     }
 #endif
 

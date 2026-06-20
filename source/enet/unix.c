@@ -61,6 +61,21 @@ typedef int socklen_t;
 #define MSG_NOSIGNAL 0
 #endif
 
+#ifdef __WIIU__
+/* The Wii U socket headers omit these. ENet only references them for options
+   the game never sets (it uses non-blocking sockets + select), so compile-only
+   fallbacks suffice - setsockopt would just reject them at runtime. */
+#ifndef SOMAXCONN
+#define SOMAXCONN   128
+#endif
+#ifndef SO_RCVTIMEO
+#define SO_RCVTIMEO 0x1006
+#endif
+#ifndef SO_SNDTIMEO
+#define SO_SNDTIMEO 0x1005
+#endif
+#endif
+
 static enet_uint32 timeBase = 0;
 
 int
@@ -303,7 +318,10 @@ enet_socket_set_option (ENetSocket socket, ENetSocketOption option, int value)
     switch (option)
     {
         case ENET_SOCKOPT_NONBLOCK:
-#ifdef HAS_FCNTL
+#ifdef __WIIU__
+            /* Wii U sets blocking mode through setsockopt(SO_NONBLOCK), not fcntl/ioctl. */
+            result = setsockopt (socket, SOL_SOCKET, SO_NONBLOCK, (char *) & value, sizeof (int));
+#elif defined(HAS_FCNTL)
             result = fcntl (socket, F_SETFL, (value ? O_NONBLOCK : 0) | (fcntl (socket, F_GETFL) & ~O_NONBLOCK));
 #else
             result = ioctl (socket, FIONBIO, & value);
@@ -433,11 +451,8 @@ enet_socket_send (ENetSocket socket,
                   const ENetBuffer * buffers,
                   size_t bufferCount)
 {
-    struct msghdr msgHdr;
     struct sockaddr_in sin;
     int sentLength;
-
-    memset (& msgHdr, 0, sizeof (struct msghdr));
 
     if (address != NULL)
     {
@@ -446,16 +461,44 @@ enet_socket_send (ENetSocket socket,
         sin.sin_family = AF_INET;
         sin.sin_port = ENET_HOST_TO_NET_16 (address -> port);
         sin.sin_addr.s_addr = address -> host;
-
-        msgHdr.msg_name = & sin;
-        msgHdr.msg_namelen = sizeof (struct sockaddr_in);
     }
 
-    msgHdr.msg_iov = (struct iovec *) buffers;
-    msgHdr.msg_iovlen = bufferCount;
+#ifdef __WIIU__
+    /* Wii U's socket library has no sendmsg/scatter-gather. Coalesce the ENet
+       buffers (always one datagram, <= MTU) into a contiguous buffer and sendto. */
+    {
+        enet_uint8 packet [ENET_PROTOCOL_MAXIMUM_MTU];
+        size_t total = 0, i;
+        for (i = 0; i < bufferCount; ++i)
+            total += buffers [i].dataLength;
+        if (total > sizeof (packet)) { errno = EMSGSIZE; return -1; }
+        {
+            size_t offset = 0;
+            for (i = 0; i < bufferCount; ++i)
+            {
+                memcpy (packet + offset, buffers [i].data, buffers [i].dataLength);
+                offset += buffers [i].dataLength;
+            }
+        }
+        sentLength = sendto (socket, (const char *) packet, total, 0,
+                             address != NULL ? (struct sockaddr *) & sin : NULL,
+                             address != NULL ? sizeof (struct sockaddr_in) : 0);
+    }
+#else
+    {
+        struct msghdr msgHdr;
+        memset (& msgHdr, 0, sizeof (struct msghdr));
+        if (address != NULL)
+        {
+            msgHdr.msg_name = & sin;
+            msgHdr.msg_namelen = sizeof (struct sockaddr_in);
+        }
+        msgHdr.msg_iov = (struct iovec *) buffers;
+        msgHdr.msg_iovlen = bufferCount;
+        sentLength = sendmsg (socket, & msgHdr, MSG_NOSIGNAL);
+    }
+#endif
 
-    sentLength = sendmsg (socket, & msgHdr, MSG_NOSIGNAL);
-    
     if (sentLength == -1)
     {
        if (errno == EWOULDBLOCK)
@@ -473,22 +516,48 @@ enet_socket_receive (ENetSocket socket,
                      ENetBuffer * buffers,
                      size_t bufferCount)
 {
-    struct msghdr msgHdr;
     struct sockaddr_in sin;
     int recvLength;
 
-    memset (& msgHdr, 0, sizeof (struct msghdr));
-
-    if (address != NULL)
+#ifdef __WIIU__
+    /* Wii U's socket library has no recvmsg/scatter-gather. recvfrom into one
+       buffer, then scatter across the ENet buffers (in practice a single buffer). */
     {
-        msgHdr.msg_name = & sin;
-        msgHdr.msg_namelen = sizeof (struct sockaddr_in);
+        enet_uint8 packet [ENET_PROTOCOL_MAXIMUM_MTU];
+        socklen_t sinLength = sizeof (struct sockaddr_in);
+        recvLength = recvfrom (socket, (char *) packet, sizeof (packet), 0,
+                               address != NULL ? (struct sockaddr *) & sin : NULL,
+                               address != NULL ? & sinLength : NULL);
+        if (recvLength > 0)
+        {
+            size_t remaining = (size_t) recvLength, offset = 0, i;
+            for (i = 0; i < bufferCount && remaining > 0; ++i)
+            {
+                size_t chunk = buffers [i].dataLength < remaining ? buffers [i].dataLength : remaining;
+                memcpy (buffers [i].data, packet + offset, chunk);
+                offset += chunk;
+                remaining -= chunk;
+            }
+        }
     }
-
-    msgHdr.msg_iov = (struct iovec *) buffers;
-    msgHdr.msg_iovlen = bufferCount;
-
-    recvLength = recvmsg (socket, & msgHdr, MSG_NOSIGNAL);
+#else
+    {
+        struct msghdr msgHdr;
+        memset (& msgHdr, 0, sizeof (struct msghdr));
+        if (address != NULL)
+        {
+            msgHdr.msg_name = & sin;
+            msgHdr.msg_namelen = sizeof (struct sockaddr_in);
+        }
+        msgHdr.msg_iov = (struct iovec *) buffers;
+        msgHdr.msg_iovlen = bufferCount;
+        recvLength = recvmsg (socket, & msgHdr, MSG_NOSIGNAL);
+#ifdef HAS_MSGHDR_FLAGS
+        if (recvLength != -1 && (msgHdr.msg_flags & MSG_TRUNC))
+          { errno = 0; return -1; }
+#endif
+    }
+#endif
 
     if (recvLength == -1)
     {
@@ -497,11 +566,6 @@ enet_socket_receive (ENetSocket socket,
 
        return -1;
     }
-
-#ifdef HAS_MSGHDR_FLAGS
-    if (msgHdr.msg_flags & MSG_TRUNC)
-      return -1;
-#endif
 
     if (address != NULL)
     {

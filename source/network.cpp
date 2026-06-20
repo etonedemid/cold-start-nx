@@ -18,6 +18,14 @@
 #  ifndef HAS_ENET
 #    define HAS_ENET 1
 #  endif
+#elif defined(__WIIU__)
+// Wii U: bundled ENet over WUT's nsysnet BSD sockets (source/enet/). The socket
+// layer is brought up via nn::ac in main(); see unix.c for the Wii U send/recv
+// path (no sendmsg/recvmsg/poll on Wii U).
+#  include <enet/enet.h>
+#  ifndef HAS_ENET
+#    define HAS_ENET 1
+#  endif
 #elif __has_include(<enet/enet.h>)
 #  include <enet/enet.h>
 #  ifndef HAS_ENET
