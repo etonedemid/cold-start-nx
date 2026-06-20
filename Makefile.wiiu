@@ -13,9 +13,9 @@ include $(DEVKITPRO)/wut/share/wut_rules
 #---------------------------------------------------------------------------------
 TARGET      :=  cold_start
 BUILD       :=  build-wiiu
-SOURCES     :=  source
+SOURCES     :=  source source/enet
 DATA        :=  data
-INCLUDES    :=  source $(DEVKITPRO)/portlibs/wiiu/include
+INCLUDES    :=  source source/enet/include $(DEVKITPRO)/portlibs/wiiu/include
 CONTENT     :=  romfs
 
 APP_NAME    :=  COLD START
@@ -38,7 +38,7 @@ CFLAGS  +=  $(INCLUDE) -D__WIIU__ -D__WUT__ \
             $(shell $(WIIU_PKG) --cflags SDL2_image SDL2_ttf SDL2_mixer sdl2) \
             -DHAS_SOCKLEN_T=1 -DHAS_FCNTL=1 -DHAS_GETADDRINFO=1 \
             -DHAS_GETNAMEINFO=1 -DHAS_INET_PTON=1 -DHAS_INET_NTOP=1 \
-            -DHAS_POLL=1 -DHAS_CURL=0 -DHAS_UPNP=0 -DHAS_ENET=0
+            -DHAS_CURL=0 -DHAS_UPNP=0 -DHAS_ENET=1
 
 CXXFLAGS    :=  $(CFLAGS) -std=gnu++17 -fno-rtti -fexceptions
 
