@@ -2,6 +2,7 @@
 #include "vec2.h"
 #include "constants.h"
 #include <SDL2/SDL.h>
+#include <vector>
 
 struct TouchControls {
     // Visibility
@@ -74,4 +75,16 @@ private:
     }
 
     mutable float lastScale_ = 1.0f;
+
+    // Each control is a flat filled circle + 2px outline. Drawing those with
+    // per-scanline primitives every frame tanks the framerate on Android, so we
+    // bake each distinct circle to a texture once and just blit it thereafter.
+    struct CircleTex { int radius; Uint32 fill; Uint32 outline; SDL_Texture* tex; };
+    mutable std::vector<CircleTex> circleCache_;
+    mutable float cacheScale_ = -1.0f;
+
+    SDL_Texture* circleTex(SDL_Renderer* r, int radius, SDL_Color fill, SDL_Color outline) const;
+    void drawCachedCircle(SDL_Renderer* r, int cx, int cy, int radius,
+                          SDL_Color fill, SDL_Color outline) const;
+    void freeCircleCache() const;
 };
