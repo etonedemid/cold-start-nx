@@ -24,6 +24,58 @@ static void drawCircleOutline(SDL_Renderer* r, int cx, int cy, int rad, int thic
     }
 }
 
+static Uint32 packColor(SDL_Color c) {
+    return ((Uint32)c.r << 24) | ((Uint32)c.g << 16) | ((Uint32)c.b << 8) | c.a;
+}
+
+static int circleTexSize(int radius) { return 2 * radius + 4; }
+
+// Bake (or fetch from cache) a filled circle + 2px outline as a texture. Drawn
+// once with the per-scanline primitives, then reused as a single blit.
+SDL_Texture* TouchControls::circleTex(SDL_Renderer* r, int radius, SDL_Color fill, SDL_Color outline) const {
+    if (radius < 1) return nullptr;
+    Uint32 fk = packColor(fill), ok = packColor(outline);
+    for (auto& c : circleCache_)
+        if (c.radius == radius && c.fill == fk && c.outline == ok) return c.tex;
+
+    int size = circleTexSize(radius);
+    SDL_Texture* tex = SDL_CreateTexture(r, SDL_PIXELFORMAT_RGBA8888,
+                                         SDL_TEXTUREACCESS_TARGET, size, size);
+    if (!tex) return nullptr;
+    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+
+    SDL_Texture* prevTarget = SDL_GetRenderTarget(r);
+    SDL_SetRenderTarget(r, tex);
+    // Overwrite (not blend) so each baked pixel holds the exact source RGBA;
+    // the per-pixel alpha is then applied when the texture is blitted.
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
+    SDL_RenderClear(r);
+    int c = size / 2;
+    SDL_SetRenderDrawColor(r, fill.r, fill.g, fill.b, fill.a);
+    fillCircle(r, c, c, radius);
+    SDL_SetRenderDrawColor(r, outline.r, outline.g, outline.b, outline.a);
+    drawCircleOutline(r, c, c, radius, 2);
+    SDL_SetRenderTarget(r, prevTarget);
+
+    circleCache_.push_back({ radius, fk, ok, tex });
+    return tex;
+}
+
+void TouchControls::drawCachedCircle(SDL_Renderer* r, int cx, int cy, int radius,
+                                     SDL_Color fill, SDL_Color outline) const {
+    SDL_Texture* t = circleTex(r, radius, fill, outline);
+    if (!t) return;
+    int size = circleTexSize(radius);
+    SDL_Rect dst = { cx - size / 2, cy - size / 2, size, size };
+    SDL_RenderCopy(r, t, nullptr, &dst);
+}
+
+void TouchControls::freeCircleCache() const {
+    for (auto& c : circleCache_) if (c.tex) SDL_DestroyTexture(c.tex);
+    circleCache_.clear();
+}
+
 // TouchControls
 
 void TouchControls::compute() {
@@ -174,21 +226,19 @@ void TouchControls::render(SDL_Renderer* r, float uiScale) const {
     lastScale_ = uiScale;
     const float us = uiScale;
 
+    // Circle textures are baked at a given scale; rebuild them if it changes.
+    if (cacheScale_ != us) { freeCircleCache(); cacheScale_ = us; }
+
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
 
     // Toggle button (always visible, green = on, amber = off)
     {
         auto b = btnToggle(us);
         int cx = (int)b.x, cy = (int)b.y, cr = (int)b.r;
-        // Background fill
-        if (visible_) SDL_SetRenderDrawColor(r,  30, 60, 30, 110);
-        else          SDL_SetRenderDrawColor(r,  60, 40, 20, 110);
-        fillCircle(r, cx, cy, cr);
-        // Outline
-        if (visible_) SDL_SetRenderDrawColor(r,  80, 200,  80, 180);
-        else          SDL_SetRenderDrawColor(r, 200, 140,  40, 180);
-        drawCircleOutline(r, cx, cy, cr, 2);
-        // Hamburger icon (3 bars)
+        SDL_Color fill    = visible_ ? SDL_Color{ 30, 60, 30, 110} : SDL_Color{ 60, 40, 20, 110};
+        SDL_Color outline = visible_ ? SDL_Color{ 80,200, 80, 180} : SDL_Color{200,140, 40, 180};
+        drawCachedCircle(r, cx, cy, cr, fill, outline);
+        // Hamburger icon (3 bars) - cheap, drawn live on top
         int bw = (int)(cr * 0.62f);
         int step = (int)(cr * 0.35f);
         SDL_SetRenderDrawColor(r, 240, 240, 240, 210);
@@ -213,24 +263,15 @@ void TouchControls::render(SDL_Renderer* r, float uiScale) const {
         float clamp = std::min(len, maxR);
         int kx = ox + (len > 0 ? (int)(dx/len*clamp) : 0);
         int ky = oy + (len > 0 ? (int)(dy/len*clamp) : 0);
-        SDL_SetRenderDrawColor(r, 255,255,255,35);
-        fillCircle(r, ox, oy, (int)maxR);
-        SDL_SetRenderDrawColor(r, 255,255,255,80);
-        drawCircleOutline(r, ox, oy, (int)maxR, 2);
-        SDL_SetRenderDrawColor(r, 220,220,255,160);
-        fillCircle(r, kx, ky, (int)knobR);
-        SDL_SetRenderDrawColor(r, 255,255,255,200);
-        drawCircleOutline(r, kx, ky, (int)knobR, 2);
+        drawCachedCircle(r, ox, oy, (int)maxR,  {255,255,255, 35}, {255,255,255, 80});
+        drawCachedCircle(r, kx, ky, (int)knobR, {220,220,255,160}, {255,255,255,200});
     };
     drawStick(leftSlot_,  75.f*us, 30.f*us);
     drawStick(rightSlot_, 65.f*us, 25.f*us);
 
     // Idle stick hints (when no finger on that zone)
     auto drawIdleStick = [&](float hx, float hy, float maxR) {
-        SDL_SetRenderDrawColor(r, 255,255,255,18);
-        fillCircle(r, (int)hx, (int)hy, (int)maxR);
-        SDL_SetRenderDrawColor(r, 255,255,255,45);
-        drawCircleOutline(r, (int)hx, (int)hy, (int)maxR, 2);
+        drawCachedCircle(r, (int)hx, (int)hy, (int)maxR, {255,255,255,18}, {255,255,255,45});
     };
     if (leftSlot_  < 0) drawIdleStick(180.f*us, (SCREEN_H - 150.f)*us, 75.f*us);
     if (rightSlot_ < 0) drawIdleStick((SCREEN_W - 430.f)*us, (SCREEN_H - 150.f)*us, 65.f*us);
@@ -248,11 +289,9 @@ void TouchControls::render(SDL_Renderer* r, float uiScale) const {
 
     for (auto& b : btns) {
         int cx = (int)b.pos.x, cy = (int)b.pos.y, cr = (int)b.pos.r;
-        Uint8 alpha = b.pressed ? 200 : 100;
-        SDL_SetRenderDrawColor(r, b.c.r/3, b.c.g/3, b.c.b/3, alpha);
-        fillCircle(r, cx, cy, cr);
-        SDL_SetRenderDrawColor(r, b.c.r, b.c.g, b.c.b, b.pressed ? 255 : 160);
-        drawCircleOutline(r, cx, cy, cr, 2);
+        SDL_Color fill    = { (Uint8)(b.c.r/3), (Uint8)(b.c.g/3), (Uint8)(b.c.b/3), (Uint8)(b.pressed ? 200 : 100) };
+        SDL_Color outline = { b.c.r, b.c.g, b.c.b, (Uint8)(b.pressed ? 255 : 160) };
+        drawCachedCircle(r, cx, cy, cr, fill, outline);
     }
 
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
