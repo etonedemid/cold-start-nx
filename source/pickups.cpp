@@ -28,6 +28,9 @@ void Game::updateCrates(float dt) {
                 int ty = 2 + rand() % (map_.height - 4);
                 if (map_.isSolid(tx, ty)) continue;
                 Vec2 pos = {TileMap::toWorld(tx), TileMap::toWorld(ty)};
+                // Crates are static (never pushed out), so reject zone overlaps
+                // up front - otherwise upgrade boxes spawn inside collision zones.
+                if (posInCollisionZone(pos, 24.0f)) continue;
                 spawnCrate(pos);
                 cratePopupTimer_ = 2.5f;
                 break;

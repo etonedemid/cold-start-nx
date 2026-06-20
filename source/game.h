@@ -696,6 +696,7 @@ private:
     void updateSpawning(float dt);
     void resolveCollisions();
     void pushOutCollisionZones(Vec2& pos, float radius); // push pos out of all CollisionZone triggers
+    bool posInCollisionZone(Vec2 pos, float radius) const; // true if a body at pos overlaps any CollisionZone
 
     // Enemy AI helpers
     void enemyWander(Enemy& e, float dt);
