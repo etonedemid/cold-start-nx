@@ -267,8 +267,8 @@ bool Game::init() {
     // FIX: Set scale quality BEFORE renderer creation to ensure nearest-neighbor
     //     filtering is used for ALL textures including rotated ones.
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
-    // RENDER_BATCHING is disabled in main() before SDL_Init; do NOT re-enable it here.
-    // Batching causes vertex collapse on Linux OpenGL drivers with SDL_RenderCopyExF.
+    // RENDER_BATCHING and the GLES2 render-driver preference are set in main()
+    // before SDL_Init; do not change them here.
 
     const char* envDriver = getenv("SDL_RENDER_DRIVER");
     if (envDriver && envDriver[0]) {

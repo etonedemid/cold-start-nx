@@ -72,6 +72,13 @@ int main(int argc, char* argv[]) {
     // Wii U excluded: its only SDL video driver is "wiiu"; forcing wayland/x11
     // makes SDL_Init(VIDEO) fail with "wayland,x11 not available".
     setenv("SDL_VIDEODRIVER", "wayland,x11", 0);
+    // Use SDL's GLES2 renderer instead of the legacy "opengl" one. The legacy GL
+    // backend has a batching bug on some Mesa drivers (SDL_RenderCopyExF vertex
+    // collapse) which previously forced batching off and tanked performance.
+    // GLES2 batches correctly, so we keep batching on (below). overwrite=0 keeps
+    // any user-set SDL_RENDER_DRIVER, and the dedicated-server block below still
+    // overrides this with "software".
+    setenv("SDL_RENDER_DRIVER", "opengles2", 0);
 #endif
 
     if (dedicated) {
@@ -88,14 +95,11 @@ int main(int argc, char* argv[]) {
 #endif
     }
 
-#if defined(__WIIU__) || defined(__SWITCH__)
-    // Consoles can't afford an unbatched draw call per sprite (Wii U ~15 fps).
-    // Batching is safe here: the Linux-OpenGL SDL_RenderCopyExF vertex-collapse
-    // bug that forces it off on PC does not affect the console render backends.
+    // Batching on everywhere: an unbatched draw call per sprite is a big cost
+    // (Wii U ~15 fps without it). The Linux-GL CopyExF vertex-collapse bug that
+    // used to force this off is sidestepped by selecting the GLES2 renderer on
+    // Linux (above); console backends and Windows D3D batch fine too.
     SDL_SetHint(SDL_HINT_RENDER_BATCHING, "1");
-#else
-    SDL_SetHint(SDL_HINT_RENDER_BATCHING, "0");
-#endif
 #ifdef _WIN32
     // Prevent Windows IME initialisation from freezing the game on first text input.
     // SDL internally calls ImmAssociateContext which blocks until the IME is ready;
