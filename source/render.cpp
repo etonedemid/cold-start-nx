@@ -4250,6 +4250,7 @@ void Game::startCustomMap(const std::string& path, int modeOverride) {
             if (isCrateSpawnType(es.enemyType)) {
                 PickupCrate crate;
                 crate.pos = {es.x, es.y};
+                pushOutCollisionZones(crate.pos, 24.0f);
                 crate.contents = rollRandomUpgrade();
                 crates_.push_back(crate);
             } else if (isResponderSpawn(es.enemyType)) {
@@ -4390,6 +4391,7 @@ void Game::startCustomMapMultiplayer(const std::string& path) {
             if (isCrateSpawnType(es.enemyType)) {
                 PickupCrate crate;
                 crate.pos = {es.x, es.y};
+                pushOutCollisionZones(crate.pos, 24.0f);
                 crate.contents = rollRandomUpgrade();
                 crates_.push_back(crate);
             } else {

@@ -130,6 +130,7 @@ void Game::startPackLevel() {
         if (isCrateSpawnType(es.enemyType)) {
             PickupCrate crate;
             crate.pos = {es.x, es.y};
+            pushOutCollisionZones(crate.pos, 24.0f);
             crate.contents = rollRandomUpgrade();
             crates_.push_back(crate);
         } else if (isBystanderSpawn(es.enemyType)) {

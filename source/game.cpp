@@ -916,6 +916,7 @@ void Game::run() {
                         // Spawn as a breakable crate
                         PickupCrate crate;
                         crate.pos = {es.x, es.y};
+                        pushOutCollisionZones(crate.pos, 24.0f);
                         crate.contents = rollRandomUpgrade();
                         crates_.push_back(crate);
                     } else if (isResponderSpawn(es.enemyType)) {

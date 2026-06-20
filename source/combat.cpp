@@ -40,6 +40,16 @@ void Game::pushOutCollisionZones(Vec2& pos, float radius) {
     }
 }
 
+bool Game::posInCollisionZone(Vec2 pos, float radius) const {
+    for (const auto& t : customMap_.triggers) {
+        if (t.type != TriggerType::CollisionZone) continue;
+        if (collisionZonePushout(pos, radius, { t.x, t.y },
+                t.width * 0.5f, t.height * 0.5f, triggerGetAngle(t)).lengthSq() > 0.0f)
+            return true;
+    }
+    return false;
+}
+
 
 void Game::updatePlayer(float dt) {
     Player& p = player_;
@@ -2340,12 +2350,7 @@ Vec2 Game::pickEnemySpawnPos(bool* foundHidden) {
 
     auto isValidSpawn = [&](Vec2 sp, bool requireHidden) -> bool {
         if (map_.worldCollides(sp.x, sp.y, ENEMY_SIZE * 0.5f)) return false;
-        for (const auto& t : customMap_.triggers) {
-            if (t.type != TriggerType::CollisionZone) continue;
-            if (collisionZonePushout(sp, ENEMY_SIZE * 0.5f, {t.x, t.y},
-                    t.width * 0.5f, t.height * 0.5f, triggerGetAngle(t)).lengthSq() > 0.0f)
-                return false;
-        }
+        if (posInCollisionZone(sp, ENEMY_SIZE * 0.5f)) return false;
         if (requireHidden && isEnemySpawnVisibleToAnyPlayer(sp)) return false;
         return true;
     };
@@ -2571,6 +2576,9 @@ void Game::updateSpawning(float dt) {
 }
 
 void Game::spawnEnemy(Vec2 pos, EnemyType type) {
+    // Never embed an enemy in a collision zone, whatever the spawn source
+    // (random wave, map-placed marker, cutscene, or network).
+    pushOutCollisionZones(pos, ENEMY_SIZE * 0.5f);
     Enemy e;
     e.pos = pos;
     e.type = type;
