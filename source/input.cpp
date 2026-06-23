@@ -448,6 +448,8 @@ void Game::handleInput() {
     backInput_ = false;
     leftInput_ = false;
     rightInput_ = false;
+    upInput_ = false;
+    downInput_ = false;
     tabInput_ = false;
 
     // Soft keyboard hold-repeat
@@ -828,11 +830,13 @@ void Game::handleInput() {
                     menuNavHeldBtn_ = SDL_CONTROLLER_BUTTON_DPAD_UP;
                     menuNavRepeatAt_ = SDL_GetTicks() + 320;
                     menuSelection_--;
+                    upInput_ = true;
                     break;
                 case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
                     menuNavHeldBtn_ = SDL_CONTROLLER_BUTTON_DPAD_DOWN;
                     menuNavRepeatAt_ = SDL_GetTicks() + 320;
                     menuSelection_++;
+                    downInput_ = true;
                     break;
                 case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
                     menuNavHeldBtn_ = SDL_CONTROLLER_BUTTON_DPAD_LEFT;
@@ -869,8 +873,8 @@ void Game::handleInput() {
         // Arrow keys with OS key-repeat (fires on both initial press and held repeats)
         if (e.type == SDL_KEYDOWN) {
             switch (e.key.keysym.sym) {
-                case SDLK_UP:    menuSelection_--; break;
-                case SDLK_DOWN:  menuSelection_++; break;
+                case SDLK_UP:    menuSelection_--; upInput_   = true; break;
+                case SDLK_DOWN:  menuSelection_++; downInput_ = true; break;
                 case SDLK_LEFT:  leftInput_  = true; break;
                 case SDLK_RIGHT: rightInput_ = true; break;
             }

@@ -170,6 +170,9 @@ bool CutsceneLibrary::save(const std::string& path) const {
                     writeStr(f, "next_seq",       line.choices[ci].nextSeqId);
                     writeStr(f, "set_flag",       line.choices[ci].setFlag);
                     writeB(f,   "set_flag_value", line.choices[ci].setFlagValue);
+                    writeStr(f, "cond_var",       line.choices[ci].condVar);
+                    writeI(f,   "cond_cmp",       line.choices[ci].condCmp);
+                    writeI(f,   "cond_value",     line.choices[ci].condValue);
                 }
             }
         }
@@ -301,6 +304,9 @@ bool CutsceneLibrary::load(const std::string& path) {
             else if (key == "next_seq")      curChoice->nextSeqId    = sv();
             else if (key == "set_flag")      curChoice->setFlag      = sv();
             else if (key == "set_flag_value") curChoice->setFlagValue = bv();
+            else if (key == "cond_var")      curChoice->condVar      = sv();
+            else if (key == "cond_cmp")      curChoice->condCmp      = (uint8_t)iv();
+            else if (key == "cond_value")    curChoice->condValue    = iv();
         } else if (curLine) {
             if      (key == "char")     curLine->character   = sv();
             else if (key == "portrait") curLine->portrait    = sv();
@@ -804,6 +810,7 @@ bool CutscenePlayback::advanceDialog() {
     dialog.visibleChars = 0;
     dialog.lineComplete = false;
     dialog.hoveredChoice = -1;
+    dialog.visibleChoices.clear();
 
     if (dialog.lineIdx >= (int)dialog.seq->lines.size()) {
         dialog.active = false;
@@ -847,6 +854,7 @@ void CutscenePlayback::selectDialogChoice(int idx, const CutsceneLibrary& lib) {
             dialog.lineComplete = false;
             dialog.done         = false;
             dialog.hoveredChoice = -1;
+            dialog.visibleChoices.clear();
         } else {
             dialog.active = false;
             dialog.done   = true;
@@ -1028,6 +1036,18 @@ void CutscenePlayback::renderDialogLine(SDL_Renderer* r,
                                          int visibleChars,
                                          int screenW, int screenH,
                                          const CutsceneLibrary& /*lib*/) const {
+    // Render only the choices the game flagged visible (variable-conditional
+    // branching). hoveredChoice indexes the visible list. Empty list => show all.
+    if (!line.choices.empty() && !dialog.visibleChoices.empty()) {
+        CsDialogLine filtered = line;
+        filtered.choices.clear();
+        for (int idx : dialog.visibleChoices)
+            if (idx >= 0 && idx < (int)line.choices.size())
+                filtered.choices.push_back(line.choices[idx]);
+        cutsceneRenderDialogBox(r, 0, 0, screenW, screenH, filtered, visibleChars,
+                                dialog.lineComplete, dialog.hoveredChoice);
+        return;
+    }
     cutsceneRenderDialogBox(r, 0, 0, screenW, screenH, line, visibleChars,
                             dialog.lineComplete, dialog.hoveredChoice);
 }

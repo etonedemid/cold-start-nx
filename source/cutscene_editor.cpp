@@ -950,6 +950,16 @@ void CutsceneEditor::renderDialogModal() {
         drawText("->seq", cxR + 16, yr + 3, ThDim, 10);
         textField(2042 + ci * 3, cxR + 56, yr, colW - 56, fh, ch.nextSeqId,
                   [&ch](const std::string& s){ ch.nextSeqId = s; });
+        yr += 22;
+        // Visibility condition: only show this choice when <var> <cmp> <value>
+        // (blank var = always). Lets dialog branch on a game variable.
+        drawText("if", cxR + 16, yr + 3, ThDim, 10);
+        textField(2200 + ci * 3, cxR + 32, yr, 64, fh, ch.condVar,
+                  [&ch](const std::string& s){ ch.condVar = s; });
+        static const char* cmpSym[] = {"==","!=",">","<",">=","<="};
+        if (button(2201 + ci * 3, cmpSym[ch.condCmp % 6], cxR + 98, yr, 28, fh, false))
+            ch.condCmp = (uint8_t)((ch.condCmp + 1) % 6);
+        intField(2202 + ci * 3, cxR + 128, yr, colW - 128, fh, &ch.condValue, 1, -999999, 999999);
         yr += step;
     }
     if (line.choices.empty())

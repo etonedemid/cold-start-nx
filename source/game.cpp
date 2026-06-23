@@ -831,8 +831,7 @@ void Game::run() {
                 state_ = GameState::MainMenu;
                 menuSelection_ = 0;
             }
-            // Handle save dialog from editor (runs here, not in update(), because
-            // update() is only called for gameplay states)
+            // Handle save dialog from editor 
             if (!modSaveDialog_.isOpen()) {
                 if (editor_.wantsModSave()) {
                     editor_.clearWantsModSave();
@@ -1039,31 +1038,48 @@ void Game::update() {
                     csPlay_.dialog.lineIdx < (int)csPlay_.dialog.seq->lines.size()) {
                     const auto& dline = csPlay_.dialog.seq->lines[csPlay_.dialog.lineIdx];
                     if (!dline.choices.empty()) {
-                        // Choice box geometry (must match cutsceneRenderDialogBox constants).
-                        const int PAD    = 14;
-                        const int PORT_SZ= 128;
-                        const int BAR_H  = PORT_SZ + 32;
-                        const int CH_H   = 26;
-                        const int CH_W   = std::min(420, SCREEN_W - 2 * PAD);
-                        int n    = (int)dline.choices.size();
-                        int barY = SCREEN_H - BAR_H;
-                        int cx   = (SCREEN_W - CH_W) / 2;
-                        int cy   = barY - n * (CH_H + 4) - 8;
-                        int mx   = ui_.mouseX, my = ui_.mouseY;
-                        csPlay_.dialog.hoveredChoice = -1;
-                        for (int i = 0; i < n; i++) {
-                            SDL_Rect cr = {cx, cy + i*(CH_H+4), CH_W, CH_H};
-                            if (mx >= cr.x && mx < cr.x+cr.w && my >= cr.y && my < cr.y+cr.h)
-                                csPlay_.dialog.hoveredChoice = i;
-                        }
-                        if ((ui_.mouseClicked || confirmInput_) && csPlay_.dialog.hoveredChoice >= 0) {
-                            csPlay_.selectDialogChoice(csPlay_.dialog.hoveredChoice, storyCutscenes_);
-                            ui_.mouseClicked = false;
-                            confirmInput_ = false;
+                        // Filter choices by their variable condition (branching).
+                        auto& vis = csPlay_.dialog.visibleChoices;
+                        vis.clear();
+                        for (int i = 0; i < (int)dline.choices.size(); i++)
+                            if (dialogChoiceVisible(dline.choices[i])) vis.push_back(i);
+                        int n = (int)vis.size();
+                        int& hov = csPlay_.dialog.hoveredChoice;
+                        if (n == 0) {
+                            // No reachable choice: don't soft-lock, just end the dialog.
+                            csPlay_.dialog.active = false;
+                            csPlay_.dialog.done   = true;
+                        } else {
+                            // Choice box geometry (must match cutsceneRenderDialogBox).
+                            const int PAD    = 14;
+                            const int PORT_SZ= 128;
+                            const int BAR_H  = PORT_SZ + 32;
+                            const int CH_H   = 26;
+                            const int CH_W   = std::min(420, SCREEN_W - 2 * PAD);
+                            int barY = SCREEN_H - BAR_H;
+                            int cx   = (SCREEN_W - CH_W) / 2;
+                            int cy   = barY - n * (CH_H + 4) - 8;
+                            // Keyboard/gamepad navigation (selection is sticky).
+                            if (hov < 0 || hov >= n) hov = 0;
+                            if (upInput_)   hov = (hov - 1 + n) % n;
+                            if (downInput_) hov = (hov + 1) % n;
+                            // Mouse hover overrides when the pointer is over a choice.
+                            int mx = ui_.mouseX, my = ui_.mouseY;
+                            for (int i = 0; i < n; i++) {
+                                SDL_Rect cr = {cx, cy + i*(CH_H+4), CH_W, CH_H};
+                                if (mx >= cr.x && mx < cr.x+cr.w && my >= cr.y && my < cr.y+cr.h)
+                                    hov = i;
+                            }
+                            if (hov >= 0 && hov < n && (confirmInput_ || ui_.mouseClicked)) {
+                                csPlay_.selectDialogChoice(vis[hov], storyCutscenes_);
+                                csPlay_.dialog.visibleChoices.clear();
+                                ui_.mouseClicked = false;
+                                confirmInput_ = false;
+                            }
                         }
                     } else {
                         // No choices: any confirm or click advances.
-                        if (confirmInput_ || ui_.mouseClicked) {
+                        if (confirmInput_ || backInput_ || pauseInput_ || ui_.mouseClicked) {
                             csPlay_.advanceDialog();
                             ui_.mouseClicked = false;
                             confirmInput_ = false;
@@ -1071,7 +1087,7 @@ void Game::update() {
                     }
                 } else if (!csPlay_.dialog.lineComplete) {
                     // Typewriter still running: confirm/click skips to end.
-                    if (confirmInput_ || ui_.mouseClicked) {
+                    if (confirmInput_ || backInput_ || pauseInput_|| ui_.mouseClicked) {
                         csPlay_.advanceDialog();
                         ui_.mouseClicked = false;
                         confirmInput_ = false;
@@ -1740,12 +1756,27 @@ bool Game::playerInTriggerRect(const MapTrigger& t) const {
            player_.pos.y >= t.y - t.height * 0.5f && player_.pos.y <= t.y + t.height * 0.5f;
 }
 
+int Game::storyVar(const std::string& key) const {
+    auto it = localVars_.find(key); if (it != localVars_.end()) return it->second;
+    auto it2 = packVars_.find(key); if (it2 != packVars_.end()) return it2->second;
+    return 0;
+}
+
+bool Game::dialogChoiceVisible(const CsDialogChoice& c) const {
+    if (c.condVar.empty()) return true;
+    int lhs = storyVar(c.condVar);
+    switch (c.condCmp) {
+        case 1:  return lhs != c.condValue;
+        case 2:  return lhs >  c.condValue;
+        case 3:  return lhs <  c.condValue;
+        case 4:  return lhs >= c.condValue;
+        case 5:  return lhs <= c.condValue;
+        default: return lhs == c.condValue;
+    }
+}
+
 void Game::updateStoryTriggers() {
-    auto getVar = [&](const std::string& key) -> int {
-        auto it = localVars_.find(key); if (it != localVars_.end()) return it->second;
-        auto it2 = packVars_.find(key); if (it2 != packVars_.end()) return it2->second;
-        return 0;
-    };
+    auto getVar = [&](const std::string& key) -> int { return storyVar(key); };
     auto condMet = [&](int idx) -> bool {
         for (const auto& tc : storyCutscenes_.triggerConditions) {
             if (tc.triggerIndex != idx || tc.varName.empty()) continue;
