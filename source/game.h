@@ -356,6 +356,8 @@ private:
     bool backInput_ = false;
     bool leftInput_ = false;
     bool rightInput_ = false;
+    bool upInput_   = false;   // one-shot dpad/keyboard up (dialog choice nav)
+    bool downInput_ = false;   // one-shot dpad/keyboard down (dialog choice nav)
     // One-shot render-click left/right: set by render buttons, consumed once by handleInput
     bool renderLeft_  = false;
     bool renderRight_ = false;
@@ -469,6 +471,8 @@ private:
     void loadStoryCutsceneLib(const std::string& csmPath); // derive + load .csc
     void updateStoryTriggers();   // fire cutscene/waypoint/signalzone/objective zones
     bool playerInTriggerRect(const MapTrigger& t) const;
+    int  storyVar(const std::string& key) const;          // local then pack scope, 0 if unset
+    bool dialogChoiceVisible(const CsDialogChoice& c) const; // eval per-choice variable condition
 
     // Story bystanders (civilians / infrastructure / surrendered operators)
     std::vector<Bystander> bystanders_;

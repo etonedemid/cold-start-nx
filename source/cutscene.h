@@ -192,6 +192,12 @@ struct CsDialogChoice {
     std::string nextSeqId;      // dialog seq to jump to (empty = end dialog)
     std::string setFlag;        // flag name to set when chosen (empty = none)
     bool        setFlagValue = true;
+    // Optional visibility condition: choice is only shown when the variable
+    // satisfies the comparison (empty condVar = always shown). Lets dialog branch
+    // on game state. cmp: 0:== 1:!= 2:> 3:< 4:>= 5:<= (matches trigger conditions).
+    std::string condVar;
+    uint8_t     condCmp   = 0;
+    int         condValue = 0;
 };
 
 struct CsDialogLine {
@@ -320,7 +326,11 @@ struct CsDialogPlayback {
     int   visibleChars   = 0;
     bool  lineComplete   = false; // all chars shown
     bool  done           = false; // all lines done
-    int   hoveredChoice  = -1;    // mouse-hovered choice index
+    int   hoveredChoice  = -1;    // selected index into visibleChoices (-1 = none)
+    // Real choice indices currently shown, after filtering by per-choice variable
+    // conditions. Populated by the game each frame (it owns the variables). Empty
+    // means "not yet evaluated" -> treat all choices as visible.
+    std::vector<int> visibleChoices;
 };
 
 // Full runtime state
