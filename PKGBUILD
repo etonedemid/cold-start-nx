@@ -10,7 +10,7 @@ depends=('sdl2' 'sdl2_image' 'sdl2_ttf' 'sdl2_mixer' 'enet')
 makedepends=('cmake' 'ninja' 'pkgconf')
 optdepends=('miniupnpc: UPnP support for hosting servers')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/etonedemid/cold-start-nx/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('58f1d95de94e7035007e50eaf6a3231c304d3eeaa6b653591bda682db1c6845d')
+sha256sums=('5dfe4376352cb535b8299901e852a6903e6b90d1f7467853f8f787c42662f0a8')
 
 build() {
     cmake -S "cold-start-nx-$pkgver" \
