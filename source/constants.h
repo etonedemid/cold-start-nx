@@ -18,7 +18,7 @@
 #endif
 
 // Version
-constexpr const char* GAME_VERSION = "3.3.0";
+constexpr const char* GAME_VERSION = "3.3.1";
 
 // Workshop
 constexpr const char* WORKSHOP_URL    = "https://coldstartworkshop.duckdns.org";
