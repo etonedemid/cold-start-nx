@@ -788,7 +788,17 @@ void Game::run() {
             || state_ == GameState::MultiplayerDead
             || state_ == GameState::MultiplayerSpectator
             || state_ == GameState::LocalCoopGame) {
+            // Hit-stop: briefly freeze the world on big impacts so they land with
+            // weight. Local play only - scaling the sim would desync online MP.
+            float savedDt = dt_;
+            if (hitStopTimer_ > 0.0f && !NetworkManager::instance().isOnline()) {
+                hitStopTimer_ -= savedDt;
+                dt_ *= 0.06f;
+            } else {
+                hitStopTimer_ = 0.0f;
+            }
             update();
+            dt_ = savedDt;
             if (state_ == GameState::PlayingCustom) {
                 updateCustomMapGoal();
             }
