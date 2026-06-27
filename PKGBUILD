@@ -1,6 +1,6 @@
 # Maintainer: etonedemid <etonedemid@proton.me>
 pkgname=cold-start
-pkgver=3.3.1
+pkgver=3.4.0
 pkgrel=1
 pkgdesc="Top-down twin-stick shooter with wave-based combat - Nintendo Switch homebrew, also playable on PC"
 arch=('x86_64')
@@ -10,7 +10,7 @@ depends=('sdl2' 'sdl2_image' 'sdl2_ttf' 'sdl2_mixer' 'enet')
 makedepends=('cmake' 'ninja' 'pkgconf')
 optdepends=('miniupnpc: UPnP support for hosting servers')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/etonedemid/cold-start-nx/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('5dfe4376352cb535b8299901e852a6903e6b90d1f7467853f8f787c42662f0a8')
+sha256sums=('SKIP')
 
 build() {
     cmake -S "cold-start-nx-$pkgver" \

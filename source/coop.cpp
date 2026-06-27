@@ -94,6 +94,7 @@ void Game::startPackLevel() {
     blood_.clear(); tileBlood_.clear(); boxFragments_.clear();
     crates_.clear(); pickups_.clear();
     vehicles_.clear(); inVehicle_ = false; vehicleIdx_ = -1;
+    airStrikes_.clear(); bombers_.clear(); bombingTimer_ = 18.0f;
     upgrades_.reset();
     sandboxMode_ = false;
     crateSpawnTimer_ = 20.0f;

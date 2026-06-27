@@ -247,6 +247,24 @@ void Game::updatePlayer(float dt) {
         p.legAnimFrame = 0;
     }
 
+    // Dash dust: faint puffs kicked up behind the player during a parry dash only.
+    dustTimer_ -= dt;
+    if (p.parryDashTimer > 0.0f && dustTimer_ <= 0.0f) {
+        dustTimer_ = 0.03f;
+        Vec2 back = p.vel.normalized() * -1.0f;
+        BoxFragment d;
+        d.pos = p.pos + back * (PLAYER_SIZE * 0.4f) +
+                Vec2{(float)(rand() % 10 - 5), (float)(rand() % 10 - 5)};
+        d.vel = back * (20.0f + (float)(rand() % 30)) + Vec2{0.0f, -10.0f};
+        d.size = 3.0f + (float)(rand() % 4);
+        d.lifetime = 0.35f + (float)(rand() % 20) / 100.0f;
+        d.age = 0; d.alive = true;
+        d.rotation = 0; d.rotSpeed = 0;
+        int g = 150 + rand() % 50;
+        d.color = {(Uint8)g, (Uint8)(g - 10), (Uint8)(g - 30), 255};  // dusty tan
+        boxFragments_.push_back(d);
+    }
+
     // Invulnerability (used by Blindness pickup and respawn only)
     if (p.invulnerable) {
         p.invulnTimer -= dt;
@@ -281,7 +299,7 @@ void Game::updatePlayer(float dt) {
         p.shootAnimTimer = 0.12f;
         camera_.addShake(1.2f);
         rumble(0.05f, 16, 0.22f, 0.92f);  // Even softer gun kick
-        if (sfxShoot_) playSFX(sfxShoot_, config_.sfxVolume);
+        if (sfxShoot_) playSFX(sfxShoot_, config_.sfxVolume * 40 / 100);  // softer: shots were too sharp
     } else if ((fireInput_ || upgrades_.hasAutoReload) && p.ammo <= 0 && !p.reloading) {
         // Auto-reload (fireInput or hasAutoReload flag)
         p.reloading = true;
@@ -830,6 +848,16 @@ void Game::updateEnemies(float dt) {
         if (isBossType(e.type) && e.stunTimer > BOSS_MAX_STUN) e.stunTimer = BOSS_MAX_STUN;
         if (e.stunTimer > 0) { e.stunTimer -= dt; continue; }
 
+        // Bomber: self-detonate once it reaches a target (this loop is the sim
+        // authority - clients returned above - so broadcast the death).
+        if (e.type == EnemyType::Bomber &&
+            Vec2::dist(e.pos, getEnemyTargetPos(e)) < e.size + 24.0f) {
+            uint32_t eIdx = (uint32_t)(&e - &enemies_[0]);
+            killEnemy(e, false);  // suicide: don't credit a player kill/combo
+            if (net.isInGame()) { net.sendEnemyKilled(eIdx, net.localPlayerId()); enemyStatesNeedUpdate_ = true; }
+            continue;
+        }
+
         // Boss enrage at 50% HP
         if (isBossType(e.type) && !e.bossEnraged && e.hp < e.maxHp * 0.5f) {
             e.bossEnraged = true;
@@ -1338,6 +1366,8 @@ void Game::enemyShoot(Enemy& e, float dt) {
         float bulletSpeed = ENEMY_BULLET_SPEED;
         if (e.type == EnemyType::Sniper || e.type == EnemyType::BossSniper) {
             bulletSpeed *= SNIPER_BULLET_SPEED_MULTI;
+        } else if (e.type == EnemyType::Spitter) {
+            bulletSpeed *= SPITTER_BULLET_SPEED_MULTI;
         }
         spawnEnemyBullet(muzzle, getEnemyTargetPos(e), spread, bulletSpeed);
         e.burstShotsLeft--;
@@ -1411,6 +1441,9 @@ bool Game::tileRayClear(Vec2 a, Vec2 b) const {
 // (string-pulling), so movement cuts corners naturally instead of stepping
 // tile-by-tile. Returns false when no route exists.
 bool Game::computeEnemyPath(Vec2 from, Vec2 to, Vec2& outWaypoint) const {
+    // Endless world is too large for a full-grid BFS; enemies fall back to local
+    // steering (steerToward), which is fine on the mostly-open infinite terrain.
+    if (map_.endless) return false;
     const int W = map_.width, H = map_.height;
     int sx = TileMap::toTile(from.x), sy = TileMap::toTile(from.y);
     int gx = TileMap::toTile(to.x),   gy = TileMap::toTile(to.y);
@@ -1678,6 +1711,23 @@ void Game::spawnBullet(Vec2 pos, float angle) {
     muzzleFlashTimer_ = 0.06f;
     muzzleFlashPos_ = b.pos; // store exact bullet spawn point
     camera_.addShake(1.5f);  // subtle recoil shake
+    crosshairSpread_ = std::min(14.0f, crosshairSpread_ + 4.0f);  // reticle bloom on fire
+
+    // Eject a spinning brass casing sideways from the gun.
+    {
+        BoxFragment cs;
+        cs.pos = b.pos;
+        float ejAng = angle + (float)M_PI * 0.5f + ((float)(rand() % 30) - 15) * (float)M_PI / 180.0f;
+        float ejSpd = 90.0f + (float)(rand() % 70);
+        cs.vel = {cosf(ejAng) * ejSpd, sinf(ejAng) * ejSpd};
+        cs.size = 2.5f;
+        cs.lifetime = 0.35f + (float)(rand() % 20) / 100.0f;
+        cs.age = 0; cs.alive = true;
+        cs.rotation = (float)(rand() % 360);
+        cs.rotSpeed = (float)(rand() % 900 - 450);
+        cs.color = {200, 170, 60, 255};  // brass
+        boxFragments_.push_back(cs);
+    }
 
     // Sync bullet to other players
     if (net.isInGame()) {
@@ -2125,6 +2175,7 @@ void Game::spawnExplosion(Vec2 pos, uint8_t ownerId, uint8_t ownerSlot) {
     ex.ownerId = ownerId;
     ex.ownerSubSlot = ownerSlot;
     explosions_.push_back(ex);
+    map_.scorchArea(pos, EXPLOSION_RADIUS * 0.6f);  // leave a burnt mark on the ground
     camera_.addShake(6.0f);
     hitStopTimer_ = std::max(hitStopTimer_, 0.055f);  // freeze-frame for impact weight
     playExplosionFeedback(pos, ex.radius * 8.4f, 0.18f, 0.62f, 130, 320, 1.45f, 0.74f,
@@ -2359,6 +2410,33 @@ Vec2 Game::pickEnemySpawnPos(bool* foundHidden) {
     bool tryHidden = true;
     Vec2 candidate = {map_.worldWidth() * 0.5f, map_.worldHeight() * 0.5f};
 
+    // Keep the action local: prefer spawns within ~100 tiles of the player, just
+    // beyond view. Required for endless maps (no global spawn points) and stops
+    // big finite maps from spawning enemies across the world. Falls through to the
+    // map-wide logic below if nothing valid turns up.
+    {
+        Vec2 anchor = player_.pos;
+        const float rMin = TILE_SIZE * 9.0f;    // just outside the typical view
+        const float rMax = TILE_SIZE * 100.0f;  // ~100 tiles
+        for (int phase = 0; phase < 2; phase++) {       // 0 = hidden only, 1 = any
+            bool wantHidden = (phase == 0);
+            for (int attempt = 0; attempt < 40; attempt++) {
+                float ang  = (float)(rand() % 360) * (float)M_PI / 180.0f;
+                float dist = rMin + (float)(rand() % 1000) / 1000.0f * (rMax - rMin);
+                Vec2 sp = {anchor.x + cosf(ang) * dist, anchor.y + sinf(ang) * dist};
+                if (!map_.endless) {
+                    sp.x = std::max(64.0f, std::min(map_.worldWidth()  - 64.0f, sp.x));
+                    sp.y = std::max(64.0f, std::min(map_.worldHeight() - 64.0f, sp.y));
+                }
+                if (isValidSpawn(sp, wantHidden)) {
+                    if (foundHidden) *foundHidden = wantHidden;
+                    return sp;
+                }
+            }
+        }
+    }
+    if (map_.endless) return candidate;  // endless has no spawn-point fallback
+
     if (!map_.spawnPoints.empty()) {
         int hiddenAttempts = std::min((int)map_.spawnPoints.size() * 2, 48);
         for (int attempt = 0; attempt < hiddenAttempts; ++attempt) {
@@ -2580,6 +2658,8 @@ void Game::spawnEnemy(Vec2 pos, EnemyType type) {
     // Never embed an enemy in a collision zone, whatever the spawn source
     // (random wave, map-placed marker, cutscene, or network).
     pushOutCollisionZones(pos, ENEMY_SIZE * 0.5f);
+    { SpawnRing r; r.pos = pos; spawnRings_.push_back(r);
+      if (spawnRings_.size() > 40) spawnRings_.erase(spawnRings_.begin()); }
     Enemy e;
     e.pos = pos;
     e.type = type;
@@ -2648,6 +2728,48 @@ void Game::spawnEnemy(Vec2 pos, EnemyType type) {
             e.burstGap = GUNNER_BURST_GAP;
             e.shootSpread = 0.18f;
             e.renderScale = GUNNER_RENDER_SCALE;
+            break;
+        case EnemyType::Bomber:
+            e.hp = BOMBER_HP * config_.enemyHpScale;
+            e.maxHp = BOMBER_HP * config_.enemyHpScale;
+            e.speed = BOMBER_SPEED * config_.enemySpeedScale;
+            e.size = BOMBER_SIZE;
+            e.contactDamage = BOMBER_CONTACT_DMG;
+            // Short, twitchy lunge so it closes the gap before detonating.
+            e.dashDistance = SCOUT_DASH_DIST;
+            e.dashForce = SCOUT_DASH_FORCE;
+            e.dashDelay = 0.12f;
+            e.dashDuration = SCOUT_DASH_DUR;
+            e.dashCooldown = 0.5f;
+            e.renderScale = BOMBER_RENDER_SCALE;
+            break;
+        case EnemyType::Spitter:
+            e.hp = SPITTER_HP * config_.enemyHpScale;
+            e.maxHp = SPITTER_HP * config_.enemyHpScale;
+            e.speed = SPITTER_SPEED * config_.enemySpeedScale;
+            e.size = SPITTER_SIZE;
+            e.shootCooldown = SPITTER_SHOOT_CD;
+            e.shootCooldownBase = SPITTER_SHOOT_CD;
+            e.preferredMinRange = 280.0f;
+            e.preferredMaxRange = 460.0f;
+            e.shotsPerBurst = 3;
+            e.burstGap = 0.04f;
+            e.shootSpread = 0.55f;   // wide goop fan
+            e.renderScale = SPITTER_RENDER_SCALE;
+            break;
+        case EnemyType::Warden:
+            e.hp = WARDEN_HP * config_.enemyHpScale;
+            e.maxHp = WARDEN_HP * config_.enemyHpScale;
+            e.speed = WARDEN_SPEED * config_.enemySpeedScale;
+            e.size = WARDEN_SIZE;
+            e.bulletDamageReduction = WARDEN_BULLET_REDUCTION;
+            e.dashDistance = WARDEN_DASH_DIST;
+            e.dashForce = WARDEN_DASH_FORCE;
+            e.dashDelay = WARDEN_DASH_DELAY;
+            e.dashDuration = WARDEN_DASH_DUR;
+            e.dashCooldown = WARDEN_DASH_CD;
+            e.contactDamage = WARDEN_DASH_DMG;
+            e.renderScale = WARDEN_RENDER_SCALE;
             break;
         // Boss variants
         case EnemyType::BossBrute:
@@ -3545,6 +3667,7 @@ void Game::killEnemy(Enemy& e, bool trackKill) {
 
     // Player kill registration (only for locally-originated kills)
     if (trackKill) {
+        registerComboKill(e.pos);
         player_.killCounter++;
         if (upgrades_.hasScavenger && player_.ammo < player_.maxAmmo)
             player_.ammo = std::min(player_.maxAmmo, player_.ammo + upgrades_.hasScavenger);
@@ -3558,8 +3681,33 @@ void Game::killEnemy(Enemy& e, bool trackKill) {
             player_.bombCount = std::min(MAX_BOMBS, player_.bombCount + 1);
         }
     }
+    // Bomber: detonate on death. The authoritative peer spawns the (networked)
+    // explosion so it syncs once; every peer applies the blast to its own local
+    // player. Neutral owner (255) means the explosion system won't double-hit
+    // players via the PvP path - we do that hit ourselves here.
+    if (e.type == EnemyType::Bomber) {
+        auto& netB = NetworkManager::instance();
+        bool authB = !netB.isOnline() || netB.isHost() ||
+                     (netB.isConnectedToDedicated() && netB.isLobbyHost());
+        if (authB) spawnExplosion(e.pos, 255, 0);
+        if (!player_.dead && Vec2::dist(player_.pos, e.pos) <= EXPLOSION_RADIUS * 0.85f)
+            player_.takeDamage(BOMBER_EXPLODE_DMG);
+    }
+
     // A boss going down is a moment - hold a longer freeze-frame.
     if (isBossType(e.type)) hitStopTimer_ = std::max(hitStopTimer_, 0.13f);
+
+    // Wave-clear punctuation: if this kill emptied the field with nothing left to
+    // spawn this wave, hold a brief slow-mo beat and flag it. hitStop is ignored
+    // when online (see run()), so this stays purely local feel.
+    if (trackKill && !isBossType(e.type) && !bossWaveActive_ && waveEnemiesLeft_ <= 0) {
+        bool anyAlive = false;
+        for (auto& o : enemies_) if (o.alive) { anyAlive = true; break; }
+        if (!anyAlive && waveNumber_ > 0) {
+            hitStopTimer_ = std::max(hitStopTimer_, 0.10f);
+            spawnFloatText({e.pos.x, e.pos.y - 30}, "WAVE CLEAR", {120, 220, 255, 255}, 1.5f);
+        }
+    }
     // Drop 3 upgrade pickups when a boss is killed (not in sandbox)
     if (isBossType(e.type) && !sandboxMode_) {
         for (int i = 0; i < 3; i++) {
@@ -3777,14 +3925,20 @@ void Game::updateVehicles(float dt) {
             steerInput =  moveInput_.x;
         }
 
-        // Constant-rate steering: heading rotates at a fixed angular velocity.
-        // Velocity alignment via grip (below) creates the actual turning arc.
-        v.rotation += steerInput * Vehicle::STEER_RATE * dt;
-
+        // Speed-sensitive steering: a car only turns while it's rolling, and the
+        // steering reverses when backing up. No more pivoting in place.
         Vec2  fwdDir = {cosf(v.rotation), sinf(v.rotation)};
         Vec2  latDir = {-fwdDir.y, fwdDir.x};
         float fwdSpd = fwdDir.dot(v.vel);
         float speed  = v.vel.length();
+        {
+            float steerAuthority = fminf(1.0f, fabsf(fwdSpd) / 200.0f);  // 0 at rest -> 1 at speed
+            float steerSign      = (fwdSpd < -1.0f) ? -1.0f : 1.0f;      // invert in reverse
+            v.rotation += steerInput * Vehicle::STEER_RATE * dt * steerAuthority * steerSign;
+            fwdDir = {cosf(v.rotation), sinf(v.rotation)};
+            latDir = {-fwdDir.y, fwdDir.x};
+            fwdSpd = fwdDir.dot(v.vel);
+        }
 
         // Thrust / brake / reverse
         if (gasInput > 0.0f) {
@@ -3905,3 +4059,259 @@ void Game::updateVehicles(float dt) {
 
 // Rendering
 
+
+// ---------------------------------------------------------------------------
+// Game-feel "juice": floating combat text, kill combos, multi-kill banners,
+// enemy spawn telegraphs, enemy health bars, dynamic crosshair bloom.
+// All local/cosmetic (combo heal is gated to offline) so it never desyncs MP.
+// ---------------------------------------------------------------------------
+
+void Game::spawnFloatText(Vec2 pos, const char* text, SDL_Color color, float scale) {
+    FloatText ft;
+    ft.pos   = pos;
+    ft.vel   = {(float)((rand() % 40) - 20), -70.0f};
+    ft.text  = text;
+    ft.color = color;
+    ft.life  = 0.9f + scale * 0.25f;
+    ft.scale = scale;
+    floatTexts_.push_back(ft);
+    if (floatTexts_.size() > 80)
+        floatTexts_.erase(floatTexts_.begin(),
+                          floatTexts_.begin() + (floatTexts_.size() - 80));
+}
+
+void Game::registerComboKill(Vec2 pos) {
+    comboCount_++;
+    comboTimer_ = 2.5f;
+    comboFlash_ = 0.3f;
+
+    // Multi-kill window: kills bunched together earn an escalating banner.
+    multiKill_ = (multiKillTimer_ > 0) ? multiKill_ + 1 : 1;
+    multiKillTimer_ = 0.7f;
+
+    spawnFloatText(pos, "+1", {255, 230, 120, 255}, 0.85f);
+
+    if (multiKill_ >= 2) {
+        const char* banner = "DOUBLE KILL";
+        if      (multiKill_ == 3) banner = "TRIPLE KILL";
+        else if (multiKill_ == 4) banner = "OVERKILL";
+        else if (multiKill_ == 5) banner = "RAMPAGE";
+        else if (multiKill_ >= 6) banner = "UNSTOPPABLE";
+        spawnFloatText({pos.x, pos.y - 26}, banner, {255, 90, 70, 255}, 1.6f);
+    }
+
+    // Combo milestone reward: a small heal every 10 kills. Offline only so it
+    // can't tilt online PvP/co-op balance or desync HP that the host owns.
+    if (comboCount_ % 10 == 0 && !NetworkManager::instance().isOnline() && !player_.dead) {
+        player_.hp = std::min(player_.maxHp, player_.hp + 5);
+        char m[24]; snprintf(m, sizeof(m), "COMBO x%d  +5", comboCount_);
+        spawnFloatText({player_.pos.x, player_.pos.y - 50}, m, {120, 255, 150, 255}, 1.3f);
+        screenFlashTimer_ = std::max(screenFlashTimer_, 0.07f);
+        screenFlashR_ = 120; screenFlashG_ = 255; screenFlashB_ = 150;
+    }
+}
+
+void Game::updateJuice(float dt) {
+    for (auto& ft : floatTexts_) {
+        ft.age += dt;
+        ft.pos += ft.vel * dt;
+        ft.vel.y += 40.0f * dt;   // gentle ease-out as it rises
+    }
+    floatTexts_.erase(std::remove_if(floatTexts_.begin(), floatTexts_.end(),
+        [](const FloatText& f) { return f.age >= f.life; }), floatTexts_.end());
+
+    for (auto& r : spawnRings_) r.age += dt;
+    spawnRings_.erase(std::remove_if(spawnRings_.begin(), spawnRings_.end(),
+        [](const SpawnRing& r) { return r.age >= r.life; }), spawnRings_.end());
+
+    if (comboTimer_ > 0) { comboTimer_ -= dt; if (comboTimer_ <= 0) comboCount_ = 0; }
+    if (multiKillTimer_ > 0) { multiKillTimer_ -= dt; if (multiKillTimer_ <= 0) multiKill_ = 0; }
+    if (comboFlash_ > 0) comboFlash_ = std::max(0.0f, comboFlash_ - dt);
+    if (crosshairSpread_ > 0) crosshairSpread_ = std::max(0.0f, crosshairSpread_ - dt * 36.0f);
+}
+
+void Game::renderJuice() {
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+
+    // Enemy spawn telegraph rings (expanding squares - matches the pixel look).
+    for (auto& r : spawnRings_) {
+        float t = r.age / r.life;
+        Vec2 sp = camera_.worldToScreen(r.pos);
+        int rad = (int)(10 + t * 46);
+        Uint8 a = (Uint8)((1.0f - t) * 180);
+        SDL_SetRenderDrawColor(renderer_, 255, 80, 80, a);
+        SDL_Rect box = {(int)sp.x - rad, (int)sp.y - rad, rad * 2, rad * 2};
+        SDL_RenderDrawRect(renderer_, &box);
+    }
+
+    // Enemy health bars (damaged, non-boss enemies only - bosses read big enough).
+    for (auto& e : enemies_) {
+        if (!e.alive || isBossType(e.type)) continue;
+        if (e.hp >= e.maxHp || e.maxHp <= 0) continue;
+        Vec2 sp = camera_.worldToScreen(e.pos);
+        float ratio = std::max(0.0f, std::min(1.0f, e.hp / e.maxHp));
+        int bw = (int)(e.size * 0.9f);
+        int bx = (int)sp.x - bw / 2;
+        int by = (int)sp.y - (int)(e.size * 0.7f) - 8;
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 180);
+        SDL_Rect bg = {bx - 1, by - 1, bw + 2, 5};
+        SDL_RenderFillRect(renderer_, &bg);
+        SDL_SetRenderDrawColor(renderer_,
+            (Uint8)(220 - 160 * ratio), (Uint8)(40 + 160 * ratio), 40, 230);
+        SDL_Rect fg = {bx, by, (int)(bw * ratio), 3};
+        SDL_RenderFillRect(renderer_, &fg);
+    }
+
+    // Floating combat text.
+    for (auto& ft : floatTexts_) {
+        float t = ft.age / ft.life;
+        Uint8 a = (Uint8)((1.0f - t) * 255);
+        Vec2 sp = camera_.worldToScreen(ft.pos);
+        int size = (int)(13 * ft.scale);
+        int tw = ui_.textWidth(ft.text.c_str(), size);
+        SDL_Color shadow = {0, 0, 0, a};
+        ui_.drawText(ft.text.c_str(), (int)sp.x - tw / 2 + 1, (int)sp.y + 1, size, shadow);
+        SDL_Color c = ft.color; c.a = a;
+        ui_.drawText(ft.text.c_str(), (int)sp.x - tw / 2, (int)sp.y, size, c);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Telegraphed bombings: occasional artillery that lands near/on the player(s),
+// warned by a red ring converging on the impact point. Local-only (offline /
+// local co-op) so it can't desync online play; reuses spawnExplosion for the
+// blast and applies the hit to nearby local players directly.
+// ---------------------------------------------------------------------------
+void Game::updateAirStrikes(float dt) {
+    bool coop = (state_ == GameState::LocalCoopGame);
+    bool active = (state_ == GameState::Playing) || coop;
+    if (!active || sandboxMode_ || NetworkManager::instance().isOnline()) {
+        if (!airStrikes_.empty()) airStrikes_.clear();
+        if (!bombers_.empty()) bombers_.clear();
+        return;
+    }
+
+    auto anchorPos = [&]() -> Vec2 {
+        if (coop) {
+            int alive[4], n = 0;
+            for (int i = 0; i < 4; i++)
+                if (coopSlots_[i].joined && !coopSlots_[i].player.dead) alive[n++] = i;
+            if (n > 0) return coopSlots_[alive[rand() % n]].player.pos;
+        }
+        return player_.pos;
+    };
+
+    bombingTimer_ -= dt;
+    if (bombingTimer_ <= 0.0f && !player_.dead) {
+        bombingTimer_ = 12.0f + (float)(rand() % 80) / 10.0f;   // next event in 12-20s
+        if (rand() % 100 < 30) {
+            // AVI bombing run (30%): a plane flies across dropping a line of bombs.
+            const float speed   = 760.0f;
+            const int   N       = 5;
+            const float spacing = 150.0f;
+            Vec2  anchor = anchorPos();
+            float ang    = (float)(rand() % 360) * (float)M_PI / 180.0f;
+            Vec2  dir    = {cosf(ang), sinf(ang)};
+            Vec2  perp   = {-dir.y, dir.x};
+            Vec2  mid    = anchor + perp * (float)(rand() % 200 - 100);  // offset the run line
+            Vec2  first  = mid - dir * (spacing * (N - 1) * 0.5f);
+            const float leadIn = 1200.0f;                                // plane lead-in distance
+            for (int i = 0; i < N; i++) {
+                AirStrike a;
+                a.pos  = first + dir * (spacing * i);
+                a.warn = a.timer = (leadIn + spacing * i) / speed;       // ring closes as plane passes
+                airStrikes_.push_back(a);
+            }
+            Bomber b;
+            b.pos  = first - dir * leadIn;
+            b.vel  = dir * speed;
+            b.life = (leadIn + spacing * (N - 1) + 1600.0f) / speed;     // cross + fly off
+            bombers_.push_back(b);
+        } else {
+            // Static barrage (70%): 1-3 shells near/on a player.
+            int shells = 1 + rand() % 3;
+            for (int i = 0; i < shells; i++) {
+                AirStrike a;
+                Vec2 base  = anchorPos();
+                float ang  = (float)(rand() % 360) * (float)M_PI / 180.0f;
+                float r    = (float)(rand() % 320);
+                a.pos  = {base.x + cosf(ang) * r, base.y + sinf(ang) * r};
+                a.warn = a.timer = 1.5f + (float)(rand() % 60) / 100.0f;
+                airStrikes_.push_back(a);
+            }
+        }
+        if (sfxBeep_) playSFX(sfxBeep_, config_.sfxVolume / 2);  // incoming warning blip
+    }
+
+    for (auto& b : bombers_) { b.pos += b.vel * dt; b.life -= dt; }
+    bombers_.erase(std::remove_if(bombers_.begin(), bombers_.end(),
+        [](const Bomber& b) { return b.life <= 0.0f; }), bombers_.end());
+
+    const float blastR = EXPLOSION_RADIUS * 0.9f;
+    for (auto& a : airStrikes_) {
+        a.timer -= dt;
+        if (a.timer > 0.0f) continue;
+        spawnExplosion(a.pos, 255, 0);       // visuals + (offline) enemy damage
+        map_.carveExplosion(a.pos, blastR);  // blow open walls + ceiling at impact
+        if (!map_.endless) invalidateMinimapCache();
+        if (!player_.dead && Vec2::dist(player_.pos, a.pos) <= blastR)
+            player_.takeDamage(45);
+        if (coop) {
+            for (int i = 0; i < 4; i++)
+                if (coopSlots_[i].joined && !coopSlots_[i].player.dead &&
+                    Vec2::dist(coopSlots_[i].player.pos, a.pos) <= blastR)
+                    coopSlots_[i].player.takeDamage(45);
+        }
+    }
+    airStrikes_.erase(std::remove_if(airStrikes_.begin(), airStrikes_.end(),
+        [](const AirStrike& a) { return a.timer <= 0.0f; }), airStrikes_.end());
+}
+
+void Game::renderAirStrikes() {
+    if (airStrikes_.empty() && bombers_.empty()) return;
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    const float blastR = EXPLOSION_RADIUS * 0.9f;
+
+    // AVI planes + their predicted flight path (a red line running ahead).
+    for (auto& b : bombers_) {
+        Vec2 sp = camera_.worldToScreen(b.pos);
+        Vec2 fwd = b.vel.lengthSq() > 1.0f ? b.vel.normalized() : Vec2{1, 0};
+        Vec2 ahead = camera_.worldToScreen(b.pos + fwd * 2200.0f);
+        SDL_SetRenderDrawColor(renderer_, 255, 40, 40, 90);
+        SDL_RenderDrawLineF(renderer_, sp.x, sp.y, ahead.x, ahead.y);
+        if (bomberPlaneSprite_)
+            renderSprite(bomberPlaneSprite_, b.pos, atan2f(b.vel.y, b.vel.x) + (float)M_PI / 2.0f, 2.5f);
+    }
+
+    auto drawRing = [&](Vec2 c, float radius, SDL_Color col) {
+        const int SEG = 40;
+        SDL_SetRenderDrawColor(renderer_, col.r, col.g, col.b, col.a);
+        float px = c.x + radius, py = c.y;
+        for (int i = 1; i <= SEG; i++) {
+            float th = (float)i / SEG * 2.0f * (float)M_PI;
+            float nx = c.x + cosf(th) * radius, ny = c.y + sinf(th) * radius;
+            SDL_RenderDrawLineF(renderer_, px, py, nx, ny);
+            px = nx; py = ny;
+        }
+    };
+
+    for (auto& a : airStrikes_) {
+        float t  = a.warn > 0.0f ? std::max(0.0f, a.timer / a.warn) : 0.0f;  // 1 -> 0
+        Vec2  sp = camera_.worldToScreen(a.pos);
+        Uint8 nearA = (Uint8)(120 + 135 * (1.0f - t));
+
+        // Converging ring (starts wide, closes onto the blast radius).
+        drawRing(sp, blastR * (1.0f + t * 2.0f), {255, 40, 40, nearA});
+        // Fixed danger-zone ring at the actual blast radius.
+        drawRing(sp, blastR, {255, 90, 90, (Uint8)(70 + 120 * (1.0f - t))});
+        // Targeting "laser" dropping from the top of the screen, + blinking core.
+        SDL_SetRenderDrawColor(renderer_, 255, 40, 40, (Uint8)(50 + 110 * (1.0f - t)));
+        SDL_RenderDrawLineF(renderer_, sp.x, 0.0f, sp.x, sp.y);
+        if (((int)(gameTime_ * 12.0f)) % 2 == 0) {
+            SDL_SetRenderDrawColor(renderer_, 255, 230, 120, 255);
+            SDL_Rect dot = {(int)sp.x - 3, (int)sp.y - 3, 6, 6};
+            SDL_RenderFillRect(renderer_, &dot);
+        }
+    }
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+}

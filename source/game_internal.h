@@ -108,12 +108,14 @@ inline void sendSwitchVibrationNow(const HidVibrationValue& value) {
 
 inline bool isMeleeEnemyType(EnemyType type) {
     return type == EnemyType::Melee || type == EnemyType::Brute || type == EnemyType::Scout
-        || type == EnemyType::BossBrute;
+        || type == EnemyType::BossBrute
+        || type == EnemyType::Bomber || type == EnemyType::Warden;
 }
 
 inline bool isShooterEnemyType(EnemyType type) {
     return type == EnemyType::Shooter || type == EnemyType::Sniper || type == EnemyType::Gunner
-        || type == EnemyType::BossSniper || type == EnemyType::BossGunner;
+        || type == EnemyType::BossSniper || type == EnemyType::BossGunner
+        || type == EnemyType::Spitter;
 }
 
 inline bool isBossType(EnemyType type) {
@@ -159,6 +161,9 @@ inline EnemyType enemyTypeFromSpawnId(uint8_t type) {
         case ENTITY_SCOUT:   return EnemyType::Scout;
         case ENTITY_SNIPER:  return EnemyType::Sniper;
         case ENTITY_GUNNER:  return EnemyType::Gunner;
+        case ENTITY_BOMBER:  return EnemyType::Bomber;
+        case ENTITY_SPITTER: return EnemyType::Spitter;
+        case ENTITY_WARDEN:  return EnemyType::Warden;
         case ENTITY_MELEE:
         default:             return EnemyType::Melee;
     }
@@ -174,22 +179,29 @@ inline SDL_Color enemyBaseTint(EnemyType type) {
         case EnemyType::BossBrute:  return {255,  40,  40, 255};
         case EnemyType::BossSniper: return { 40, 220, 255, 255};
         case EnemyType::BossGunner: return {255, 190,  20, 255};
+        case EnemyType::Bomber:     return {255, 140,  50, 255};
+        case EnemyType::Spitter:    return {140, 255, 110, 255};
+        case EnemyType::Warden:     return {150, 175, 205, 255};
         case EnemyType::Melee:
         default:                    return {255, 255, 255, 255};
     }
 }
 
 inline EnemyType rollWaveEnemyType() {
+    // Spitter and Warden exist as types (editor / console only) but are kept out
+    // of the random wave pool by design.
     const int totalWeight =
         WAVE_MELEE_WEIGHT + WAVE_SHOOTER_WEIGHT + WAVE_BRUTE_WEIGHT +
-        WAVE_SCOUT_WEIGHT + WAVE_SNIPER_WEIGHT  + WAVE_GUNNER_WEIGHT;
+        WAVE_SCOUT_WEIGHT + WAVE_SNIPER_WEIGHT  + WAVE_GUNNER_WEIGHT +
+        WAVE_BOMBER_WEIGHT;
     int roll = rand() % totalWeight;
     if ((roll -= WAVE_MELEE_WEIGHT)   < 0) return EnemyType::Melee;
     if ((roll -= WAVE_SHOOTER_WEIGHT) < 0) return EnemyType::Shooter;
     if ((roll -= WAVE_BRUTE_WEIGHT)   < 0) return EnemyType::Brute;
     if ((roll -= WAVE_SCOUT_WEIGHT)   < 0) return EnemyType::Scout;
     if ((roll -= WAVE_SNIPER_WEIGHT)  < 0) return EnemyType::Sniper;
-    return EnemyType::Gunner;
+    if ((roll -= WAVE_GUNNER_WEIGHT)  < 0) return EnemyType::Gunner;
+    return EnemyType::Bomber;
 }
 
 inline bool sweptCircleOverlap(Vec2 curPos, Vec2 vel, float backtrackSec, Vec2 center, float radius) {

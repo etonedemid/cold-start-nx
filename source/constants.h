@@ -18,7 +18,7 @@
 #endif
 
 // Version
-constexpr const char* GAME_VERSION = "3.3.1";
+constexpr const char* GAME_VERSION = "3.4.0";
 
 // Workshop
 constexpr const char* WORKSHOP_URL    = "https://coldstartworkshop.duckdns.org";
@@ -121,6 +121,35 @@ constexpr float GUNNER_SHOOT_CD     = 1.25f;
 constexpr float GUNNER_BURST_GAP    = 0.11f;
 constexpr float GUNNER_RENDER_SCALE = 4.6f;
 
+// Bomber - fast suicide rusher; detonates on death or when it reaches a target
+constexpr float BOMBER_HP           = 22.0f;
+constexpr float BOMBER_SPEED        = 400.0f;
+constexpr float BOMBER_SIZE         = 46.0f;
+constexpr int   BOMBER_CONTACT_DMG  = 12;
+constexpr int   BOMBER_EXPLODE_DMG  = 35;    // blast damage applied to a nearby player
+constexpr float BOMBER_RENDER_SCALE = 3.0f;
+
+// Spitter - shooter that lobs a wide, slow acid spread
+constexpr float SPITTER_HP                 = 36.0f;
+constexpr float SPITTER_SPEED              = 200.0f;
+constexpr float SPITTER_SIZE               = 60.0f;
+constexpr float SPITTER_SHOOT_CD           = 1.5f;
+constexpr float SPITTER_BULLET_SPEED_MULTI = 0.55f;  // slow goop
+constexpr float SPITTER_RENDER_SCALE       = 4.4f;
+
+// Warden - armored tank; absorbs most bullet damage, forces melee/parry play
+constexpr float WARDEN_HP              = 140.0f;
+constexpr float WARDEN_SPEED           = 175.0f;
+constexpr float WARDEN_SIZE            = 70.0f;
+constexpr float WARDEN_BULLET_REDUCTION= 0.70f;  // bullets deal 30% damage
+constexpr float WARDEN_DASH_DIST       = 92.0f;
+constexpr float WARDEN_DASH_FORCE      = 120.0f;
+constexpr float WARDEN_DASH_DELAY      = 0.55f;
+constexpr float WARDEN_DASH_DUR        = 0.26f;
+constexpr float WARDEN_DASH_CD         = 1.8f;
+constexpr int   WARDEN_DASH_DMG        = 35;
+constexpr float WARDEN_RENDER_SCALE    = 5.0f;
+
 // Boss enemies - spawned at waves 25, 35, 45
 constexpr int   BOSS_WAVES[]         = {25, 35, 45};
 constexpr float BOSS_BRUTE_HP        = 7500.0f;
@@ -208,6 +237,8 @@ constexpr int   WAVE_BRUTE_WEIGHT   = 10;
 constexpr int   WAVE_SCOUT_WEIGHT   = 12;
 constexpr int   WAVE_SNIPER_WEIGHT  = 7;
 constexpr int   WAVE_GUNNER_WEIGHT  = 7;
+constexpr int   WAVE_BOMBER_WEIGHT  = 9;
+// Spitter/Warden are intentionally NOT in the random wave pool (editor/console only).
 
 // Camera
 constexpr float CAM_SMOOTH  = 0.18f;

@@ -2438,6 +2438,9 @@ void MapEditor::renderEntitySpawns(SDL_Renderer* renderer) {
             case ENTITY_INFRA_POWER:   SDL_SetRenderDrawColor(renderer, 255, 230, 80, 220); break;
             case ENTITY_INFRA_WATER:   SDL_SetRenderDrawColor(renderer, 90, 180, 255, 220); break;
             case ENTITY_INFRA_ANTENNA: SDL_SetRenderDrawColor(renderer, 200, 160, 255, 220); break;
+            case ENTITY_BOMBER:        SDL_SetRenderDrawColor(renderer, 255, 140, 50, 220); break;
+            case ENTITY_SPITTER:       SDL_SetRenderDrawColor(renderer, 140, 255, 110, 220); break;
+            case ENTITY_WARDEN:        SDL_SetRenderDrawColor(renderer, 150, 175, 205, 220); break;
             default:                   SDL_SetRenderDrawColor(renderer, 180, 180, 180, 200); break;
         }
         SDL_RenderFillRect(renderer, &r);
@@ -2446,7 +2449,8 @@ void MapEditor::renderEntitySpawns(SDL_Renderer* renderer) {
 
         const char* labels[ENTITY_TYPE_COUNT] = {
             "M", "S", "C", "U", "B", "F", "N", "G",
-            "Civ", "Rsp", "Med", "Pwr", "Wtr", "Ant"
+            "Civ", "Rsp", "Med", "Pwr", "Wtr", "Ant",
+            "Bo", "Sp", "Wd"
         };
         const char* label = (es.enemyType < ENTITY_TYPE_COUNT) ? labels[es.enemyType] : "?";
         drawEditorText(renderer, label, r.x + sz/4, r.y + 2, 14, {255, 255, 255, 255});
@@ -2963,6 +2967,7 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
             "Melee", "Shooter", "Crate", "Upgrade Crate",
             "Brute", "Scout", "Sniper", "Gunner",
             "Civilian", "Responder", "Med-Relay", "Power", "Water", "Antenna",
+            "Bomber", "Spitter", "Warden",
         };
         const int kEntCount = (int)(sizeof(eNames) / sizeof(eNames[0]));
         const int itemH = 20;
@@ -3736,7 +3741,7 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
             if (isNumField) {
                 // only accept digits
                 for (; *t; ++t)
-                    if (*t >= '0' && *t <= '9' && cfg.textBuf.size() < 3)
+                    if (*t >= '0' && *t <= '9' && cfg.textBuf.size() < 4)
                         cfg.textBuf += *t;
             } else {
                 cfg.textBuf += t;
@@ -3747,7 +3752,7 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
             if (e.key.keysym.sym == SDLK_RETURN) {
                 if (isNumField) {
                     int v = cfg.textBuf.empty() ? 0 : std::stoi(cfg.textBuf);
-                    v = std::max(10, std::min(200, v));
+                    v = std::max(10, std::min(1000, v));
                     if (cfg.field == 1) cfg.mapWidth  = v;
                     else                cfg.mapHeight = v;
                 } else if (cfg.field == 3) cfg.mapName = cfg.textBuf;
@@ -3793,7 +3798,7 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
                     // Confirm text
                     if (isNumField) {
                         int v = cfg.textBuf.empty() ? 0 : std::stoi(cfg.textBuf);
-                        v = std::max(10, std::min(200, v));
+                        v = std::max(10, std::min(1000, v));
                         if (cfg.field == 1) cfg.mapWidth  = v;
                         else                cfg.mapHeight = v;
                     } else if (cfg.field == 3) cfg.mapName = cfg.textBuf;
@@ -3846,14 +3851,14 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
                     if (cfg.availableMaps.empty()) cfg.action = EditorConfig::Action::NewMap;
                 }
                 else if (cfg.field == 1 && cfg.action == EditorConfig::Action::NewMap) {
-                    cfg.mapWidth += 2; if (cfg.mapWidth > 200) cfg.mapWidth = 200;
+                    cfg.mapWidth += 2; if (cfg.mapWidth > 1000) cfg.mapWidth = 1000;
                 }
                 else if (cfg.field == 1 && cfg.action == EditorConfig::Action::LoadMap) {
                     cfg.loadIdx++;
                     if (cfg.loadIdx >= (int)cfg.availableMaps.size())
                         cfg.loadIdx = std::max(0, (int)cfg.availableMaps.size() - 1);
                 }
-                else if (cfg.field == 2) { cfg.mapHeight += 2; if (cfg.mapHeight > 200) cfg.mapHeight = 200; }
+                else if (cfg.field == 2) { cfg.mapHeight += 2; if (cfg.mapHeight > 1000) cfg.mapHeight = 1000; }
                 else if (cfg.field == 5) { cfg.gameMode = 1; }
                 break;
             case SDLK_RETURN:
@@ -3933,14 +3938,14 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
                     if (cfg.availableMaps.empty()) cfg.action = EditorConfig::Action::NewMap;
                 }
                 else if (cfg.field == 1 && cfg.action == EditorConfig::Action::NewMap) {
-                    cfg.mapWidth += 2; if (cfg.mapWidth > 200) cfg.mapWidth = 200;
+                    cfg.mapWidth += 2; if (cfg.mapWidth > 1000) cfg.mapWidth = 1000;
                 }
                 else if (cfg.field == 1 && cfg.action == EditorConfig::Action::LoadMap) {
                     cfg.loadIdx++;
                     if (cfg.loadIdx >= (int)cfg.availableMaps.size())
                         cfg.loadIdx = std::max(0, (int)cfg.availableMaps.size() - 1);
                 }
-                else if (cfg.field == 2) { cfg.mapHeight += 2; if (cfg.mapHeight > 200) cfg.mapHeight = 200; }
+                else if (cfg.field == 2) { cfg.mapHeight += 2; if (cfg.mapHeight > 1000) cfg.mapHeight = 1000; }
                 else if (cfg.field == 5) { cfg.gameMode = 1; }
                 break;
             case SDL_CONTROLLER_BUTTON_A: {
@@ -4002,7 +4007,7 @@ void MapEditor::commitConfigEdit() {
     bool isNumField = (cfg.field == 1 || cfg.field == 2);
     if (isNumField) {
         int v = cfg.textBuf.empty() ? 0 : std::stoi(cfg.textBuf);
-        v = std::max(10, std::min(200, v));
+        v = std::max(10, std::min(1000, v));
         if (cfg.field == 1) cfg.mapWidth  = v;
         else                cfg.mapHeight = v;
     } else if (cfg.field == 3) {

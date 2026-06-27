@@ -41,12 +41,13 @@ static const int KROW_NCOLS[5] = {13, 13, 14, 12, 3};
 // OSK open / close
 
 void Game::SoftKeyboard::open(std::string* tgt, int max,
-                              std::function<void(bool)> done) {
+                              std::function<void(bool)> done, bool numericOnly) {
+    numeric = numericOnly;
 #ifdef __SWITCH__
     // Use the Switch system keyboard applet - blocks until the user confirms or cancels.
     SwkbdConfig kbd;
     swkbdCreate(&kbd, 0);
-    swkbdConfigSetType(&kbd, SwkbdType_Normal);
+    swkbdConfigSetType(&kbd, numericOnly ? SwkbdType_NumPad : SwkbdType_Normal);
     swkbdConfigSetStringLenMax(&kbd, (u32)max);
     if (tgt && !tgt->empty())
         swkbdConfigSetInitialText(&kbd, tgt->c_str());
@@ -118,6 +119,35 @@ void Game::updateSoftKBRepeat() {
 
 // Event handling
 
+void Game::beginMapDimEdit(int field) {
+    mapDimField_  = (field == 4) ? 4 : 3;
+    mapDimTyping_ = true;
+    mapDimStr_    = std::to_string(mapDimField_ == 3 ? config_.mapWidth : config_.mapHeight);
+    softKB_.open(&mapDimStr_, 4, [this](bool ok) {
+        mapDimTyping_ = false;
+        if (ok && !mapDimStr_.empty()) {
+            try {
+                int v = std::max(10, std::min(1000, std::stoi(mapDimStr_)));
+                if (mapDimField_ == 3) config_.mapWidth = v; else config_.mapHeight = v;
+            } catch (...) {}
+        }
+        mapDimStr_.clear();
+    }, /*numericOnly=*/true);
+}
+
+void Game::beginSeedEdit() {
+    seedTyping_ = true;
+    seedStr_    = std::to_string(config_.worldSeed);
+    softKB_.open(&seedStr_, 9, [this](bool ok) {
+        seedTyping_ = false;
+        if (ok) {
+            try { config_.worldSeed = seedStr_.empty() ? 0u : (uint32_t)std::stoul(seedStr_); }
+            catch (...) {}
+        }
+        seedStr_.clear();
+    }, /*numericOnly=*/true);
+}
+
 bool Game::handleSoftKBEvent(SDL_Event& e) {
     auto& kb = softKB_;
     if (!kb.active || !kb.target) return false;
@@ -136,8 +166,10 @@ bool Game::handleSoftKBEvent(SDL_Event& e) {
             return true;
         }
         if (e.type == SDL_TEXTINPUT) {
-            kb.target->append(e.text.text);
-            if ((int)kb.target->size() > kb.maxLen) kb.target->resize(kb.maxLen);
+            for (const char* p = e.text.text; *p; p++) {
+                if (kb.numeric && !(*p >= '0' && *p <= '9')) continue;  // digits only
+                if ((int)kb.target->size() < kb.maxLen) *kb.target += *p;
+            }
             return true;
         }
         return false;  // let navigation/other events fall through
@@ -149,6 +181,7 @@ bool Game::handleSoftKBEvent(SDL_Event& e) {
         switch (act) {
             case 0: {  // insert
                 char c = kb.shiftOn ? chSh : ch;
+                if (kb.numeric && !(c >= '0' && c <= '9')) c = 0;  // digits only
                 if (c && (int)kb.target->size() < kb.maxLen) *kb.target += c;
                 if (kb.shiftOn) kb.shiftOn = false;  // auto-release shift
                 break;
@@ -157,7 +190,7 @@ bool Game::handleSoftKBEvent(SDL_Event& e) {
             case 2: kb.close(true);  break;
             case 3: kb.shiftOn = !kb.shiftOn; break;
             case 4:  // space
-                if ((int)kb.target->size() < kb.maxLen) *kb.target += ' ';
+                if (!kb.numeric && (int)kb.target->size() < kb.maxLen) *kb.target += ' ';
                 break;
             case 5: kb.close(false); break;
         }
@@ -199,8 +232,10 @@ bool Game::handleSoftKBEvent(SDL_Event& e) {
     // Physical keyboard
     if (e.type == SDL_TEXTINPUT) {
         for (const char* p = e.text.text; *p; p++) {
-            if (*p >= ' ' && *p <= '~' && *p != '\n')
+            if (*p >= ' ' && *p <= '~' && *p != '\n') {
+                if (kb.numeric && !(*p >= '0' && *p <= '9')) continue;  // digits only
                 if ((int)kb.target->size() < kb.maxLen) *kb.target += *p;
+            }
         }
         return true;
     }
@@ -451,6 +486,18 @@ void Game::handleInput() {
     upInput_ = false;
     downInput_ = false;
     tabInput_ = false;
+
+    // Safety: the soft keyboard must never stay open during active gameplay. If a
+    // menu text field (Seed / HP / map size) was still being edited when the game
+    // launched, the open keyboard swallows every input event - which silently
+    // kills parry, weapon-switch, melee and bomb (movement/fire survive because
+    // they read key/mouse state, not events). Force it closed here.
+    if (softKB_.active &&
+        (state_ == GameState::Playing       || state_ == GameState::PlayingCustom ||
+         state_ == GameState::PlayingPack    || state_ == GameState::MultiplayerGame ||
+         state_ == GameState::LocalCoopGame)) {
+        softKB_.close(false);
+    }
 
     // Soft keyboard hold-repeat
     updateSoftKBRepeat();
@@ -1446,7 +1493,7 @@ void Game::handleInput() {
     else if (state_ == GameState::PlayModeMenu) {
         playModeSelection_ = menuSelection_;   // propagate DPad nav
         if (playModeSelection_ < 0) playModeSelection_ = 0;
-        if (playModeSelection_ > 9) playModeSelection_ = 9;
+        if (playModeSelection_ > 11) playModeSelection_ = 11;
         menuSelection_ = playModeSelection_;
 
         auto adjustIntPM = [&](int& value, int minV, int maxV, int step) {
@@ -1464,6 +1511,7 @@ void Game::handleInput() {
         else if (playModeSelection_ == 6) adjustFloatPM(config_.spawnRateScale,  0.3f,  3.0f, 0.1f);
         else if (playModeSelection_ == 7) adjustFloatPM(config_.enemyHpScale,    0.3f,  3.0f, 0.1f);
         else if (playModeSelection_ == 8) adjustFloatPM(config_.enemySpeedScale, 0.5f,  2.5f, 0.1f);
+        else if (playModeSelection_ == 9) { if (leftInput_) config_.endless = false; if (rightInput_) config_.endless = true; }
 
         if (confirmInput_) {
             if (playModeSelection_ == 0) {
@@ -1481,6 +1529,8 @@ void Game::handleInput() {
                 state_ = GameState::PackSelect;
                 packSelectIdx_ = 0;
                 menuSelection_ = 0;
+            } else if (playModeSelection_ == 3 || playModeSelection_ == 4) {
+                beginMapDimEdit(playModeSelection_);
             } else if (playModeSelection_ == 5) {
                 hpStr_ = std::to_string(config_.playerMaxHp);
                 hpTyping_ = true;
@@ -1493,6 +1543,10 @@ void Game::handleInput() {
                     hpStr_.clear();
                 });
             } else if (playModeSelection_ == 9) {
+                config_.endless = !config_.endless;
+            } else if (playModeSelection_ == 10) {
+                beginSeedEdit();
+            } else if (playModeSelection_ == 11) {
                 saveConfig();
                 state_ = GameState::MainMenu;
                 menuSelection_ = 0;

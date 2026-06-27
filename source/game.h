@@ -105,6 +105,8 @@ enum class GameState {
 struct GameConfig {
     int mapWidth = 32;
     int mapHeight = 32;
+    bool     endless   = false;  // generated-map endless mode (infinite seeded world)
+    uint32_t worldSeed = 0;      // 0 = random each run; non-zero = reproducible
     int playerMaxHp = PLAYER_MAX_HP;
     float spawnRateScale = 1.0f;
     float enemyHpScale = 1.0f;
@@ -148,6 +150,39 @@ struct BoxFragment {
     float age = 0;
     bool  alive = true;
     SDL_Color color;
+};
+
+// Floating combat text: damage numbers, "+1", multi-kill banners. Rises and fades.
+struct FloatText {
+    Vec2        pos;
+    Vec2        vel   = {0, -60};
+    std::string text;
+    SDL_Color   color = {255, 255, 255, 255};
+    float       age   = 0;
+    float       life  = 1.0f;
+    float       scale = 1.0f;
+};
+
+// Brief expanding ring telegraph drawn where an enemy spawns.
+struct SpawnRing {
+    Vec2  pos;
+    float age  = 0;
+    float life = 0.5f;
+};
+
+// Telegraphed bombing: a red ring converges on the impact point, then detonates.
+struct AirStrike {
+    Vec2  pos;
+    float timer = 1.6f;   // counts down to detonation
+    float warn  = 1.6f;   // total warning time (for ring animation)
+};
+
+// AVI bombing run: a plane flies straight across, its drop points telegraphed as
+// a line of AirStrikes timed so each ring closes as the plane passes over it.
+struct Bomber {
+    Vec2  pos;
+    Vec2  vel;
+    float life = 4.0f;    // despawn after it has crossed the field
 };
 
 // Story bystander: civilian, infrastructure, or a surrendered responder operator.
@@ -588,6 +623,27 @@ private:
     float screenFlashR_ = 255, screenFlashG_ = 255, screenFlashB_ = 255;
     float hitStopTimer_ = 0;  // brief freeze-frame on big impacts (local play only); see run()
 
+    // --- Game-feel "juice" (local/cosmetic; see combat.cpp) ---
+    std::vector<FloatText> floatTexts_;   // floating damage numbers / kill banners
+    std::vector<SpawnRing> spawnRings_;   // enemy-spawn telegraph rings
+    int   comboCount_     = 0;            // current kill combo
+    float comboTimer_     = 0;            // time left before the combo lapses
+    float comboFlash_     = 0;            // brief HUD pulse on combo gain
+    int   multiKill_      = 0;            // kills inside the multi-kill window
+    float multiKillTimer_ = 0;            // time left in the multi-kill window
+    float crosshairSpread_= 0;            // reticle bloom from recent fire (px)
+    float dustTimer_      = 0;            // throttle for run/dash dust puffs
+    std::vector<AirStrike> airStrikes_;   // active telegraphed bombings
+    std::vector<Bomber>    bombers_;      // AVI planes mid-run (visual)
+    SDL_Texture*           bomberPlaneSprite_ = nullptr;
+    float bombingTimer_   = 18.0f;        // countdown to the next barrage
+    void updateAirStrikes(float dt);      // spawn/advance/detonate bombings
+    void renderAirStrikes();              // draw the red converging-ring telegraph
+    void spawnFloatText(Vec2 pos, const char* text, SDL_Color color, float scale = 1.0f);
+    void registerComboKill(Vec2 pos);    // called from killEnemy on a tracked kill
+    void updateJuice(float dt);          // advance float text / rings / combo / spread
+    void renderJuice();                  // draw world-space float text, rings, hp bars
+
     // Sprites
     std::vector<SDL_Texture*> playerSprites_;
     std::vector<SDL_Texture*> playerDeathSprites_;
@@ -603,6 +659,9 @@ private:
     SDL_Texture* scoutSprite_   = nullptr;
     SDL_Texture* sniperSprite_  = nullptr;
     SDL_Texture* gunnerSprite_  = nullptr;
+    SDL_Texture* bomberSprite_  = nullptr;
+    SDL_Texture* spitterSprite_ = nullptr;
+    SDL_Texture* wardenSprite_  = nullptr;
     SDL_Texture* bossBruteSprite_  = nullptr;
     SDL_Texture* bossSniperSprite_ = nullptr;
     SDL_Texture* bossGunnerSprite_ = nullptr;
@@ -618,6 +677,7 @@ private:
     SDL_Texture* gravelTex_    = nullptr;
     SDL_Texture* woodTex_      = nullptr;
     SDL_Texture* sandTex_      = nullptr;
+    SDL_Texture* tileFloorTex_ = nullptr;
     SDL_Texture* wallTex_      = nullptr;
     SDL_Texture* glassTex_     = nullptr;
     SDL_Texture* deskTex_      = nullptr;
@@ -861,6 +921,13 @@ private:
     bool        usernameTyping_ = false;     // editing username in config
     bool        hpTyping_      = false;     // editing playerMaxHp via keyboard
     std::string hpStr_;                     // typed HP string buffer
+    bool        mapDimTyping_  = false;     // editing map width/height via keyboard (PlayMode menu)
+    int         mapDimField_   = 3;         // 3 = width, 4 = height
+    std::string mapDimStr_;                 // typed map-dimension string buffer
+    void        beginMapDimEdit(int field); // open the soft keyboard for map width/height
+    bool        seedTyping_    = false;     // editing the world seed (PlayMode menu)
+    std::string seedStr_;                   // typed seed string buffer
+    void        beginSeedEdit();            // open the numeric soft keyboard for the seed
     bool        mpUsernameTyping_ = false;   // editing username in host/join menus
     int         usernameCharIdx_ = 0;        // palette index for username char picker
     int         kbNavHeldButton_ = -1;       // D-pad button held during keyboard picker nav
@@ -885,6 +952,7 @@ private:
         SDL_Rect titleBar = {0,0,0,0};
 
         bool shiftOn = false;  // shift key active
+        bool numeric = false;  // when true, only digits 0-9 may be entered
 
         // Gamepad navigation (row, col into logical key grid)
         int  gpRow = 4, gpCol = 0;
@@ -898,7 +966,7 @@ private:
         // act codes: 0=insert, 1=backspace, 2=enter(OK), 3=shift, 4=space, 5=cancel
 
         void open(std::string* tgt, int max,
-                  std::function<void(bool)> done = nullptr);
+                  std::function<void(bool)> done = nullptr, bool numericOnly = false);
         void close(bool confirmed);
     };
     SoftKeyboard softKB_;

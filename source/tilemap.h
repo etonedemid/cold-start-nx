@@ -3,6 +3,7 @@
 #include <SDL2/SDL.h>
 #include <cstdint>
 #include <vector>
+#include <unordered_set>
 
 // Portable PRNG for deterministic map generation across platforms
 // (stdlib rand() produces different sequences on different libc implementations,
@@ -32,6 +33,7 @@ enum TileType : uint8_t {
     TILE_GLASS,     // solid, breakable
     TILE_DESK,      // solid
     TILE_BOX,       // solid, breakable by bullets
+    TILE_TILEFLOOR = 9, // non-solid; tiled floor for rooms/buildings (randomly rotated)
     // Custom non-solid tiles - texture path stored per-map in CSM
     TILE_CUSTOM_0 = 16,
     TILE_CUSTOM_1 = 17,
@@ -57,7 +59,32 @@ struct TileMap {
     std::vector<uint8_t> ceiling;    // overlay layer (CeilType)
     std::vector<uint8_t> noCollide;  // 1 = tile has no square collision
 
+    // Endless mode: tiles are generated on demand from a seed (storage-free, so
+    // distant chunks are never kept in memory). See proceduralTile().
+    bool     endless = false;
+    uint32_t seed    = 0;
+    // Tiles blown open in the endless world (sparse override; the world is
+    // otherwise storage-free). Key = (x<<32)^y.
+    std::unordered_set<long long> endlessCarved;
+    std::unordered_set<long long> scorched;   // bombed tiles, rendered darkened
+    static long long tileKey(int x, int y) { return ((long long)x << 32) ^ (long long)(uint32_t)y; }
+    bool isScorched(int tx, int ty) const {
+        return !scorched.empty() && scorched.count(tileKey(tx, ty)) != 0;
+    }
+
     void generate(int mapWidth, int mapHeight); // procedural arena
+    void beginEndless(uint32_t worldSeed);      // switch to infinite seeded world
+    void carveExplosion(Vec2 center, float radius); // blow open walls/ceiling in a blast
+    void scorchArea(Vec2 center, float radius);     // darken tiles in a blast (no destruction)
+    uint8_t  proceduralTile(int tx, int ty) const; // deterministic tile at (tx,ty)
+    uint8_t  proceduralCeiling(int tx, int ty) const;
+    // Ceiling lookup that works for both stored (finite) and endless worlds.
+    uint8_t  ceilingAt(int tx, int ty) const {
+        if (endless) return proceduralCeiling(tx, ty);
+        if (tx < 0 || ty < 0 || tx >= width || ty >= height) return CEIL_NONE;
+        size_t idx = (size_t)ty * width + tx;
+        return idx < ceiling.size() ? ceiling[idx] : CEIL_NONE;
+    }
     bool isSolid(int tx, int ty) const;
     bool isInBounds(int tx, int ty) const;
     bool worldCollides(float wx, float wy, float halfSize) const;

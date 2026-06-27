@@ -1052,7 +1052,7 @@ void Game::renderAimCrosshair(const Camera& camera, const Player& player, Vec2 a
     Vec2 chScreen = camera.worldToScreen(chWorld);
     int  cx = (int)chScreen.x, cy = (int)chScreen.y;
 
-    const int gap = 4, len = size, half = 1;
+    const int gap = 4 + (int)crosshairSpread_, len = size, half = 1;
     SDL_Rect arms[4] = {
         {cx - half, cy - gap - len, 2, len},   // up
         {cx - half, cy + gap,       2, len},   // down
@@ -1136,6 +1136,9 @@ SDL_Texture* Game::enemySpriteTex(EnemyType t) const {
         case EnemyType::Scout:      return scoutSprite_   ? scoutSprite_   : enemySprite_;
         case EnemyType::Sniper:     return sniperSprite_  ? sniperSprite_  : shooterSprite_;
         case EnemyType::Gunner:     return gunnerSprite_  ? gunnerSprite_  : shooterSprite_;
+        case EnemyType::Bomber:     return bomberSprite_  ? bomberSprite_  : (scoutSprite_ ? scoutSprite_ : enemySprite_);
+        case EnemyType::Spitter:    return spitterSprite_ ? spitterSprite_ : shooterSprite_;
+        case EnemyType::Warden:     return wardenSprite_  ? wardenSprite_  : (bruteSprite_ ? bruteSprite_ : enemySprite_);
         case EnemyType::Shooter:    return shooterSprite_;
         // Bosses use their dedicated sprites, falling back to the base type
         case EnemyType::BossBrute:  return bossBruteSprite_  ? bossBruteSprite_  : (bruteSprite_  ? bruteSprite_  : enemySprite_);
@@ -1314,6 +1317,9 @@ void Game::renderMap() {
                 // Slight rotation variety for less uniformity
                 if (tileHash & 0x1) tileFlip = SDL_FLIP_HORIZONTAL;
                 if (tileHash & 0x2) tileFlip = (SDL_RendererFlip)(tileFlip | SDL_FLIP_VERTICAL);
+            } else if (tile == TILE_TILEFLOOR) {
+                tex = tileFloorTex_ ? tileFloorTex_ : floorTex_;
+                tileAngle = (tileHash % 4) * 90.0;  // randomly rotated per tile
             } else if (tile == TILE_WOOD) {
                 tex = woodTex_;
                 tileAngle = (tileHash % 2) * 90.0;
@@ -1368,20 +1374,21 @@ void Game::renderMap() {
                              (float)TILE_SIZE, (float)TILE_SIZE};
 
             if (tex) {
-                // Subtle color variation for grass/gravel to break repetition
+                // Brightness = subtle grass/gravel variation, then darkened hard if
+                // the tile was scorched by a bombing.
+                int bright = 255;
                 if (tile == TILE_GRASS || tile == TILE_GRAVEL) {
                     int variation = (int)(tileHash % 30) - 15; // -15 to +14
-                    Uint8 mod = (Uint8)std::max(220, std::min(255, 240 + variation));
-                    SDL_SetTextureColorMod(tex, mod, mod, mod);
+                    bright = std::max(220, std::min(255, 240 + variation));
                 }
+                if (map_.isScorched(x, y)) bright = bright * 38 / 100;  // burnt look
+                if (bright != 255) SDL_SetTextureColorMod(tex, (Uint8)bright, (Uint8)bright, (Uint8)bright);
                 renderRotatedQuad(renderer_, tex,
                     sp.x, sp.y,
                     TILE_SIZE * 0.5f, TILE_SIZE * 0.5f,
                     (float)(tileAngle * M_PI / 180.0),
                     tileFlip);
-                if (tile == TILE_GRASS || tile == TILE_GRAVEL) {
-                    SDL_SetTextureColorMod(tex, 255, 255, 255);
-                }
+                if (bright != 255) SDL_SetTextureColorMod(tex, 255, 255, 255);
             } else {
                 SDL_Color c = {60, 60, 65, 255};
                 if (tile == TILE_WALL) c = {100, 90, 80, 255};
@@ -1453,13 +1460,15 @@ void Game::renderWallOverlay() {
             SDL_FRect dst = {sp.x - TILE_SIZE * 0.5f, sp.y - TILE_SIZE * 0.5f,
                              (float)TILE_SIZE, (float)TILE_SIZE};
 
+            Uint8 wb = map_.isScorched(x, y) ? 97 : 255;  // darken walls singed by a blast
             if (tex) {
-                SDL_SetTextureColorMod(tex, 255, 255, 255);
+                SDL_SetTextureColorMod(tex, wb, wb, wb);
                 SDL_SetTextureAlphaMod(tex, 255);
                 SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_NONE);
                 SDL_RenderCopyF(renderer_, tex, nullptr, &dst);
+                if (wb != 255) SDL_SetTextureColorMod(tex, 255, 255, 255);
             } else {
-                SDL_SetRenderDrawColor(renderer_, 100, 90, 80, 255);
+                SDL_SetRenderDrawColor(renderer_, 100 * wb / 255, 90 * wb / 255, 80 * wb / 255, 255);
                 SDL_RenderFillRectF(renderer_, &dst);
             }
         }
@@ -1512,7 +1521,8 @@ void Game::renderRoofOverlay() {
     if (bgImageTex_) return;
 
     // Draw transparent glass ceiling tiles over rooms (rendered after entities)
-    if (map_.ceiling.size() != (size_t)(map_.width * map_.height)) return; // safety: ceiling not sized
+    if (!map_.endless && map_.ceiling.size() != (size_t)(map_.width * map_.height))
+        return; // finite map: skip if ceiling not sized (endless computes it on demand)
     int startX = (int)(camera_.pos.x / TILE_SIZE) - 1;
     int startY = (int)(camera_.pos.y / TILE_SIZE) - 1;
     int endX   = startX + camera_.viewW / TILE_SIZE + 3;
@@ -1525,7 +1535,7 @@ void Game::renderRoofOverlay() {
 
     for (int y = startY; y < endY; y++) {
         for (int x = startX; x < endX; x++) {
-            if (map_.ceiling[y * map_.width + x] != CEIL_GLASS) continue;
+            if (map_.ceilingAt(x, y) != CEIL_GLASS) continue;
 
             Vec2 wp = {(float)(x * TILE_SIZE + TILE_SIZE/2),
                        (float)(y * TILE_SIZE + TILE_SIZE/2)};
@@ -1626,10 +1636,28 @@ void Game::renderMinimap() {
     int mapH = map_.height;
     if (mapW <= 0 || mapH <= 0) return;
 
-    // Scale: choose the largest integer pixels-per-tile that fits in MMAP_MAX_PX
-    int tpx = std::max(1, std::min(MMAP_MAX_PX / mapW, MMAP_MAX_PX / mapH));
-    int mmW = mapW * tpx;
-    int mmH = mapH * tpx;
+    // Scale: largest integer px/tile that fits the whole map in MMAP_MAX_PX.
+    int fitTpx = std::max(1, std::min(MMAP_MAX_PX / mapW, MMAP_MAX_PX / mapH));
+    // If the whole map can't fit even at 1px/tile, switch to a player-centered
+    // window so huge maps (e.g. 1000x1000) stay a readable minimap, not a
+    // screen-filling tile soup.
+    bool windowed = (mapW * fitTpx > MMAP_MAX_PX || mapH * fitTpx > MMAP_MAX_PX);
+
+    int tpx, viewTilesX, viewTilesY, originX, originY, mmW, mmH;
+    if (!windowed) {
+        tpx = fitTpx;
+        viewTilesX = mapW; viewTilesY = mapH; originX = 0; originY = 0;
+        mmW = mapW * tpx;  mmH = mapH * tpx;
+    } else {
+        tpx = 2;  // zoom for big maps
+        viewTilesX = std::min(mapW, MMAP_MAX_PX / tpx);
+        viewTilesY = std::min(mapH, MMAP_MAX_PX / tpx);
+        int pTX = (int)(player_.pos.x / TILE_SIZE);
+        int pTY = (int)(player_.pos.y / TILE_SIZE);
+        originX = std::max(0, std::min(mapW - viewTilesX, pTX - viewTilesX / 2));
+        originY = std::max(0, std::min(mapH - viewTilesY, pTY - viewTilesY / 2));
+        mmW = viewTilesX * tpx;  mmH = viewTilesY * tpx;
+    }
 
     // Position in bottom-right corner
     int mmX = SCREEN_W - MMAP_MARGIN - mmW;
@@ -1639,88 +1667,74 @@ void Game::renderMinimap() {
 
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
 
-    bool cacheMismatch = !minimapCacheTex_ || minimapCacheDirty_ ||
-                         minimapCacheMapW_ != mapW || minimapCacheMapH_ != mapH ||
-                         minimapCacheTilePx_ != tpx;
-    if (cacheMismatch) {
-        if (minimapCacheTex_) {
-            SDL_DestroyTexture(minimapCacheTex_);
-            minimapCacheTex_ = nullptr;
-        }
-
-        minimapCacheTex_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA8888,
-                                             SDL_TEXTUREACCESS_TARGET, texW, texH);
-        if (minimapCacheTex_) {
-            SDL_SetTextureBlendMode(minimapCacheTex_, SDL_BLENDMODE_BLEND);
-
-            SDL_Texture* prevTarget = SDL_GetRenderTarget(renderer_);
-            SDL_SetRenderTarget(renderer_, minimapCacheTex_);
-            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-            SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 0);
-            SDL_RenderClear(renderer_);
-
-            SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 160);
-            SDL_Rect bg = {1, 1, mmW + MMAP_INNER * 2, mmH + MMAP_INNER * 2};
-            SDL_RenderFillRect(renderer_, &bg);
-
-            SDL_SetRenderDrawColor(renderer_, 0, 200, 180, 100);
-            SDL_Rect border = {0, 0, texW, texH};
-            SDL_RenderDrawRect(renderer_, &border);
-
-            for (int ty = 0; ty < mapH; ty++) {
-                for (int tx = 0; tx < mapW; tx++) {
-                    SDL_Rect r = {1 + MMAP_INNER + tx * tpx, 1 + MMAP_INNER + ty * tpx, tpx, tpx};
-                    if (map_.isSolid(tx, ty))
-                        SDL_SetRenderDrawColor(renderer_, 150, 140, 120, 220);
-                    else
-                        SDL_SetRenderDrawColor(renderer_, 28, 30, 35, 200);
-                    SDL_RenderFillRect(renderer_, &r);
-                }
+    if (!windowed) {
+        // Cached full-map minimap (rebuilt only when the map/scale changes).
+        bool cacheMismatch = !minimapCacheTex_ || minimapCacheDirty_ ||
+                             minimapCacheMapW_ != mapW || minimapCacheMapH_ != mapH ||
+                             minimapCacheTilePx_ != tpx;
+        if (cacheMismatch) {
+            if (minimapCacheTex_) { SDL_DestroyTexture(minimapCacheTex_); minimapCacheTex_ = nullptr; }
+            minimapCacheTex_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA8888,
+                                                 SDL_TEXTUREACCESS_TARGET, texW, texH);
+            if (minimapCacheTex_) {
+                SDL_SetTextureBlendMode(minimapCacheTex_, SDL_BLENDMODE_BLEND);
+                SDL_Texture* prevTarget = SDL_GetRenderTarget(renderer_);
+                SDL_SetRenderTarget(renderer_, minimapCacheTex_);
+                SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+                SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 0);
+                SDL_RenderClear(renderer_);
+                SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 160);
+                SDL_Rect bg = {1, 1, mmW + MMAP_INNER * 2, mmH + MMAP_INNER * 2};
+                SDL_RenderFillRect(renderer_, &bg);
+                SDL_SetRenderDrawColor(renderer_, 0, 200, 180, 100);
+                SDL_Rect border = {0, 0, texW, texH};
+                SDL_RenderDrawRect(renderer_, &border);
+                for (int ty = 0; ty < mapH; ty++)
+                    for (int tx = 0; tx < mapW; tx++) {
+                        SDL_Rect r = {1 + MMAP_INNER + tx * tpx, 1 + MMAP_INNER + ty * tpx, tpx, tpx};
+                        if (map_.isSolid(tx, ty)) SDL_SetRenderDrawColor(renderer_, 150, 140, 120, 220);
+                        else                      SDL_SetRenderDrawColor(renderer_, 28, 30, 35, 200);
+                        SDL_RenderFillRect(renderer_, &r);
+                    }
+                SDL_SetRenderTarget(renderer_, prevTarget);
+                minimapCacheDirty_ = false;
+                minimapCacheMapW_ = mapW; minimapCacheMapH_ = mapH; minimapCacheTilePx_ = tpx;
             }
-
-            SDL_SetRenderTarget(renderer_, prevTarget);
-            minimapCacheDirty_ = false;
-            minimapCacheMapW_ = mapW;
-            minimapCacheMapH_ = mapH;
-            minimapCacheTilePx_ = tpx;
         }
-    }
-
-    if (minimapCacheTex_) {
-        SDL_Rect dst = {mmX - MMAP_INNER - 1, mmY - MMAP_INNER - 1, texW, texH};
-        SDL_RenderCopy(renderer_, minimapCacheTex_, nullptr, &dst);
+        if (minimapCacheTex_) {
+            SDL_Rect dst = {mmX - MMAP_INNER - 1, mmY - MMAP_INNER - 1, texW, texH};
+            SDL_RenderCopy(renderer_, minimapCacheTex_, nullptr, &dst);
+        }
     } else {
+        // Player-centered window: rendered directly each frame (it scrolls, so a
+        // cache would be invalidated every frame anyway). Only viewTiles^2 cells.
         SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 160);
-        SDL_Rect bg = {mmX - MMAP_INNER, mmY - MMAP_INNER,
-                       mmW + MMAP_INNER*2, mmH + MMAP_INNER*2};
+        SDL_Rect bg = {mmX - MMAP_INNER, mmY - MMAP_INNER, mmW + MMAP_INNER*2, mmH + MMAP_INNER*2};
         SDL_RenderFillRect(renderer_, &bg);
-
         SDL_SetRenderDrawColor(renderer_, 0, 200, 180, 100);
-        SDL_Rect border = {mmX - MMAP_INNER - 1, mmY - MMAP_INNER - 1,
-                           mmW + MMAP_INNER*2 + 2, mmH + MMAP_INNER*2 + 2};
+        SDL_Rect border = {mmX - MMAP_INNER - 1, mmY - MMAP_INNER - 1, mmW + MMAP_INNER*2 + 2, mmH + MMAP_INNER*2 + 2};
         SDL_RenderDrawRect(renderer_, &border);
-
-        for (int ty = 0; ty < mapH; ty++) {
-            for (int tx = 0; tx < mapW; tx++) {
+        for (int ty = 0; ty < viewTilesY; ty++)
+            for (int tx = 0; tx < viewTilesX; tx++) {
                 SDL_Rect r = {mmX + tx * tpx, mmY + ty * tpx, tpx, tpx};
-                if (map_.isSolid(tx, ty))
-                    SDL_SetRenderDrawColor(renderer_, 150, 140, 120, 220);
-                else
-                    SDL_SetRenderDrawColor(renderer_, 28, 30, 35, 200);
+                if (map_.isSolid(originX + tx, originY + ty)) SDL_SetRenderDrawColor(renderer_, 150, 140, 120, 220);
+                else                                          SDL_SetRenderDrawColor(renderer_, 28, 30, 35, 200);
                 SDL_RenderFillRect(renderer_, &r);
             }
-        }
     }
 
-    float worldW = map_.worldWidth();
-    float worldH = map_.worldHeight();
+    // World->minimap mapping over the visible window (whole map when !windowed).
+    float viewWX0 = originX * (float)TILE_SIZE;
+    float viewWY0 = originY * (float)TILE_SIZE;
+    float viewWW  = viewTilesX * (float)TILE_SIZE;
+    float viewWH  = viewTilesY * (float)TILE_SIZE;
 
     // Camera viewport rectangle
     {
-        int vx = mmX + (int)(camera_.pos.x / worldW * mmW);
-        int vy = mmY + (int)(camera_.pos.y / worldH * mmH);
-        int vw = (int)((float)SCREEN_W / worldW * mmW);
-        int vh = (int)((float)SCREEN_H / worldH * mmH);
+        int vx = mmX + (int)((camera_.pos.x - viewWX0) / viewWW * mmW);
+        int vy = mmY + (int)((camera_.pos.y - viewWY0) / viewWH * mmH);
+        int vw = (int)((float)SCREEN_W / viewWW * mmW);
+        int vh = (int)((float)SCREEN_H / viewWH * mmH);
         vx = std::max(mmX, std::min(mmX + mmW - 1, vx));
         vy = std::max(mmY, std::min(mmY + mmH - 1, vy));
         vw = std::min(vw, mmX + mmW - vx);
@@ -1742,12 +1756,11 @@ void Game::renderMinimap() {
         return {255, 60, 60, 230};
     };
 
-    // Helper to clamp+draw a blip
+    // Helper to draw a blip; culls anything outside the visible window.
     auto drawBlip = [&](float wx, float wy, int halfSz, SDL_Color c) {
-        int bx = mmX + (int)(wx / worldW * mmW);
-        int by = mmY + (int)(wy / worldH * mmH);
-        bx = std::max(mmX, std::min(mmX + mmW - 1, bx));
-        by = std::max(mmY, std::min(mmY + mmH - 1, by));
+        int bx = mmX + (int)((wx - viewWX0) / viewWW * mmW);
+        int by = mmY + (int)((wy - viewWY0) / viewWH * mmH);
+        if (bx < mmX || bx >= mmX + mmW || by < mmY || by >= mmY + mmH) return;
         SDL_SetRenderDrawColor(renderer_, c.r, c.g, c.b, c.a);
         SDL_Rect r = {bx - halfSz, by - halfSz, halfSz*2+1, halfSz*2+1};
         SDL_RenderFillRect(renderer_, &r);
@@ -1789,14 +1802,14 @@ void Game::renderMinimap() {
                     // Large blip (7×7) in the enemy's team color (or red if no team)
                     SDL_Color col = blipColor(rp.team);
                     drawBlip(rp.pos.x, rp.pos.y, 3, col);
-                    // White outline one pixel outside the blip
-                    int bx = mmX + (int)(rp.pos.x / worldW * mmW);
-                    int by = mmY + (int)(rp.pos.y / worldH * mmH);
-                    bx = std::max(mmX, std::min(mmX + mmW - 1, bx));
-                    by = std::max(mmY, std::min(mmY + mmH - 1, by));
-                    SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 200);
-                    SDL_Rect outline = {bx - 4, by - 4, 9, 9};
-                    SDL_RenderDrawRect(renderer_, &outline);
+                    // White outline one pixel outside the blip (cull if off-window)
+                    int bx = mmX + (int)((rp.pos.x - viewWX0) / viewWW * mmW);
+                    int by = mmY + (int)((rp.pos.y - viewWY0) / viewWH * mmH);
+                    if (bx >= mmX && bx < mmX + mmW && by >= mmY && by < mmY + mmH) {
+                        SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 200);
+                        SDL_Rect outline = {bx - 4, by - 4, 9, 9};
+                        SDL_RenderDrawRect(renderer_, &outline);
+                    }
                 } else {
                     // Teammate - small blip in their team color
                     drawBlip(rp.pos.x, rp.pos.y, 2, blipColor(rp.team));
@@ -1810,107 +1823,172 @@ void Game::renderMinimap() {
 }
 
 void Game::renderUI() {
-    // Win98 STATUS panel (top-left)
+    // World-space game-feel overlays (float text, spawn rings, enemy hp bars).
+    renderJuice();
+    renderAirStrikes();  // red bombing telegraphs (world-space)
+
+    // Off-screen enemy indicators: edge arrows pointing at nearby unseen enemies
+    // (bosses always shown). Invaluable on big/endless maps and inside mazes.
     {
-        const int panW = 210, panH = 124;
-        const int panX = 8,   panY = 8;
-        const int tH   = UI::W98::TitleH;
-        const int cx   = panX + 10;
-        const int iW   = panW - 20;
-        int cy = panY + tH + 6;
-
-        ui_.drawWin98Window(panX, panY, panW, panH, "STATUS");
-
-        // HP bar
-        {
-            ui_.drawWin98Bevel(cx, cy, iW, 16, false);
-            int hpMax = std::max(1, player_.maxHp);
-            int hpNow = std::max(0, player_.hp);
-            int fillW = (iW - 2) * hpNow / hpMax;
-            SDL_Color hpC = (player_.hp <= 10)       ? SDL_Color{200, 40,  40,  255} :
-                            (player_.hp * 3 < hpMax) ? SDL_Color{200, 130, 30,  255} :
-                                                       SDL_Color{30,  140, 60,  255};
-            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
-            SDL_SetRenderDrawColor(renderer_, hpC.r, hpC.g, hpC.b, 255);
-            SDL_Rect fill = {cx + 1, cy + 1, fillW, 14};
-            SDL_RenderFillRect(renderer_, &fill);
-            char hpStr[16]; snprintf(hpStr, sizeof(hpStr), "%d / %d", hpNow, hpMax);
-            int tw = ui_.textWidth(hpStr, 11);
-            ui_.drawText(hpStr, cx + (iW - tw) / 2, cy + 2, 11, UI::W98::White);
-            cy += 20;
-        }
-
-        // Weapon + ammo
-        {
-            char wpnBuf[32];
-            if (player_.activeWeapon == 0) {
-                if (player_.reloading)
-                    snprintf(wpnBuf, sizeof(wpnBuf), "GUN  RELOADING");
-                else
-                    snprintf(wpnBuf, sizeof(wpnBuf), "GUN  %d/%d", player_.ammo, player_.maxAmmo);
-            } else {
-                snprintf(wpnBuf, sizeof(wpnBuf), "AXE");
-            }
-            ui_.drawText(wpnBuf, cx, cy, 13, UI::W98::Black);
-            cy += 17;
-        }
-
-        // Bombs
-        {
-            int orbiting = 0;
-            for (auto& b : bombs_) if (b.alive && !b.hasDashed) orbiting++;
-            int total = orbiting + player_.bombCount;
-            char bombBuf[24]; snprintf(bombBuf, sizeof(bombBuf), "Bombs: %d", total);
-            ui_.drawText(bombBuf, cx, cy, 13, UI::W98::Black);
-            cy += 17;
-        }
-
-        // Kill counter (shown when bomb-progress tracking is active)
-        if (player_.killCounter > 0) {
-            char killBuf[32];
-            snprintf(killBuf, sizeof(killBuf), "Kills: %d/%d",
-                     player_.killCounter, upgrades_.killsPerBomb);
-            ui_.drawText(killBuf, cx, cy, 11, UI::W98::Shadow);
-            cy += 15;
-        }
-
-        // Parry cooldown bar
-        {
-            bool ready = player_.canParry;
-            float cdFill = ready ? 1.0f
-                                 : 1.0f - (player_.parryCdTimer / PARRY_COOLDOWN);
-            cdFill = std::max(0.0f, std::min(1.0f, cdFill));
-            ui_.drawWin98Bevel(cx, cy, iW, 14, false);
-            SDL_Color barC = ready ? SDL_Color{50, 180, 255, 255}
-                                   : SDL_Color{80, 80, 140, 255};
-            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
-            SDL_SetRenderDrawColor(renderer_, barC.r, barC.g, barC.b, 255);
-            SDL_Rect pFill = {cx + 1, cy + 1, (int)((iW - 2) * cdFill), 12};
-            if (pFill.w > 0) SDL_RenderFillRect(renderer_, &pFill);
-            const char* parryLabel = ready ? "PARRY  READY" : "PARRY";
-            int tw = ui_.textWidth(parryLabel, 10);
-            ui_.drawText(parryLabel, cx + (iW - tw) / 2, cy + 2, 10, UI::W98::White);
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        const float maxDist = 1700.0f;
+        const float cxs = SCREEN_W * 0.5f, cys = SCREEN_H * 0.5f;
+        const float halfW = cxs - 28.0f, halfH = cys - 28.0f;
+        int shown = 0;
+        for (auto& e : enemies_) {
+            if (!e.alive) continue;
+            bool boss = isBossType(e.type);
+            float dist = (e.pos - player_.pos).length();
+            if (!boss && dist > maxDist) continue;
+            Vec2 sp = camera_.worldToScreen(e.pos);
+            if (sp.x >= 0 && sp.x < SCREEN_W && sp.y >= 0 && sp.y < SCREEN_H) continue; // visible
+            if (!boss && ++shown > 24) break;  // cap clutter
+            Vec2 dir = {sp.x - cxs, sp.y - cys};
+            if (dir.lengthSq() < 1.0f) continue;
+            dir = dir.normalized();
+            float tX = dir.x != 0 ? halfW / fabsf(dir.x) : 1e9f;
+            float tY = dir.y != 0 ? halfH / fabsf(dir.y) : 1e9f;
+            float t  = std::min(tX, tY);
+            Vec2 ep  = {cxs + dir.x * t, cys + dir.y * t};
+            Vec2 perp = {-dir.y, dir.x};
+            float sz = boss ? 13.0f : 8.0f;
+            Uint8 a  = boss ? 240 : (Uint8)std::max(70.0f, 220.0f * (1.0f - dist / maxDist));
+            SDL_Color col = boss ? SDL_Color{255, 50, 50, a} : enemyBaseTint(e.type);
+            col.a = a;
+            SDL_Vertex vt[3];
+            vt[0].position = {ep.x + dir.x * sz, ep.y + dir.y * sz};                       // tip
+            vt[1].position = {ep.x - dir.x * sz * 0.4f + perp.x * sz * 0.7f, ep.y - dir.y * sz * 0.4f + perp.y * sz * 0.7f};
+            vt[2].position = {ep.x - dir.x * sz * 0.4f - perp.x * sz * 0.7f, ep.y - dir.y * sz * 0.4f - perp.y * sz * 0.7f};
+            for (auto& v : vt) { v.color = col; v.tex_coord = {0, 0}; }
+            SDL_RenderGeometry(renderer_, nullptr, vt, 3, nullptr, 0);
         }
     }
 
-    // Win98 GAME panel (top-right) - timer + FPS
+    // Combo chip (center-top) - escalates color/size as the streak climbs.
+    if (comboCount_ >= 2) {
+        float life = std::min(1.0f, comboTimer_ / 2.5f);
+        float pulse = 1.0f + comboFlash_ * 1.2f;
+        char cbuf[24]; snprintf(cbuf, sizeof(cbuf), "COMBO  x%d", comboCount_);
+        int size = (int)((comboCount_ >= 10 ? 26 : 20) * pulse);
+        SDL_Color col = comboCount_ >= 20 ? SDL_Color{255, 80, 80, 255}
+                      : comboCount_ >= 10 ? SDL_Color{255, 170, 50, 255}
+                                          : SDL_Color{255, 230, 120, 255};
+        col.a = (Uint8)(180 + 75 * life);
+        int tw = ui_.textWidth(cbuf, size);
+        int x = (SCREEN_W - tw) / 2;
+        const int barW = 220;
+        int barY = SCREEN_H - 48;
+        int y = barY - size - 4;
+        ui_.drawText(cbuf, x + 2, y + 2, size, {0, 0, 0, col.a});
+        ui_.drawText(cbuf, x, y, size, col);
+        // Countdown bar with the same (+2,+2) drop-shadow "3d" look as the text.
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        int barX  = (SCREEN_W - barW) / 2;
+        int fillW = (int)(barW * life);
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, col.a);
+        SDL_Rect barShadow = {barX + 2, barY + 2, fillW, 3};
+        SDL_RenderFillRect(renderer_, &barShadow);
+        SDL_SetRenderDrawColor(renderer_, col.r, col.g, col.b, col.a);
+        SDL_Rect bar = {barX, barY, fillW, 3};
+        SDL_RenderFillRect(renderer_, &bar);
+    }
+
+    // --- Tactical/military HUD (flat, low-chrome) ---
+    const SDL_Color HUD_LINE  = {90, 150, 80, 110};
+    const SDL_Color HUD_BRACK = {150, 200, 120, 220};
+    const SDL_Color HUD_LABEL = {130, 180, 110, 255};
+    const SDL_Color HUD_VALUE = {225, 240, 215, 255};
+
+    // Dark translucent panel with bright olive corner brackets (no title chrome).
+    auto tacPanel = [&](int x, int y, int w, int h) {
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer_, 8, 14, 8, 150);
+        SDL_Rect bg = {x, y, w, h}; SDL_RenderFillRect(renderer_, &bg);
+        SDL_SetRenderDrawColor(renderer_, HUD_LINE.r, HUD_LINE.g, HUD_LINE.b, HUD_LINE.a);
+        SDL_RenderDrawRect(renderer_, &bg);
+        SDL_SetRenderDrawColor(renderer_, HUD_BRACK.r, HUD_BRACK.g, HUD_BRACK.b, HUD_BRACK.a);
+        const int k = 9;
+        int x2 = x + w - 1, y2 = y + h - 1;
+        SDL_RenderDrawLine(renderer_, x, y, x + k, y);   SDL_RenderDrawLine(renderer_, x, y, x, y + k);
+        SDL_RenderDrawLine(renderer_, x2, y, x2 - k, y); SDL_RenderDrawLine(renderer_, x2, y, x2, y + k);
+        SDL_RenderDrawLine(renderer_, x, y2, x + k, y2); SDL_RenderDrawLine(renderer_, x, y2, x, y2 - k);
+        SDL_RenderDrawLine(renderer_, x2, y2, x2 - k, y2); SDL_RenderDrawLine(renderer_, x2, y2, x2, y2 - k);
+    };
+    // Thin segmented status bar with a centered caption.
+    auto tacBar = [&](int x, int y, int w, int h, float frac, SDL_Color c, const char* cap) {
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        frac = std::max(0.0f, std::min(1.0f, frac));
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 175);
+        SDL_Rect bg = {x, y, w, h}; SDL_RenderFillRect(renderer_, &bg);
+        int fw = (int)((w - 2) * frac);
+        if (fw > 0) { SDL_SetRenderDrawColor(renderer_, c.r, c.g, c.b, 235); SDL_Rect f = {x + 1, y + 1, fw, h - 2}; SDL_RenderFillRect(renderer_, &f); }
+        SDL_SetRenderDrawColor(renderer_, HUD_LINE.r, HUD_LINE.g, HUD_LINE.b, 180);
+        SDL_RenderDrawRect(renderer_, &bg);
+        for (int sx = x + w / 5; sx < x + w - 2; sx += w / 5) {  // segment ticks
+            SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 120);
+            SDL_RenderDrawLine(renderer_, sx, y + 1, sx, y + h - 2);
+        }
+        if (cap) { int tw = ui_.textWidth(cap, 10); ui_.drawText(cap, x + (w - tw) / 2, y + (h - 10) / 2, 10, HUD_VALUE); }
+    };
+
+    // STATUS readout (top-left)
     {
-        const int panW = 180, panH = 90;
+        const int panX = 8, panY = 8, panW = 188, panH = 92;
+        const int cx = panX + 9, iW = panW - 18;
+        tacPanel(panX, panY, panW, panH);
+        int cy = panY + 8;
+
+        int hpMax = std::max(1, player_.maxHp), hpNow = std::max(0, player_.hp);
+        float r = (float)hpNow / hpMax;
+        SDL_Color hpC = (hpNow <= 10) ? SDL_Color{210, 50, 40, 255}
+                       : (r < 0.34f)  ? SDL_Color{210, 155, 30, 255}
+                                      : SDL_Color{70, 180, 75, 255};
+        char hpStr[24]; snprintf(hpStr, sizeof(hpStr), "HP  %d/%d", hpNow, hpMax);
+        tacBar(cx, cy, iW, 15, r, hpC, hpStr);
+        cy += 20;
+
+        // Weapon + ammo line
+        char wpnBuf[32];
+        if (player_.activeWeapon == 0)
+            player_.reloading ? snprintf(wpnBuf, sizeof(wpnBuf), "RELOADING...")
+                              : snprintf(wpnBuf, sizeof(wpnBuf), "RIFLE  %d/%d", player_.ammo, player_.maxAmmo);
+        else snprintf(wpnBuf, sizeof(wpnBuf), "MELEE  [AXE]");
+        ui_.drawText("WPN", cx, cy, 11, HUD_LABEL);
+        ui_.drawText(wpnBuf, cx + 34, cy, 12, player_.reloading ? SDL_Color{210, 155, 30, 255} : HUD_VALUE);
+        cy += 16;
+
+        // Ordnance + streak line
+        int orbiting = 0; for (auto& b : bombs_) if (b.alive && !b.hasDashed) orbiting++;
+        char ordBuf[40];
+        if (player_.killCounter > 0)
+            snprintf(ordBuf, sizeof(ordBuf), "BMB %d   KILLS %d/%d",
+                     orbiting + player_.bombCount, player_.killCounter, upgrades_.killsPerBomb);
+        else
+            snprintf(ordBuf, sizeof(ordBuf), "BMB %d", orbiting + player_.bombCount);
+        ui_.drawText(ordBuf, cx, cy, 12, HUD_VALUE);
+        cy += 16;
+
+        // Parry readiness bar
+        bool ready = player_.canParry;
+        float cdFill = ready ? 1.0f : 1.0f - (player_.parryCdTimer / PARRY_COOLDOWN);
+        tacBar(cx, cy, iW, 13, cdFill,
+               ready ? SDL_Color{60, 170, 220, 255} : SDL_Color{70, 80, 110, 255},
+               ready ? "PARRY READY" : "PARRY");
+    }
+
+    // clock (top-right)
+    {
+        const int panW = 150, panH = 58;
         const int panX = SCREEN_W - panW - 8, panY = 8;
-        const int cx   = panX + 10;
-        int cy = panY + UI::W98::TitleH + 6;
-
-        ui_.drawWin98Window(panX, panY, panW, panH, "GAME");
-
-        int mins = (int)gameTime_ / 60;
-        int secs = (int)gameTime_ % 60;
+        const int cx = panX + 10;
+        tacPanel(panX, panY, panW, panH);
+        ui_.drawText("TIME", cx, panY + 7, 10, HUD_LABEL);
+        int mins = (int)gameTime_ / 60, secs = (int)gameTime_ % 60;
         char timeBuf[16]; snprintf(timeBuf, sizeof(timeBuf), "%d:%02d", mins, secs);
-        ui_.drawText(timeBuf, cx, cy, 22, UI::W98::Navy);
-        cy += 26;
-
+        ui_.drawText(timeBuf, cx, panY + 20, 22, HUD_VALUE);
         int fps = (dt_ > 0.0001f) ? (int)(1.0f / dt_) : 0;
-        char fpsBuf[16]; snprintf(fpsBuf, sizeof(fpsBuf), "FPS: %d", fps);
-        ui_.drawText(fpsBuf, cx, cy, 13, UI::W98::Shadow);
+        char fpsBuf[16]; snprintf(fpsBuf, sizeof(fpsBuf), "FPS %d", fps);
+        ui_.drawText(fpsBuf, panX + panW - ui_.textWidth(fpsBuf, 10) - 8, panY + 9, 10, HUD_LINE);
     }
 
     // Minimap (bottom-right, unchanged)
@@ -1965,131 +2043,79 @@ void Game::renderUI() {
     const float waveMaxT  = 2.5f;
     const float otherMaxT = 2.5f;
     const int   notifW    = 340;
-    const int   notifH    = 48; // title bar(22) + body(26)
+    const int   notifH    = 46;
     const int   notifX    = (SCREEN_W - notifW) / 2;
 
-    // Slot 0 (y=4): wave announcement
-    // Slot 1 (y=58): pickup / supply drop
+    // Slot 0 (y=4): wave announcement.  Slot 1: pickup / supply drop.
     bool waveActive = (waveAnnounceTimer_ > 0);
     int  slot1Y     = waveActive ? 58 : 4;
 
+    // Flat tactical alert banner: dark backing, accent stripe, corner brackets.
+    auto tacBanner = [&](int y, float alpha, SDL_Color accent,
+                         const char* title, const char* body) {
+        Uint8 A = (Uint8)(alpha * 255);
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        SDL_Rect bg = {notifX, y, notifW, notifH};
+        SDL_SetRenderDrawColor(renderer_, 8, 14, 8, (Uint8)(alpha * 180));
+        SDL_RenderFillRect(renderer_, &bg);
+        SDL_SetRenderDrawColor(renderer_, accent.r, accent.g, accent.b, A);  // left accent stripe
+        SDL_Rect stripe = {notifX, y, 4, notifH}; SDL_RenderFillRect(renderer_, &stripe);
+        SDL_SetRenderDrawColor(renderer_, HUD_LINE.r, HUD_LINE.g, HUD_LINE.b, (Uint8)(alpha * 150));
+        SDL_RenderDrawRect(renderer_, &bg);
+        SDL_SetRenderDrawColor(renderer_, HUD_BRACK.r, HUD_BRACK.g, HUD_BRACK.b, (Uint8)(alpha * 210));
+        int x2 = notifX + notifW - 1, y2 = y + notifH - 1, k = 9;
+        SDL_RenderDrawLine(renderer_, notifX, y, notifX + k, y);   SDL_RenderDrawLine(renderer_, notifX, y, notifX, y + k);
+        SDL_RenderDrawLine(renderer_, x2, y, x2 - k, y);          SDL_RenderDrawLine(renderer_, x2, y, x2, y + k);
+        SDL_RenderDrawLine(renderer_, notifX, y2, notifX + k, y2); SDL_RenderDrawLine(renderer_, notifX, y2, notifX, y2 - k);
+        SDL_RenderDrawLine(renderer_, x2, y2, x2 - k, y2);        SDL_RenderDrawLine(renderer_, x2, y2, x2, y2 - k);
+        SDL_Color tc = accent; tc.a = A;
+        int tw = ui_.textWidth(title, 12);
+        ui_.drawText(title, notifX + (notifW - tw) / 2, y + 6, 12, tc);
+        if (body && body[0]) {
+            SDL_Color bc = HUD_VALUE; bc.a = A;
+            int bw = ui_.textWidth(body, 12);
+            ui_.drawText(body, notifX + (notifW - bw) / 2, y + 24, 12, bc);
+        }
+    };
+
     // Wave announcement
     if (waveAnnounceTimer_ > 0) {
-        float t     = waveAnnounceTimer_;
-        float alpha = annoAlpha(t, waveMaxT);
-        int   y     = annoSlideY(t, waveMaxT, 4);
-
+        float alpha = annoAlpha(waveAnnounceTimer_, waveMaxT);
+        int   y     = annoSlideY(waveAnnounceTimer_, waveMaxT, 4);
         bool isBoss = (waveAnnounceNum_ == 25 || waveAnnounceNum_ == 35 || waveAnnounceNum_ == 45);
         bool isMilestone = (waveAnnounceNum_ == MILESTONE_SNIPER_WAVE ||
                             waveAnnounceNum_ == MILESTONE_GUNNER_WAVE);
-
-        // Win98 window frame with coloured title
-        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-
-        // Silver body
-        SDL_SetRenderDrawColor(renderer_, 192, 192, 192, (Uint8)(alpha * 255));
-        SDL_Rect body = {notifX, y, notifW, notifH};
-        SDL_RenderFillRect(renderer_, &body);
-        ui_.drawWin98Bevel(notifX, y, notifW, notifH, true);
-
-        // Title bar
-        SDL_Color barCol = isBoss      ? SDL_Color{140, 20,  20,  255} :
-                           isMilestone ? SDL_Color{120, 60,  0,   255} :
-                                         SDL_Color{0,   0,   128, 255};
-        SDL_SetRenderDrawColor(renderer_, barCol.r, barCol.g, barCol.b, (Uint8)(alpha * 255));
-        SDL_Rect titleBar = {notifX + 3, y + 3, notifW - 6, UI::W98::TitleH - 4};
-        SDL_RenderFillRect(renderer_, &titleBar);
-
-        // Title text
-        const char* titleTxt = isBoss ? "!! SYSTEM ALERT !!" : (isMilestone ? "! SYSTEM ALERT !" : "SYSTEM ALERT");
-        int tw = ui_.textWidth(titleTxt, 11);
-        SDL_Color titleCol = {255, 255, 255, (Uint8)(alpha * 255)};
-        ui_.drawText(titleTxt, notifX + (notifW - tw) / 2, y + 5, 11, titleCol);
-
-        // Body content
         char waveTxt[64];
-        int  bodyY = y + UI::W98::TitleH + 4;
+        SDL_Color accent; const char* title;
         if (isBoss) {
-            const char* bossName = (waveAnnounceNum_ == 25)  ? "BRUTE" :
-                                   (waveAnnounceNum_ == 50)  ? "SNIPER PRIME" : "CHAINGUNNER";
-            snprintf(waveTxt, sizeof(waveTxt), "Wave %d - BOSS: %s", waveAnnounceNum_, bossName);
-            SDL_Color c = {220, 60, 60, (Uint8)(alpha * 255)};
-            int bw = ui_.textWidth(waveTxt, 13);
-            ui_.drawText(waveTxt, notifX + (notifW - bw) / 2, bodyY, 13, c);
+            const char* bossName = (waveAnnounceNum_ == 25) ? "BRUTE" :
+                                   (waveAnnounceNum_ == 35) ? "SNIPER PRIME" : "CHAINGUNNER";
+            snprintf(waveTxt, sizeof(waveTxt), "WAVE %d  -  BOSS: %s", waveAnnounceNum_, bossName);
+            accent = {220, 60, 60, 255}; title = ">> BOSS CONTACT <<";
         } else if (isMilestone) {
             const char* eliteName = (waveAnnounceNum_ == MILESTONE_SNIPER_WAVE) ? "SNIPER" : "GUNNER";
-            snprintf(waveTxt, sizeof(waveTxt), "Wave %d - ELITE: %s", waveAnnounceNum_, eliteName);
-            SDL_Color c = {220, 140, 40, (Uint8)(alpha * 255)};
-            int bw = ui_.textWidth(waveTxt, 13);
-            ui_.drawText(waveTxt, notifX + (notifW - bw) / 2, bodyY, 13, c);
+            snprintf(waveTxt, sizeof(waveTxt), "WAVE %d  -  ELITE: %s", waveAnnounceNum_, eliteName);
+            accent = {220, 150, 40, 255}; title = "> ELITE CONTACT <";
         } else {
-            snprintf(waveTxt, sizeof(waveTxt), "Wave %d beginning", waveAnnounceNum_);
-            SDL_Color c = {0, 0, 128, (Uint8)(alpha * 255)};
-            int bw = ui_.textWidth(waveTxt, 13);
-            ui_.drawText(waveTxt, notifX + (notifW - bw) / 2, bodyY, 13, c);
+            snprintf(waveTxt, sizeof(waveTxt), "WAVE %d INBOUND", waveAnnounceNum_);
+            accent = {90, 180, 90, 255}; title = "CONTACT";
         }
+        tacBanner(y, alpha, accent, title, waveTxt);
     }
 
     // Pickup popup - slot 1
     if (pickupPopupTimer_ > 0) {
-        float t     = pickupPopupTimer_;
-        float alpha = annoAlpha(t, otherMaxT);
-        int   y     = annoSlideY(t, otherMaxT, slot1Y);
-
-        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-
-        SDL_SetRenderDrawColor(renderer_, 192, 192, 192, (Uint8)(alpha * 255));
-        SDL_Rect body = {notifX, y, notifW, notifH};
-        SDL_RenderFillRect(renderer_, &body);
-        ui_.drawWin98Bevel(notifX, y, notifW, notifH, true);
-
-        // Title bar coloured by pickup type
-        SDL_Color ac = pickupPopupColor_;
-        SDL_SetRenderDrawColor(renderer_, ac.r / 2, ac.g / 2, ac.b / 2, (Uint8)(alpha * 255));
-        SDL_Rect titleBar = {notifX + 3, y + 3, notifW - 6, UI::W98::TitleH - 4};
-        SDL_RenderFillRect(renderer_, &titleBar);
-
-        // Title = upgrade name
-        int tw = ui_.textWidth(pickupPopupName_.c_str(), 11);
-        SDL_Color titleCol = {ac.r, ac.g, ac.b, (Uint8)(alpha * 255)};
-        ui_.drawText(pickupPopupName_.c_str(), notifX + (notifW - tw) / 2, y + 5, 11, titleCol);
-
-        // Body = description
-        int bodyY = y + UI::W98::TitleH + 4;
-        SDL_Color descCol = {40, 40, 40, (Uint8)(alpha * 255)};
-        int dw = ui_.textWidth(pickupPopupDesc_.c_str(), 12);
-        ui_.drawText(pickupPopupDesc_.c_str(), notifX + (notifW - dw) / 2, bodyY, 12, descCol);
+        float alpha = annoAlpha(pickupPopupTimer_, otherMaxT);
+        int   y     = annoSlideY(pickupPopupTimer_, otherMaxT, slot1Y);
+        tacBanner(y, alpha, pickupPopupColor_, pickupPopupName_.c_str(), pickupPopupDesc_.c_str());
     }
 
-
+    // Supply crate popup
     if (cratePopupTimer_ > 0) {
-        float t     = cratePopupTimer_;
-        float alpha = annoAlpha(t, otherMaxT);
+        float alpha = annoAlpha(cratePopupTimer_, otherMaxT);
         int   crateSlotY = (pickupPopupTimer_ > 0) ? slot1Y + 54 : slot1Y;
-        int   y     = annoSlideY(t, otherMaxT, crateSlotY);
-
-        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-
-        SDL_SetRenderDrawColor(renderer_, 192, 192, 192, (Uint8)(alpha * 255));
-        SDL_Rect body = {notifX, y, notifW, notifH};
-        SDL_RenderFillRect(renderer_, &body);
-        ui_.drawWin98Bevel(notifX, y, notifW, notifH, true);
-
-        // Orange title bar
-        SDL_SetRenderDrawColor(renderer_, 128, 80, 0, (Uint8)(alpha * 255));
-        SDL_Rect titleBar = {notifX + 3, y + 3, notifW - 6, UI::W98::TitleH - 4};
-        SDL_RenderFillRect(renderer_, &titleBar);
-
-        const char* supplyTitle = "SUPPLY DROP";
-        int tw = ui_.textWidth(supplyTitle, 11);
-        SDL_Color titleCol = {255, 200, 60, (Uint8)(alpha * 255)};
-        ui_.drawText(supplyTitle, notifX + (notifW - tw) / 2, y + 5, 11, titleCol);
-
-        int bodyY = y + UI::W98::TitleH + 4;
-        const char* bodyTxt = "Supply crate detected nearby";
-        int bw = ui_.textWidth(bodyTxt, 11);
-        SDL_Color bodyCol = {40, 40, 40, (Uint8)(alpha * 255)};
-        ui_.drawText(bodyTxt, notifX + (notifW - bw) / 2, bodyY, 11, bodyCol);
+        int   y     = annoSlideY(cratePopupTimer_, otherMaxT, crateSlotY);
+        tacBanner(y, alpha, {210, 150, 40, 255}, "SUPPLY DROP", "Crate detected nearby");
     }
 
     // Boss HP bar - Win98-style panel at bottom-center
@@ -3381,8 +3407,9 @@ void Game::renderPlayModeMenu() {
     const int rowH  = 24;
     const int gap   = 6;
 
-    // Count rows for height: 3 mode buttons + separator label + 6 sliders + back
-    const int totalRows = 3 + 1 + 6 + 1;
+    // Count rows for height: 3 mode buttons + separator label + 6 sliders
+    // + Endless + Seed + back
+    const int totalRows = 3 + 1 + 6 + 2 + 1;
     const int winH  = padTY + totalRows * (btnH + gap) + 30;
     const int winX  = (SCREEN_W - winW) / 2;
     const int winY  = (SCREEN_H - winH) / 2;
@@ -3434,10 +3461,16 @@ void Game::renderPlayModeMenu() {
 
     auto fmtVal = [&](int idx) -> const char* {
         switch (idx) {
-            case 3: snprintf(valBuf,sizeof(valBuf),"%d",   config_.mapWidth);        break;
-            case 4: snprintf(valBuf,sizeof(valBuf),"%d",   config_.mapHeight);       break;
+            case 3:
+                if (mapDimTyping_ && mapDimField_ == 3) snprintf(valBuf,sizeof(valBuf),"%s", mapDimStr_.c_str());
+                else snprintf(valBuf,sizeof(valBuf),"%d", config_.mapWidth);
+                break;
+            case 4:
+                if (mapDimTyping_ && mapDimField_ == 4) snprintf(valBuf,sizeof(valBuf),"%s", mapDimStr_.c_str());
+                else snprintf(valBuf,sizeof(valBuf),"%d", config_.mapHeight);
+                break;
             case 5:
-                if (hpTyping_) snprintf(valBuf,sizeof(valBuf),"%s%c", hpStr_.c_str(), (int)(gameTime_*3)%2==0?'_':' ');
+                if (hpTyping_) snprintf(valBuf,sizeof(valBuf),"%s", hpStr_.c_str());
                 else           snprintf(valBuf,sizeof(valBuf),"%d",   config_.playerMaxHp);
                 break;
             case 6: snprintf(valBuf,sizeof(valBuf),"%.1fx",config_.spawnRateScale);  break;
@@ -3471,11 +3504,17 @@ void Game::renderPlayModeMenu() {
         }
         // Value display field
         ui_.drawWin98TextField(fldX, by, fw, rowH, fmtVal(row.idx), sel, false, 0.f);
+        // Click the value box to type a number directly (width / height)
+        if ((row.idx == 3 || row.idx == 4) && !mapDimTyping_ &&
+            ui_.mouseClicked && ui_.pointInRect(ui_.mouseX, ui_.mouseY, fldX, by, fw, rowH)) {
+            playModeSelection_ = row.idx; menuSelection_ = row.idx;
+            beginMapDimEdit(row.idx);
+        }
         // Right arrow
         if (ui_.win98Button(row.idx*10+60, ">", rgtX, by, arrowW, rowH, false)) {
             switch (row.idx) {
-                case 3: config_.mapWidth        = std::min(120,  config_.mapWidth        + 2);    break;
-                case 4: config_.mapHeight       = std::min(80,   config_.mapHeight       + 2);    break;
+                case 3: config_.mapWidth        = std::min(1000, config_.mapWidth        + 2);    break;
+                case 4: config_.mapHeight       = std::min(1000, config_.mapHeight       + 2);    break;
                 case 5: config_.playerMaxHp     = std::min(1000, config_.playerMaxHp     + 1);    break;
                 case 6: config_.spawnRateScale  = std::min(3.0f, config_.spawnRateScale  + 0.1f); break;
                 case 7: config_.enemyHpScale    = std::min(3.0f, config_.enemyHpScale    + 0.1f); break;
@@ -3486,13 +3525,40 @@ void Game::renderPlayModeMenu() {
         by += rowH + gap;
     }
 
-    // Back button (9)
-    by += 4;
-    bool backSel = (playModeSelection_ == 9);
-    if (ui_.win98Button(9, "Cancel", bx, by, 80, btnH, backSel)) {
-        playModeSelection_ = 9; menuSelection_ = 9; confirmInput_ = true;
+    // Endless toggle (9) - infinite seeded world
+    {
+        char eb[32]; snprintf(eb, sizeof(eb), "Endless: %s", config_.endless ? "On" : "Off");
+        if (ui_.win98Button(70, eb, bx, by, winW - padX*2, btnH, playModeSelection_ == 9 || config_.endless)) {
+            config_.endless = !config_.endless; playModeSelection_ = 9; menuSelection_ = 9;
+        }
+        if (ui_.hoveredItem == 70 && !usingGamepad_) { playModeSelection_ = 9; menuSelection_ = 9; }
+        by += btnH + gap;
     }
-    if (ui_.hoveredItem == 9 && !usingGamepad_) { playModeSelection_ = 9; menuSelection_ = 9; }
+
+    // Seed field (10) - click to type; 0 = random each run
+    {
+        bool sel = (playModeSelection_ == 10);
+        ui_.drawText("Seed:", bx, by + (rowH - 14) / 2, 13, UI::W98::Black);
+        int fx = ctrlX, fw = ctrlW;
+        char sb[24];
+        if (seedTyping_) snprintf(sb, sizeof(sb), "%s", seedStr_.c_str());
+        else if (config_.worldSeed) snprintf(sb, sizeof(sb), "%u", config_.worldSeed);
+        else snprintf(sb, sizeof(sb), "random");
+        ui_.drawWin98TextField(fx, by, fw, rowH, sb, sel, false, 0.f);
+        if (!seedTyping_ && ui_.mouseClicked && ui_.pointInRect(ui_.mouseX, ui_.mouseY, fx, by, fw, rowH)) {
+            playModeSelection_ = 10; menuSelection_ = 10; beginSeedEdit();
+        }
+        if (ui_.hoveredItem == 10 && !usingGamepad_) { playModeSelection_ = 10; menuSelection_ = 10; }
+        by += rowH + gap;
+    }
+
+    // Back button (11)
+    by += 4;
+    bool backSel = (playModeSelection_ == 11);
+    if (ui_.win98Button(11, "Cancel", bx, by, 80, btnH, backSel)) {
+        playModeSelection_ = 11; menuSelection_ = 11; confirmInput_ = true;
+    }
+    if (ui_.hoveredItem == 11 && !usingGamepad_) { playModeSelection_ = 11; menuSelection_ = 11; }
 
     ui_.drawWin98StatusBar(SCREEN_H - 26, "Select a play mode or adjust settings.");
 }

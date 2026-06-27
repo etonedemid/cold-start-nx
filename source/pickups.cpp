@@ -22,12 +22,21 @@ void Game::updateCrates(float dt) {
             else
                 crateSpawnTimer_ = 20.0f + (float)(rand() % 100) / 10.0f; // 20-30s
 
-            // Find a random open position (any non-solid tile)
+            // Find an open position fairly near the player so supply drops are
+            // actually found (not stranded across a big/endless map). ~8-28 tiles.
+            Vec2 anchor = player_.pos;
+            const float rMin = TILE_SIZE * 8.0f;
+            const float rMax = TILE_SIZE * 28.0f;
             for (int attempts = 0; attempts < 60; attempts++) {
-                int tx = 2 + rand() % (map_.width - 4);
-                int ty = 2 + rand() % (map_.height - 4);
+                float ang  = (float)(rand() % 360) * (float)M_PI / 180.0f;
+                float dist = rMin + (float)(rand() % 1000) / 1000.0f * (rMax - rMin);
+                Vec2 pos = {anchor.x + cosf(ang) * dist, anchor.y + sinf(ang) * dist};
+                if (!map_.endless) {
+                    pos.x = std::max(TILE_SIZE * 2.0f, std::min(map_.worldWidth()  - TILE_SIZE * 2.0f, pos.x));
+                    pos.y = std::max(TILE_SIZE * 2.0f, std::min(map_.worldHeight() - TILE_SIZE * 2.0f, pos.y));
+                }
+                int tx = TileMap::toTile(pos.x), ty = TileMap::toTile(pos.y);
                 if (map_.isSolid(tx, ty)) continue;
-                Vec2 pos = {TileMap::toWorld(tx), TileMap::toWorld(ty)};
                 // Crates are static (never pushed out), so reject zone overlaps
                 // up front - otherwise upgrade boxes spawn inside collision zones.
                 if (posInCollisionZone(pos, 24.0f)) continue;
@@ -99,6 +108,28 @@ void Game::updatePickups(float dt) {
         if (p.age >= p.lifetime) {
             p.alive = false;
             continue;
+        }
+
+        // Magnetism: once a player is close-ish, the pickup drifts toward them so
+        // collection feels snappy and you don't have to pixel-hunt floaty drops.
+        {
+            Vec2  magTarget; bool haveTarget = false; float bestD = 220.0f;
+            auto consider = [&](const Player& pl) {
+                if (pl.dead) return;
+                float d = (pl.pos - p.pos).length();
+                if (d < bestD) { bestD = d; magTarget = pl.pos; haveTarget = true; }
+            };
+            if (state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused) {
+                for (int ci = 0; ci < 4; ci++)
+                    if (coopSlots_[ci].joined) consider(coopSlots_[ci].player);
+            } else if (!spectatorMode_) {
+                consider(player_);
+            }
+            if (haveTarget) {
+                Vec2 dir = (magTarget - p.pos).normalized();
+                float pull = (1.0f - bestD / 220.0f) * 520.0f;  // stronger as it nears
+                p.pos += dir * pull * dt;
+            }
         }
 
         // Player collection - walk over it (spectators can't collect)

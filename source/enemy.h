@@ -13,6 +13,10 @@ enum class EnemyType {
     BossBrute,
     BossSniper,
     BossGunner,
+    // New variants (appended to keep network/save type indices stable)
+    Bomber,    // fast suicide rusher; detonates on death/contact
+    Spitter,   // lobs a wide, slow acid spread
+    Warden,    // armored tank; shrugs off bullets, forces melee/parry
 };
 enum class EnemyState { Wander, Chase };
 

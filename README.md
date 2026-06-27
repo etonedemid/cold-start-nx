@@ -1,7 +1,7 @@
 
 <img width="848" height="204" alt="banner" src="https://github.com/user-attachments/assets/2a0af91e-a15e-462f-aa99-d2869a311675" />
 
-# COLD START  `v3.3.1`
+# COLD START  `v3.4.0`
 
 roguelike survival with bombs, upgrades, parrying and a console where you can spawn a car and run enemies over. 
 Runs on PC, Nintendo Switch homebrew, and Android.
