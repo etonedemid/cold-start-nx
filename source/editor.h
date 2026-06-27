@@ -59,7 +59,11 @@ static constexpr uint8_t ENTITY_INFRA_MEDRELAY = 10;
 static constexpr uint8_t ENTITY_INFRA_POWER    = 11;
 static constexpr uint8_t ENTITY_INFRA_WATER    = 12;
 static constexpr uint8_t ENTITY_INFRA_ANTENNA  = 13;
-static constexpr uint8_t ENTITY_TYPE_COUNT     = 14;
+// New enemy variants (appended to keep existing map byte ids stable)
+static constexpr uint8_t ENTITY_BOMBER         = 14;
+static constexpr uint8_t ENTITY_SPITTER        = 15;
+static constexpr uint8_t ENTITY_WARDEN         = 16;
+static constexpr uint8_t ENTITY_TYPE_COUNT     = 17;
 
 // Trigger placement ghost
 struct TriggerGhost {

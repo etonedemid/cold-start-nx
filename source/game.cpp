@@ -602,6 +602,9 @@ void Game::loadAssets() {
     scoutSprite_   = a.tex("sprites/enemy/scout.png");
     sniperSprite_  = a.tex("sprites/enemy/sniper.png");
     gunnerSprite_  = a.tex("sprites/enemy/gunner.png");  // falls back to nullptr -> uses shooterSprite_
+    bomberSprite_  = a.tex("sprites/enemy/bomber.png");  // falls back -> scout/melee sprite
+    spitterSprite_ = a.tex("sprites/enemy/spitter.png"); // falls back -> shooter sprite
+    wardenSprite_  = a.tex("sprites/enemy/warden.png");  // falls back -> heavy/melee sprite
     bossBruteSprite_  = a.tex("sprites/enemy/boss_brute.png");
     bossSniperSprite_ = a.tex("sprites/enemy/boss_sniper.png");
     bossGunnerSprite_ = a.tex("sprites/enemy/boss_gunner.png");
@@ -621,6 +624,7 @@ void Game::loadAssets() {
     gravelTex_ = a.tex("tiles/ground/gravel.png");
     woodTex_   = a.tex("tiles/walls/wood.png");
     sandTex_   = a.tex("tiles/ground/sand.png");
+    tileFloorTex_ = a.tex("tiles/ground/tilefloor.png");
     wallTex_   = a.tex("tiles/walls/floor.png");
     glassTex_  = a.tex("tiles/walls/glass.png");
     deskTex_   = a.tex("tiles/walls/desk.png");
@@ -647,6 +651,7 @@ void Game::loadAssets() {
     sfxBoot_         = a.sfx("freesound_community-bootup-63385.mp3");
     sfxEnemyExplode_ = a.sfx("enemyexplode.mp3");
     vehicleCarSprite_ = a.loadRelTex("sprites/vehicles/car/test.png");
+    bomberPlaneSprite_ = a.loadRelTex("sprites/vehicles/avi/bomber.png");
     bgMusicTracks_.clear();
     bgMusicTrackNames_.clear();
     bgMusicTrackAuthors_.clear();
@@ -692,6 +697,7 @@ void Game::startGame() {
     debris_.clear();
     blood_.clear(); tileBlood_.clear();
     vehicles_.clear(); inVehicle_ = false; vehicleIdx_ = -1;
+    airStrikes_.clear(); bombers_.clear(); bombingTimer_ = 18.0f;
     boxFragments_.clear();
     crates_.clear();
     pickups_.clear();
@@ -709,7 +715,19 @@ void Game::startGame() {
     for (int _i = 0; _i < 8; _i++) customTileTextures_[_i] = nullptr;
     customMap_ = CustomMap{};
 
-    map_.generate(config_.mapWidth, config_.mapHeight);
+    // Resolve the world seed: 0 in the field means "random each run"; a non-zero
+    // value gives a reproducible world. The field itself is left untouched so
+    // "random" stays random next time.
+    uint32_t usedSeed = config_.worldSeed ? config_.worldSeed
+                        : (uint32_t)(SDL_GetTicks() ^ (rand() << 1) ^ 0x9E3779B9u);
+
+    map_ = TileMap{};
+    if (config_.endless) {
+        map_.beginEndless(usedSeed);
+    } else {
+        mapSrand(usedSeed);                 // deterministic finite map for this seed
+        map_.generate(config_.mapWidth, config_.mapHeight);
+    }
     map_.noCollide.clear();
     invalidateMinimapCache();
 
@@ -717,6 +735,18 @@ void Game::startGame() {
     player_.maxHp = config_.playerMaxHp;
     player_.hp = config_.playerMaxHp;
     player_.pos = {map_.worldWidth() / 2.0f, map_.worldHeight() / 2.0f};
+    // Endless: nudge the spawn to a guaranteed-open tile near the center.
+    if (config_.endless) {
+        int ctx = map_.width / 2, cty = map_.height / 2;
+        for (int r = 0; r < 40; r++) {
+            bool found = false;
+            for (int dy = -r; dy <= r && !found; dy++)
+                for (int dx = -r; dx <= r && !found; dx++)
+                    if (!map_.isSolid(ctx + dx, cty + dy)) { ctx += dx; cty += dy; found = true; }
+            if (found) break;
+        }
+        player_.pos = {TileMap::toWorld(ctx), TileMap::toWorld(cty)};
+    }
     player_.bombCount = 1;
     applyCharacterStatsToPlayer(player_);
 
@@ -900,6 +930,7 @@ void Game::run() {
                 blood_.clear(); tileBlood_.clear(); boxFragments_.clear();
                 crates_.clear(); pickups_.clear();
                 vehicles_.clear(); inVehicle_ = false; vehicleIdx_ = -1;
+    airStrikes_.clear(); bombers_.clear(); bombingTimer_ = 18.0f;
                 upgrades_.reset();
                 crateSpawnTimer_ = 0;
                 waveNumber_ = 0; waveEnemiesLeft_ = 0; waveActive_ = false;
@@ -1125,6 +1156,7 @@ void Game::update() {
 
     screenFlashTimer_  = std::max(0.0f, screenFlashTimer_ - dt);
     muzzleFlashTimer_  = std::max(0.0f, muzzleFlashTimer_ - dt);
+    updateJuice(dt);
 
     // Acid FX fade in/out (skipped when a story cutscene is active -- updateStoryCutscene handles it)
     if (!(playingCustomMap_ && csPlay_.active)) {
@@ -1185,6 +1217,7 @@ void Game::update() {
             (state_ == GameState::MultiplayerGame || state_ == GameState::MultiplayerPaused ||
              state_ == GameState::MultiplayerDead || state_ == GameState::MultiplayerSpectator);
 
+        int hpBeforeFx = player_.hp;  // for damage-impact feedback below
         if (isCoopState || isMPSplitscreen) {
             updateLocalCoopPlayers(dt);
         } else {
@@ -1202,6 +1235,7 @@ void Game::update() {
         updateSpawning(dt);
         updateCrates(dt);
         updatePickups(dt);
+        updateAirStrikes(dt);
         bool coopSlot0Alive = (isCoopState || isMPSplitscreen) && !player_.dead;
         resolveCollisions();
 
@@ -1210,6 +1244,24 @@ void Game::update() {
             coopSlots_[0].player   = player_;
             coopSlots_[0].upgrades = upgrades_;
             if (coopSlot0Alive && player_.dead) coopSlots_[0].deaths++;
+        }
+
+        // Damage impact: when the local player loses HP, sell the hit hard -
+        // screen shake, a red flash, a brief freeze, rumble and a damage number.
+        if (!isCoopState && !isMPSplitscreen) {
+            int dmgTaken = hpBeforeFx - player_.hp;
+            if (dmgTaken > 0) {
+                camera_.addShake(4.0f + std::min(11.0f, dmgTaken * 0.40f));
+                screenFlashTimer_ = std::max(screenFlashTimer_, 0.18f);
+                screenFlashR_ = 210; screenFlashG_ = 25; screenFlashB_ = 25;
+                hitStopTimer_ = std::max(hitStopTimer_, std::min(0.09f, 0.025f + dmgTaken * 0.0018f));
+                rumble(0.45f + std::min(0.5f, dmgTaken * 0.02f),
+                       90 + std::min(160, dmgTaken * 5), 1.25f, 0.5f);
+                if (!player_.dead) {
+                    char dmgBuf[16]; snprintf(dmgBuf, sizeof(dmgBuf), "-%d", dmgTaken);
+                    spawnFloatText({player_.pos.x, player_.pos.y - 30}, dmgBuf, {255, 70, 70, 255}, 1.25f);
+                }
+            }
         }
 
         // Camera - co-op/splitscreen cameras are updated inside updateLocalCoopPlayers
@@ -1988,10 +2040,13 @@ void Game::consoleExec(const char* cmd) {
         else if (strcmp(typeName, "scout")      == 0) etype = EnemyType::Scout;
         else if (strcmp(typeName, "sniper")     == 0) etype = EnemyType::Sniper;
         else if (strcmp(typeName, "gunner")     == 0) etype = EnemyType::Gunner;
+        else if (strcmp(typeName, "bomber")     == 0) etype = EnemyType::Bomber;
+        else if (strcmp(typeName, "spitter")    == 0) etype = EnemyType::Spitter;
+        else if (strcmp(typeName, "warden")     == 0) etype = EnemyType::Warden;
         else if (strcmp(typeName, "boss_brute") == 0) etype = EnemyType::BossBrute;
         else if (strcmp(typeName, "boss_sniper")== 0) etype = EnemyType::BossSniper;
         else if (strcmp(typeName, "boss_gunner")== 0) etype = EnemyType::BossGunner;
-        else { consoleOut("unknown type - melee/shooter/brute/scout/sniper/gunner/boss_brute/boss_sniper/boss_gunner"); known = false; }
+        else { consoleOut("unknown type - melee/shooter/brute/scout/sniper/gunner/bomber/spitter/warden/boss_brute/boss_sniper/boss_gunner"); known = false; }
         if (known) {
             count = std::max(1, std::min(count, 20));
             for (int i = 0; i < count; i++) spawnEnemy(mouseWorldPos, etype);
@@ -2115,7 +2170,7 @@ void Game::consoleExec(const char* cmd) {
         }
     } else if (strcmp(tok, "help") == 0) {
         consoleOut(" wave N | hp N | god | clear | bombs N | signal [N] | help");
-        consoleOut(" spawn melee|shooter|brute|scout|sniper|gunner|boss_* [N]");
+        consoleOut(" spawn melee|shooter|brute|scout|sniper|gunner|bomber|spitter|warden|boss_* [N]");
         consoleOut(" spawn_box | vehicle car | give <upgrade_name>");
         consoleOut(" set var <name> <value>  |  set pvar <name> <value>");
         consoleOut(" get var <name>  |  get  (lists all vars)");
