@@ -229,8 +229,11 @@ bool Mod::loadFromFolder(const std::string& path) {
         }
     }
 
-    // Scan content subfolders
-    if (content.characters && dirExists(path + "/characters")) {
+    // Scan content subfolders. Detection is by presence, not the [content] flags:
+    // many mods (workshop or hand-made) ship folders without declaring every flag,
+    // which previously left their maps/characters/etc. invisible. The content.*
+    // flags are then set from what was actually found so the menu filters match.
+    if (dirExists(path + "/characters")) {
         characterPaths = listFiles(path + "/characters", ".cschar");
         // Also check subdirectories
         DIR* d = opendir((path + "/characters").c_str());
@@ -245,18 +248,21 @@ bool Mod::loadFromFolder(const std::string& path) {
             }
             closedir(d);
         }
+        content.characters = !characterPaths.empty();
     }
 
-    if (content.maps && dirExists(path + "/maps")) {
+    if (dirExists(path + "/maps")) {
         mapPaths = listFiles(path + "/maps", ".csm");
+        content.maps = !mapPaths.empty();
     }
 
-    if (content.packs && dirExists(path + "/packs")) {
+    if (dirExists(path + "/packs")) {
         packPaths = listFiles(path + "/packs", ".cspack");
+        content.packs = !packPaths.empty();
     }
 
     // Sprite and tile overrides
-    if (content.sprites) {
+    if (dirExists(path + "/sprites") || dirExists(path + "/tiles")) {
         std::function<void(const std::string&, const std::string&)> walkSprites;
         walkSprites = [&](const std::string& dir, const std::string& relBase) {
             DIR* d = opendir(dir.c_str());
@@ -277,10 +283,11 @@ bool Mod::loadFromFolder(const std::string& path) {
         };
         if (dirExists(path + "/sprites")) walkSprites(path + "/sprites", "sprites");
         if (dirExists(path + "/tiles"))   walkSprites(path + "/tiles", "tiles");
+        content.sprites = !spriteOverrides.empty();
     }
 
     // Sound overrides
-    if (content.sounds && dirExists(path + "/sounds")) {
+    if (dirExists(path + "/sounds")) {
         DIR* d = opendir((path + "/sounds").c_str());
         if (d) {
             struct dirent* ent;
@@ -290,10 +297,11 @@ bool Mod::loadFromFolder(const std::string& path) {
             }
             closedir(d);
         }
+        content.sounds = !soundOverrides.empty();
     }
 
     // Custom items
-    if (content.items && dirExists(path + "/items")) {
+    if (dirExists(path + "/items")) {
         auto itemFiles = listFiles(path + "/items", ".cfg");
         for (auto& itemFile : itemFiles) {
             auto itemIni = parseINI(itemFile);
@@ -309,10 +317,11 @@ bool Mod::loadFromFolder(const std::string& path) {
                 if (!item.id.empty()) items.push_back(item);
             }
         }
+        content.items = !items.empty();
     }
 
     // Custom gamemodes
-    if (content.gamemodes && dirExists(path + "/gamemodes")) {
+    if (dirExists(path + "/gamemodes")) {
         auto gmFiles = listFiles(path + "/gamemodes", ".cfg");
         for (auto& gmFile : gmFiles) {
             auto gmIni = parseINI(gmFile);
@@ -342,6 +351,7 @@ bool Mod::loadFromFolder(const std::string& path) {
                 if (!gm.id.empty()) gamemodes.push_back(gm);
             }
         }
+        content.gamemodes = !gamemodes.empty();
     }
 
     printf("Mod loaded: %s (%s) by %s - chars:%zu maps:%zu packs:%zu items:%zu gamemodes:%zu\n",
