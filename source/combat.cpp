@@ -2126,6 +2126,7 @@ void Game::spawnExplosion(Vec2 pos, uint8_t ownerId, uint8_t ownerSlot) {
     ex.ownerSubSlot = ownerSlot;
     explosions_.push_back(ex);
     camera_.addShake(6.0f);
+    hitStopTimer_ = std::max(hitStopTimer_, 0.055f);  // freeze-frame for impact weight
     playExplosionFeedback(pos, ex.radius * 8.4f, 0.18f, 0.62f, 130, 320, 1.45f, 0.74f,
                           config_.sfxVolume, config_.sfxVolume / 12);
 
@@ -3557,6 +3558,8 @@ void Game::killEnemy(Enemy& e, bool trackKill) {
             player_.bombCount = std::min(MAX_BOMBS, player_.bombCount + 1);
         }
     }
+    // A boss going down is a moment - hold a longer freeze-frame.
+    if (isBossType(e.type)) hitStopTimer_ = std::max(hitStopTimer_, 0.13f);
     // Drop 3 upgrade pickups when a boss is killed (not in sandbox)
     if (isBossType(e.type) && !sandboxMode_) {
         for (int i = 0; i < 3; i++) {

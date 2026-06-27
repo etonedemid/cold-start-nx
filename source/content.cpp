@@ -158,6 +158,8 @@ bool Game::installSyncedCharacterVisual(uint8_t playerId, const std::string& cha
                ((uint32_t)data[off + 1] << 8) |
                ((uint32_t)data[off + 2] << 16) |
                ((uint32_t)data[off + 3] << 24);
+
+               
     };
 
     size_t offset = 4;

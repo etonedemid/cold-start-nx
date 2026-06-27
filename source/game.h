@@ -586,6 +586,7 @@ private:
     Vec2  muzzleFlashPos_     = {0,0}; // world position of muzzle flash
     float screenFlashTimer_  = 0;  // brief white flash (e.g. explosion)
     float screenFlashR_ = 255, screenFlashG_ = 255, screenFlashB_ = 255;
+    float hitStopTimer_ = 0;  // brief freeze-frame on big impacts (local play only); see run()
 
     // Sprites
     std::vector<SDL_Texture*> playerSprites_;
