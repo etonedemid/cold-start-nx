@@ -98,6 +98,10 @@ struct TileMap {
     static int   toTile(float w)  { return (int)(w / TILE_SIZE); }
     static float toWorld(int t)   { return t * TILE_SIZE + TILE_SIZE / 2.0f; }
 
+    // Loot spots: centres of generated rooms/buildings, seeded with supply crates
+    // so exploring structures is rewarded (filled by generate()).
+    std::vector<Vec2> lootSpots;
+
     // Spawn points (open areas for enemy spawning)
     std::vector<Vec2> spawnPoints;
     void findSpawnPoints();
