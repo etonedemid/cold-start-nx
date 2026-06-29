@@ -754,6 +754,13 @@ void Game::startGame() {
     camera_.worldW = map_.worldWidth();
     camera_.worldH = map_.worldHeight();
 
+    // Loot rooms: seed a supply crate in each generated room/building so exploring
+    // structures is rewarded (lootSpots is empty in endless, so this no-ops there).
+    if (!sandboxMode_)
+        for (auto& spot : map_.lootSpots)
+            if (!map_.worldCollides(spot.x, spot.y, 16.0f))
+                spawnCrate(spot);
+
     playActionMusic();
 }
 

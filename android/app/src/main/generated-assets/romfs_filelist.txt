@@ -91,6 +91,7 @@ sprites/effects/blood.png
 sprites/effects/bloodtrail.png
 sprites/effects/scorch.png
 sprites/effects/shield.png
+sprites/enemy/bomber.png
 sprites/enemy/boss_brute.png
 sprites/enemy/boss_gunner.png
 sprites/enemy/boss_sniper.png
@@ -202,6 +203,7 @@ sprites/ui/tb_join.png
 sprites/ui/tb_save.png
 sprites/ui/tb_start.png
 sprites/ui/wasd.png
+sprites/vehicles/avi/bomber.png
 sprites/vehicles/car/test.png
 tiles/ceiling/glasstile.png
 tiles/ground/blue.png
@@ -215,6 +217,7 @@ tiles/ground/green.png
 tiles/ground/red.png
 tiles/ground/sand.png
 tiles/ground/stonetile.png
+tiles/ground/tilefloor.png
 tiles/ground/white.png
 tiles/ground/woodfloor.png
 tiles/ground/yellow.png
