@@ -24,12 +24,12 @@ https://etonedemid.github.io/coldstart-workshop/
 
 ## Screenshots
 
-![screenshot 1](Screenshots/image.png)
-![screenshot 2](Screenshots/image%20copy.png)
-![screenshot 3](Screenshots/image%20copy%202.png)
-![screenshot 4](Screenshots/image%20copy%203.png)
-![screenshot 5](Screenshots/20260601_191828.jpg)
-![screenshot 6](Screenshots/20260601_191947.jpg)
+![screenshot 1](Screenshots/screenshot1.png)
+![screenshot 2](Screenshots/screenshot2.png)
+![screenshot 3](Screenshots/screenshot3.png)
+![screenshot 4](Screenshots/screenshot4.png)
+![screenshot 5](Screenshots/screenshot5.jpg)
+![screenshot 6](Screenshots/screenshot6.jpg)
 
 ## Highlights
 
