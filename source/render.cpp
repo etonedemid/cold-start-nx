@@ -2390,8 +2390,14 @@ void Game::renderMapLoading() {
     mapLoadTimer_ += dt_;
     renderMapLoadCore();
 
-    // Hold the black screen briefly, then power on the CRT into gameplay.
-    if (mapLoadTimer_ >= 1.9f) {
+    // Transition once the background world generation has finished AND a short
+    // minimum has elapsed (so the screen is actually seen on fast/small maps).
+    // On large maps the screen simply stays up until generation completes - which
+    // is the whole point: the sawblade keeps spinning instead of a frozen window.
+    bool genDone = mapGenDone_.load(std::memory_order_acquire);
+    if (genDone && mapLoadTimer_ >= 0.8f) {
+        joinMapGenThread();
+        if (mapSetupPending_) finishMapSetup();
         state_ = pendingPlayState_;
         beginCrtWarmup();
     }

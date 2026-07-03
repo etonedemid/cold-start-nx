@@ -403,6 +403,7 @@ void Game::playActionMusic() {
 
 // SoftKeyboard - centralized on-screen keyboard for all text input
 void Game::shutdown() {
+    joinMapGenThread();   // never tear down while a world-gen worker is still running
     clearWorkshopIcons();
     clearDetailScreenshots();
     shutdownMultiplayer();
@@ -735,14 +736,68 @@ void Game::startGame() {
     uint32_t usedSeed = config_.worldSeed ? config_.worldSeed
                         : (uint32_t)(SDL_GetTicks() ^ (rand() << 1) ^ 0x9E3779B9u);
 
-    map_ = TileMap{};
-    if (config_.endless) {
-        map_.beginEndless(usedSeed);
+    // Loading screen setup FIRST (before any heavy generation) so the black screen
+    // with the spinning sawblade + seed + tip is on-screen while the world is built.
+    {
+        char title[80];
+        if (config_.endless) snprintf(title, sizeof(title), "ENDLESS   SEED %u", usedSeed);
+        else                 snprintf(title, sizeof(title), "SEED %u", usedSeed);
+        currentMapSeed_    = usedSeed;   // remembered so the pause menu can show it
+        currentMapHasSeed_ = true;
+        mapLoadTitle_ = title;
+        mapLoadTip_   = mapLoadingTip();
+        mapLoadTimer_ = 0.0f;
+        crtWarmup_    = 0.0f;
+        // Keep the loading screen silent; gameplay music starts on the CRT transition.
+        actionMusicActive_ = false;
+        Mix_HaltMusic();
+    }
+
+    // World generation is the expensive step (seconds on large maps). Running it
+    // synchronously here would freeze the game *before* the loading screen appears -
+    // defeating the whole purpose of the screen. So:
+    //   - Single-player: generate on a background thread while MapLoading animates,
+    //     then run finishMapSetup() on the main thread once it completes.
+    //   - Multiplayer: generate synchronously, because callers spawn the player and
+    //     finalise state immediately after startGame() returns (and MP already has
+    //     the per-player ready barrier as its loading sync point).
+    const bool endless = config_.endless;
+    if (NetworkManager::instance().isOnline()) {
+        generateMapInto(usedSeed, endless);
+        finishMapSetup();
+        mpLoadActive_    = true;
+        mpLoadReadySent_ = false;
+        // state_ is left for the caller to set (MultiplayerGame).
     } else {
-        mapSrand(usedSeed);                 // deterministic finite map for this seed
+        joinMapGenThread();          // ensure no prior generation is still running
+        mapGenDone_      = false;
+        mapSetupPending_ = true;
+        pendingPlayState_ = GameState::Playing;
+        state_ = GameState::MapLoading;
+        mapGenThread_ = std::thread([this, usedSeed, endless]() {
+            generateMapInto(usedSeed, endless);
+            mapGenDone_.store(true, std::memory_order_release);
+        });
+    }
+}
+
+// Heavy world generation. Pure data (no SDL/GL), so it is safe to run on a worker
+// thread as long as the main thread doesn't touch map_ meanwhile (the MapLoading
+// screen only draws the sawblade/text, so it doesn't).
+void Game::generateMapInto(uint32_t seed, bool endless) {
+    map_ = TileMap{};
+    if (endless) {
+        map_.beginEndless(seed);
+    } else {
+        mapSrand(seed);                     // deterministic finite map for this seed
         map_.generate(config_.mapWidth, config_.mapHeight);
     }
     map_.noCollide.clear();
+}
+
+// Post-generation setup that reads the finished map_ and touches engine state -
+// must run on the main thread (spawnCrate, minimap cache, etc.).
+void Game::finishMapSetup() {
     invalidateMinimapCache();
 
     player_ = Player{};
@@ -775,37 +830,11 @@ void Game::startGame() {
             if (!map_.worldCollides(spot.x, spot.y, 16.0f))
                 spawnCrate(spot);
 
-    // NOTE: gameplay music is intentionally NOT started here - it now begins on the
-    // loading->gameplay CRT transition (see beginCrtWarmup) so the loading screen
-    // itself stays quiet.
+    mapSetupPending_ = false;
+}
 
-    // Loading screen setup. Single-player switches to a dedicated MapLoading state
-    // that holds a black screen (spinning sawblade + seed + tip) and then powers on
-    // the CRT into gameplay. Multiplayer keeps whatever game state the caller sets
-    // right after this returns, but raises mpLoadActive_ so every peer shows a synced
-    // "waiting for players" screen until all report ready.
-    {
-        char title[80];
-        if (config_.endless) snprintf(title, sizeof(title), "ENDLESS   SEED %u", usedSeed);
-        else                 snprintf(title, sizeof(title), "SEED %u", usedSeed);
-        currentMapSeed_    = usedSeed;   // remembered so the pause menu can show it
-        currentMapHasSeed_ = true;
-        mapLoadTitle_ = title;
-        mapLoadTip_   = mapLoadingTip();
-        mapLoadTimer_ = 0.0f;
-        crtWarmup_    = 0.0f;
-        // Keep the loading screen silent; gameplay music starts on the CRT transition.
-        actionMusicActive_ = false;
-        Mix_HaltMusic();
-        if (NetworkManager::instance().isOnline()) {
-            mpLoadActive_    = true;
-            mpLoadReadySent_ = false;
-            // state_ is left for the caller to set (MultiplayerGame).
-        } else {
-            pendingPlayState_ = GameState::Playing;
-            state_ = GameState::MapLoading;
-        }
-    }
+void Game::joinMapGenThread() {
+    if (mapGenThread_.joinable()) mapGenThread_.join();
 }
 
 // Main Loop

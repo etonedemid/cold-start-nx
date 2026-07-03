@@ -340,6 +340,11 @@ private:
     // status until everyone reports in (or a timeout elapses).
     bool         mpLoadActive_     = false;
     bool         mpLoadReadySent_  = false;
+    // Async world generation: single-player builds the map on a worker thread while
+    // the MapLoading screen animates, then finishMapSetup() runs on the main thread.
+    std::thread       mapGenThread_;
+    std::atomic<bool> mapGenDone_{false};
+    bool              mapSetupPending_ = false;
 
     // Music player window (main menu)
     int  musicWinX_        = 0;
@@ -794,6 +799,9 @@ private:
     // Methods
     void loadAssets();
     void startGame();
+    void generateMapInto(uint32_t seed, bool endless);  // heavy world gen (bg thread for single-player)
+    void finishMapSetup();                              // post-gen player/camera/loot setup (main thread)
+    void joinMapGenThread();                            // block until any running generation finishes
     void handleInput();
     void update();
     void render();
