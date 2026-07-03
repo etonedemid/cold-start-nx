@@ -148,7 +148,7 @@ void Game::updatePlayer(float dt) {
         p.moving = moveInput_.lengthSq() > 0.01f;
         if (p.moving) {
             const float lastStandSpeedMult = (upgrades_.hasLastStand && p.hp <= 10) ? (1.0f + 0.3f * upgrades_.hasLastStand) : 1.0f;
-            targetVel = moveInput_.normalized() * p.speed * moveInput_.length() * lastStandSpeedMult;
+            targetVel = moveInput_.normalized() * p.speed * moveInput_.length() * lastStandSpeedMult * config_.playerSpeedScale;
         }
 
         p.vel = Vec2::lerp(p.vel, targetVel, dt * PLAYER_SMOOTHING);
@@ -2629,6 +2629,8 @@ void Game::updateSpawning(float dt) {
                 int n = waveNumber_ - lastBossWaveNum_;
                 waveSize = (int)(waveSize * powf(1.3f, (float)n));
             }
+            // Curated config: scale enemies-per-wave (applied after cap so it can exceed it)
+            waveSize = std::max(1, (int)lroundf(waveSize * config_.waveSizeScale));
             waveEnemiesLeft_ = waveSize;
             waveActive_ = true;
             waveSpawnTimer_ = 0;
@@ -3676,7 +3678,7 @@ void Game::killEnemy(Enemy& e, bool trackKill) {
         // Kill shaves 1s off parry cooldown
         if (!player_.canParry)
             player_.parryCdTimer = std::max(0.0f, player_.parryCdTimer - 1.0f);
-        if (player_.killCounter >= upgrades_.killsPerBomb) {
+        if (player_.killCounter >= killsPerBombFor(upgrades_)) {
             player_.killCounter = 0;
             player_.bombCount = std::min(MAX_BOMBS, player_.bombCount + 1);
         }
@@ -4067,6 +4069,7 @@ void Game::updateVehicles(float dt) {
 // ---------------------------------------------------------------------------
 
 void Game::spawnFloatText(Vec2 pos, const char* text, SDL_Color color, float scale) {
+    if (!config_.showFloatingText) return;  // comfort: hide floating combat text
     FloatText ft;
     ft.pos   = pos;
     ft.vel   = {(float)((rand() % 40) - 20), -70.0f};
@@ -4201,9 +4204,13 @@ void Game::updateAirStrikes(float dt) {
         return player_.pos;
     };
 
+    // Spawning new barrages can be disabled or have its cadence tuned in config.
+    // In-flight strikes below still advance/detonate so a mid-run toggle-off
+    // resolves cleanly instead of freezing queued shells.
+    const float bombRate = std::max(0.25f, config_.bombingRateScale);
     bombingTimer_ -= dt;
-    if (bombingTimer_ <= 0.0f && !player_.dead) {
-        bombingTimer_ = 12.0f + (float)(rand() % 80) / 10.0f;   // next event in 12-20s
+    if (config_.bombingEnabled && bombingTimer_ <= 0.0f && !player_.dead) {
+        bombingTimer_ = (12.0f + (float)(rand() % 80) / 10.0f) / bombRate;  // base 12-20s, scaled by rate
         if (rand() % 100 < 30) {
             // AVI bombing run (30%): a plane flies across dropping a line of bombs.
             const float speed   = 760.0f;

@@ -364,6 +364,9 @@ void MapEditor::redo() {
 // Palette loading
 
 void MapEditor::loadPalette() {
+    // Free any previously-loaded tile textures before rebuilding, so re-scanning
+    // the palette never orphans the old textures (matches shutdown()).
+    for (auto& pt : palette_) if (pt.texture) SDL_DestroyTexture(pt.texture);
     palette_.clear();
 
     // Scan structured tile directories for PNG files

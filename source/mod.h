@@ -103,6 +103,11 @@ struct Mod {
     std::string folder;         // absolute path to mod folder
     int         gameVersion = 1;
 
+    // Extended presentation metadata (all optional; parsed from [mod])
+    std::string website;                 // homepage / source URL
+    std::vector<std::string> tags;       // freeform tags for filtering/display
+    std::string bannerPath;              // absolute path to banner image if present (banner.png/.jpg)
+
     ModContent  content;
     ModOverrides overrides;
     std::vector<std::string> dependencies;

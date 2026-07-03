@@ -1,6 +1,6 @@
 # Cold Start NX - Modding Reference
 
-Version: 3.4.0 (engine v2.5.1)
+Version: 3.5.0 (engine v2.5.1)
 
 ---
 
@@ -48,6 +48,76 @@ romfs/
     ceiling/          -- ceiling / overlay tile textures (64x64 px)
     props/            -- static prop textures
 ```
+
+---
+
+## Mod Bundle (mod.cfg)
+
+A **mod** is a folder placed in the `mods/` directory next to the game. It groups
+characters, maps, packs, sprite/sound overrides, gamemodes, and items under one
+manifest, and can be shared as a single folder or via the Workshop. The manifest
+is `mod.cfg`, a plain INI file.
+
+### Folder layout
+
+```
+mods/
+  mymod/
+    mod.cfg            -- manifest (this file)
+    banner.png         -- optional banner shown in the Mods menu (also banner.jpg)
+    characters/        -- .cfg + PNG skins
+    maps/              -- .csm maps
+    packs/             -- .cspack campaigns
+    sprites/           -- override or new sprites
+    sounds/            -- override or new sounds
+    gamemodes/         -- custom gamemode .cfg files
+    items/             -- custom item/upgrade .cfg files
+```
+
+### mod.cfg example
+
+```ini
+[mod]
+id=mymod                       ; unique identifier (required)
+name=My Cool Mod
+author=SomePlayer
+version=1.0
+description=Adds cool stuff.
+short_description=Cool stuff.
+type=map                       ; map | character | pack | item | ...
+game_version=1                 ; minimum game version
+; --- optional presentation metadata ---
+website=https://example.com/mymod   ; homepage / source URL (also: url=)
+tags=action, story, hard            ; comma-separated; shown in the Mods menu
+
+[content]
+characters=true                ; scan characters/ subfolder
+maps=true
+packs=true
+sprites=true                   ; override sprites
+sounds=true                    ; override sounds
+gamemodes=true
+items=true
+
+[overrides]
+; override base game values
+player_speed=600
+enemy_hp=5
+
+[dependencies]
+dep1=othermod                  ; required mod ids
+```
+
+**Presentation metadata** (all optional):
+
+| Key             | Meaning                                                             |
+|-----------------|--------------------------------------------------------------------|
+| `banner.png`    | A `banner.png` (or `banner.jpg`) in the mod root is shown as a thumbnail when the mod is selected in the Mods menu. |
+| `website`/`url` | Homepage or source URL, shown under the selected mod.              |
+| `tags`          | Comma-separated freeform tags, shown under the selected mod.       |
+
+`[content]` flags are optional — content subfolders are auto-detected by presence,
+and the flags are then set from what was actually found.
 
 ---
 

@@ -17,6 +17,11 @@ struct Room {
     }
 };
 
+// Chance (out of 100) that an eligible room becomes a loot spot. Applied
+// independently of the room/floor-type rolls above it, so it scales loot
+// frequency down without touching visual variety.
+static constexpr int LOOT_ROOM_PERCENT = 20;
+
 void TileMap::generate(int mapWidth, int mapHeight) {
     width = mapWidth;
     height = mapHeight;
@@ -107,8 +112,8 @@ void TileMap::generate(int mapWidth, int mapHeight) {
                 ceiling[ry * width + rx] = CEIL_GLASS;
             }
         }
-        // Furnished (tiled) rooms hold a supply crate as an exploration reward.
-        if (roomTileFloor)
+        // Furnished (tiled) rooms can hold a supply crate as an exploration reward.
+        if (roomTileFloor && (rand() % 100) < LOOT_ROOM_PERCENT)
             lootSpots.push_back({toWorld(r.x + r.w / 2), toWorld(r.y + r.h / 2)});
 
         // Walls around the room perimeter
@@ -203,7 +208,8 @@ void TileMap::generate(int mapWidth, int mapHeight) {
 
             bldRooms.push_back(seed);
             rooms.push_back(seed);
-            lootSpots.push_back({toWorld(seed.x + seed.w / 2), toWorld(seed.y + seed.h / 2)});
+            if ((rand() % 100) < LOOT_ROOM_PERCENT)
+                lootSpots.push_back({toWorld(seed.x + seed.w / 2), toWorld(seed.y + seed.h / 2)});
             // Tiled floor for the seed room too (all buildings get tile floors)
             for (int ry = seed.y; ry < seed.y + seed.h; ry++)
                 for (int rx = seed.x; rx < seed.x + seed.w; rx++)
@@ -409,7 +415,8 @@ void TileMap::generate(int mapWidth, int mapHeight) {
             if (!seeded) continue;
             carve(cur);
             rooms.push_back(cur);
-            lootSpots.push_back({toWorld(cur.x + cur.w / 2), toWorld(cur.y + cur.h / 2)});
+            if ((rand() % 100) < LOOT_ROOM_PERCENT)
+                lootSpots.push_back({toWorld(cur.x + cur.w / 2), toWorld(cur.y + cur.h / 2)});
             int curIdx = (int)rooms.size() - 1;
             int chainStart = curIdx;
 

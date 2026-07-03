@@ -1978,6 +1978,39 @@ void Game::renderModMenu() {
 
     SDL_RenderSetClipRect(renderer_, nullptr);
 
+    // Selected-mod detail strip: banner thumbnail + custom tags + website URL.
+    if (modMenuTab_ == 0 && !mm.mods().empty() && modMenuSelection_ < (int)mm.mods().size()) {
+        const auto& selMod = mm.mods()[modMenuSelection_];
+        const int dy = cy + contentH + 4;
+        // Banner texture is cached; reload only when the selected mod changes.
+        if (selMod.bannerPath != modBannerFor_) {
+            if (modBannerTex_) { SDL_DestroyTexture(modBannerTex_); modBannerTex_ = nullptr; }
+            modBannerFor_ = selMod.bannerPath;
+            if (!selMod.bannerPath.empty()) {
+                if (SDL_Surface* bs = IMG_Load(selMod.bannerPath.c_str())) {
+                    modBannerTex_ = SDL_CreateTextureFromSurface(renderer_, bs);
+                    SDL_FreeSurface(bs);
+                }
+            }
+        }
+        int textX = cx + 4;
+        if (modBannerTex_) {
+            SDL_Rect dst = {cx, dy, 100, 40};
+            SDL_RenderCopy(renderer_, modBannerTex_, nullptr, &dst);
+            textX = cx + 110;
+        }
+        if (!selMod.tags.empty()) {
+            std::string tagLine = "Tags: ";
+            for (size_t i = 0; i < selMod.tags.size(); i++) {
+                tagLine += selMod.tags[i];
+                if (i + 1 < selMod.tags.size()) tagLine += ", ";
+            }
+            ui_.drawText(tagLine.c_str(), textX, dy + 2, 11, UI::W98::Shadow);
+        }
+        if (!selMod.website.empty())
+            ui_.drawText(selMod.website.c_str(), textX, dy + 18, 11, UI::W98::Navy);
+    }
+
     // Bottom buttons
     const int btnY = winY + winH - 42;
     auto& modsList = mm.mods();

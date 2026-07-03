@@ -13,6 +13,20 @@ void Game::render() {
         state_ == GameState::MultiplayerGame || state_ == GameState::MultiplayerPaused || state_ == GameState::MultiplayerDead || state_ == GameState::MultiplayerSpectator ||
         state_ == GameState::LocalCoopGame || state_ == GameState::LocalCoopPaused || state_ == GameState::LocalCoopDead;
 
+    // While the multiplayer loading screen is up we hold the (already-set) game
+    // state but render a clean black loading screen instead of the gameplay view,
+    // so the CRT post-processing doesn't run until the tube "powers on".
+    bool mpLoading = mpLoadActive_ &&
+        (state_ == GameState::MultiplayerGame || state_ == GameState::MultiplayerPaused ||
+         state_ == GameState::MultiplayerDead || state_ == GameState::MultiplayerSpectator);
+    if (mpLoading) gameplayView = false;
+
+    // Menu juice: arm a brief fade-in whenever we enter a new non-gameplay screen.
+    if (state_ != menuFadeState_) {
+        if (!gameplayView) menuFadeTimer_ = 0.30f;
+        menuFadeState_ = state_;
+    }
+
 #ifdef __ANDROID__
     bool usePostFX = false;  // PostFX sceneTarget_ compositing breaks rendering on Android
 #else
@@ -52,6 +66,9 @@ void Game::render() {
         break;
     case GameState::ConfigMenu:
         renderConfigMenu();
+        break;
+    case GameState::MapLoading:
+        renderMapLoading();
         break;
     case GameState::Playing:
     case GameState::Paused:
@@ -587,6 +604,7 @@ void Game::render() {
     case GameState::MultiplayerPaused:
     case GameState::MultiplayerDead:
     case GameState::MultiplayerSpectator:
+        if (mpLoading) { renderMultiplayerLoading(); break; }
         if (coopPlayerCount_ > 1) {
             // Splitscreen multiplayer rendering
             renderMultiplayerSplitscreen();
@@ -746,7 +764,22 @@ void Game::render() {
     if (modSaveDialog_.isOpen())
         renderModSaveDialog();
 
+    // Menu open-fade overlay (drawn over the menu, under the dev console).
+    if (menuFadeTimer_ > 0.0f) {
+        float a = std::min(1.0f, menuFadeTimer_ / 0.30f) * 0.8f;
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, (Uint8)(a * 255));
+        SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
+        SDL_RenderFillRect(renderer_, &full);
+        menuFadeTimer_ = std::max(0.0f, menuFadeTimer_ - dt_);
+    }
+
+    // Menu feedback: click on button-fire, soft tick when the hovered item changes.
     if (ui_.buttonFired && sfxClick_) playSFX(sfxClick_, config_.sfxVolume);
+    if (ui_.hoveredItem != menuPrevHover_) {
+        if (ui_.hoveredItem != -1 && sfxPress_) playSFX(sfxPress_, config_.sfxVolume / 30);
+        menuPrevHover_ = ui_.hoveredItem;
+    }
 
     ui_.endFrame();
     if (usePostFX) {
@@ -820,6 +853,18 @@ void Game::renderPostFXComposite(bool gameplayView) {
 
     if (!sceneTarget_) return;
 
+    // CRT power-on: after a loading screen we "warm up" the tube, expanding the
+    // freshly-rendered scene from a bright horizontal seam into the full frame
+    // before the normal CRT overlays take over.
+    if (gameplayView && crtWarmup_ > 0.0f) {
+        float t = 1.0f - crtWarmup_ / kCrtWarmupSec;
+        if (t < 0.0f) t = 0.0f;
+        if (t > 1.0f) t = 1.0f;
+        renderCrtPowerOn(t);
+        crtWarmup_ = std::max(0.0f, crtWarmup_ - dt_);
+        return;
+    }
+
     // Use base viewport dimensions for rendering
     SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
 
@@ -831,6 +876,8 @@ void Game::renderPostFXComposite(bool gameplayView) {
         if (player_.dead) pulse += 0.35f;
     }
     pulse = std::min(1.0f, pulse);
+    // Comfort: soften the bloom/glow pulse spikes for photosensitivity.
+    if (config_.reduceFlashing) pulse *= 0.35f;
 
     SDL_SetTextureColorMod(sceneTarget_, 255, 255, 255);
     SDL_SetTextureAlphaMod(sceneTarget_, 255);
@@ -1931,8 +1978,13 @@ void Game::renderUI() {
         if (cap) { int tw = ui_.textWidth(cap, 10); ui_.drawText(cap, x + (w - tw) / 2, y + (h - 10) / 2, 10, HUD_VALUE); }
     };
 
-    // STATUS readout (top-left)
+    // HUD scale (config): scales each cluster about its anchor corner. The world
+    // is already drawn, and we reset to 1.0 before the minimap/full-screen overlays.
+    const float hudScale = config_.uiScale;
+
+    // STATUS readout (top-left) - anchored at (0,0), so a plain scale works.
     {
+        SDL_RenderSetScale(renderer_, hudScale, hudScale);
         const int panX = 8, panY = 8, panW = 188, panH = 92;
         const int cx = panX + 9, iW = panW - 18;
         tacPanel(panX, panY, panW, panH);
@@ -1962,7 +2014,7 @@ void Game::renderUI() {
         char ordBuf[40];
         if (player_.killCounter > 0)
             snprintf(ordBuf, sizeof(ordBuf), "BMB %d   KILLS %d/%d",
-                     orbiting + player_.bombCount, player_.killCounter, upgrades_.killsPerBomb);
+                     orbiting + player_.bombCount, player_.killCounter, killsPerBombFor(upgrades_));
         else
             snprintf(ordBuf, sizeof(ordBuf), "BMB %d", orbiting + player_.bombCount);
         ui_.drawText(ordBuf, cx, cy, 12, HUD_VALUE);
@@ -1974,12 +2026,16 @@ void Game::renderUI() {
         tacBar(cx, cy, iW, 13, cdFill,
                ready ? SDL_Color{60, 170, 220, 255} : SDL_Color{70, 80, 110, 255},
                ready ? "PARRY READY" : "PARRY");
+        SDL_RenderSetScale(renderer_, 1.0f, 1.0f);
     }
 
-    // clock (top-right)
+    // clock (top-right) - offset the origin so the cluster scales about the
+    // top-right corner (screen = s*logical; add SCREEN_W*(1-s)/s to keep it pinned).
     {
+        SDL_RenderSetScale(renderer_, hudScale, hudScale);
+        const int offX = (int)lroundf(SCREEN_W * (1.0f - hudScale) / hudScale);
         const int panW = 150, panH = 58;
-        const int panX = SCREEN_W - panW - 8, panY = 8;
+        const int panX = SCREEN_W - panW - 8 + offX, panY = 8;
         const int cx = panX + 10;
         tacPanel(panX, panY, panW, panH);
         ui_.drawText("TIME", cx, panY + 7, 10, HUD_LABEL);
@@ -1989,9 +2045,11 @@ void Game::renderUI() {
         int fps = (dt_ > 0.0001f) ? (int)(1.0f / dt_) : 0;
         char fpsBuf[16]; snprintf(fpsBuf, sizeof(fpsBuf), "FPS %d", fps);
         ui_.drawText(fpsBuf, panX + panW - ui_.textWidth(fpsBuf, 10) - 8, panY + 9, 10, HUD_LINE);
+        SDL_RenderSetScale(renderer_, 1.0f, 1.0f);
     }
 
-    // Minimap (bottom-right, unchanged)
+    // Minimap (bottom-right; native size - already adaptive/legible and its
+    // internal render-target cache is incompatible with an active render scale).
     renderMinimap();
 
     // Hit vignette
@@ -2006,6 +2064,8 @@ void Game::renderUI() {
     // Screen flash (explosions etc.)
     if (screenFlashTimer_ > 0) {
         float a = (screenFlashTimer_ / 0.12f) * 0.35f;
+        // Comfort: dampen fullscreen flashes for photosensitivity (keep a faint cue).
+        if (config_.reduceFlashing) a *= 0.25f;
         SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
         SDL_SetRenderDrawColor(renderer_, (Uint8)screenFlashR_, (Uint8)screenFlashG_,
                                (Uint8)screenFlashB_, (Uint8)(a * 255));
@@ -2285,6 +2345,146 @@ void Game::renderBiosIntro() {
         loginBlinkT_ = 0;
         state_ = GameState::LoginScreen;
     }
+}
+
+// Draws the spinning sawblade + seed title + tip shared by the single-player and
+// multiplayer loading screens. Returns the y just below the tip so multiplayer
+// can list per-player status underneath.
+int Game::renderMapLoadCore() {
+    // Solid black backdrop.
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
+    SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
+    SDL_RenderFillRect(renderer_, &full);
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+
+    // Spinning sawblade in the bottom-right corner.
+    if (!sawbladeTex_) sawbladeTex_ = Assets::instance().tex("sprites/sawblade.png");
+    if (sawbladeTex_) {
+        int side = SCREEN_H / 5; if (side < 64) side = 64;
+        const int margin = 32;
+        SDL_Rect dst = { SCREEN_W - side - margin, SCREEN_H - side - margin, side, side };
+        double angle = (double)mapLoadTimer_ * 320.0;   // ~0.9 rev/sec
+        SDL_SetTextureColorMod(sawbladeTex_, 255, 255, 255);
+        SDL_SetTextureAlphaMod(sawbladeTex_, 255);
+        SDL_RenderCopyEx(renderer_, sawbladeTex_, nullptr, &dst, angle, nullptr, SDL_FLIP_NONE);
+    }
+
+    // Map name / seed - big white; tip - smaller grey. Anchored to the left border.
+    // Offset each string by its first glyph's left-side bearing so the *ink* of the
+    // first letter lands on the same x for both, despite the different font sizes.
+    const int lx = 40;
+    auto firstBearing = [](const std::string& s, int size) -> int {
+        if (s.empty()) return 0;
+        TTF_Font* f = Assets::instance().font(size);
+        int minx = 0, maxx = 0, miny = 0, maxy = 0, adv = 0;
+        if (f) TTF_GlyphMetrics(f, (Uint16)(unsigned char)s[0], &minx, &maxx, &miny, &maxy, &adv);
+        return minx;
+    };
+    drawText(mapLoadTitle_.c_str(), lx - firstBearing(mapLoadTitle_, 30), SCREEN_H/2 - 22, 30, SDL_Color{255,255,255,255});
+    drawText(mapLoadTip_.c_str(),   lx - firstBearing(mapLoadTip_,   14), SCREEN_H/2 + 18, 14, SDL_Color{150,150,150,255});
+    return SCREEN_H/2 + 48;
+}
+
+void Game::renderMapLoading() {
+    mapLoadTimer_ += dt_;
+    renderMapLoadCore();
+
+    // Hold the black screen briefly, then power on the CRT into gameplay.
+    if (mapLoadTimer_ >= 1.9f) {
+        state_ = pendingPlayState_;
+        beginCrtWarmup();
+    }
+}
+
+// Kick off the CRT power-on: arm the warmup animation, play the tube whir, and
+// start the gameplay music so it comes in exactly as the picture appears.
+void Game::beginCrtWarmup() {
+    crtWarmup_ = kCrtWarmupSec;
+    if (sfxTvShutdown_) playSFX(sfxTvShutdown_, config_.sfxVolume);
+    playActionMusic();
+}
+
+void Game::renderMultiplayerLoading() {
+    mapLoadTimer_ += dt_;
+    auto& net = NetworkManager::instance();
+
+    // First frame: announce we're (re)loading so every peer clears its stale lobby
+    // ready flag; a beat later report ready. This produces a visible LOADING->READY
+    // progression even though the map itself generates near-instantly.
+    if (mapLoadTimer_ <= dt_ + 1e-4f) net.setReady(false);
+    if (!mpLoadReadySent_ && mapLoadTimer_ >= 0.4f) {
+        net.setReady(true);
+        mpLoadReadySent_ = true;
+    }
+
+    int y = renderMapLoadCore();
+
+    // Per-player status list, anchored to the left border.
+    const int lx = 40;
+    drawText("PLAYERS", lx, y, 13, SDL_Color{120, 120, 120, 255});
+    y += 24;
+    const auto& players = net.players();
+    bool allReady = !players.empty();
+    for (const auto& p : players) {
+        bool ready = p.ready;
+        if (!ready) allReady = false;
+        char line[96];
+        snprintf(line, sizeof(line), "%s  -  %s",
+                 p.username.c_str(), ready ? "READY" : "LOADING");
+        SDL_Color col = ready ? SDL_Color{90, 220, 120, 255} : SDL_Color{220, 200, 90, 255};
+        drawText(line, lx, y, 15, col);
+        y += 22;
+    }
+
+    // Transition once everyone has reported in (after a short minimum so the screen
+    // is actually seen), or bail out on a timeout / lost connection so a dropped or
+    // stuck peer can never wedge the match.
+    bool minTime = mapLoadTimer_ >= 1.2f;
+    bool timeout = mapLoadTimer_ >= 12.0f;
+    if (!net.isOnline() || (allReady && mpLoadReadySent_ && minTime) || timeout) {
+        mpLoadActive_ = false;
+        beginCrtWarmup();
+    }
+}
+
+// CRT power-on animation. t goes 0 (just switched on) -> 1 (fully warmed up).
+void Game::renderCrtPowerOn(float t) {
+    const float expandEnd = 0.38f;
+    float bandH;
+    if (t < expandEnd) {
+        float k = t / expandEnd;                 // 0..1
+        k = 1.0f - (1.0f - k) * (1.0f - k);      // ease-out for a snappy bloom
+        bandH = std::max(2.0f, k * (float)SCREEN_H);
+    } else {
+        bandH = (float)SCREEN_H;
+    }
+    int by = (int)(((float)SCREEN_H - bandH) * 0.5f);
+    SDL_Rect dst = {0, by, SCREEN_W, (int)bandH};
+
+    SDL_SetTextureBlendMode(sceneTarget_, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureColorMod(sceneTarget_, 255, 255, 255);
+    SDL_SetTextureAlphaMod(sceneTarget_, 255);
+    SDL_RenderCopy(renderer_, sceneTarget_, nullptr, &dst);
+
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_ADD);
+    // Bright scan seams at the expanding edges.
+    if (t < 0.55f) {
+        Uint8 a = (Uint8)(220.0f * (1.0f - t / 0.55f));
+        SDL_SetRenderDrawColor(renderer_, 210, 230, 255, a);
+        SDL_Rect topEdge = {0, by, SCREEN_W, 2};
+        SDL_Rect botEdge = {0, by + (int)bandH - 2, SCREEN_W, 2};
+        SDL_RenderFillRect(renderer_, &topEdge);
+        SDL_RenderFillRect(renderer_, &botEdge);
+    }
+    // Whole-tube phosphor flash that fades as the picture settles.
+    Uint8 flash = (Uint8)(std::max(0.0f, 0.5f - t) / 0.5f * 90.0f);
+    if (flash > 0) {
+        SDL_SetRenderDrawColor(renderer_, 150, 190, 255, flash);
+        SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
+        SDL_RenderFillRect(renderer_, &full);
+    }
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
 }
 
 
@@ -3399,6 +3599,10 @@ void Game::renderToolsMenu() {
 void Game::renderPlayModeMenu() {
     ui_.drawDesktop();
 
+    // Generated-map settings live in their own submenu (opened via a button below),
+    // so the main Play window stays short: mode buttons + a settings opener + Cancel.
+    if (playSub_ == 1) { renderPlayGeneratedMenu(); return; }
+
     // Window layout
     const int winW  = 500;
     const int padX  = 14;
@@ -3407,9 +3611,8 @@ void Game::renderPlayModeMenu() {
     const int rowH  = 24;
     const int gap   = 6;
 
-    // Count rows for height: 3 mode buttons + separator label + 6 sliders
-    // + Endless + Seed + back
-    const int totalRows = 3 + 1 + 6 + 2 + 1;
+    // Rows: 3 mode buttons + separator + "Generated Settings" + Cancel
+    const int totalRows = 3 + 1 + 1 + 1;
     const int winH  = padTY + totalRows * (btnH + gap) + 30;
     const int winX  = (SCREEN_W - winW) / 2;
     const int winY  = (SCREEN_H - winH) / 2;
@@ -3443,128 +3646,158 @@ void Game::renderPlayModeMenu() {
         by += btnH + gap;
     }
 
-    // Settings group separator
+    // Separator, then the opener for the Generated Map Settings submenu.
+    (void)ctrlX; (void)ctrlW;  // control column now lives in the submenu
     by += 4;
     ui_.drawWin98Bevel(bx, by, winW - padX*2, 2, false);
-    by += 4;
-    ui_.drawText("Settings", bx, by, 12, UI::W98::Shadow);
-    by += 16;
-
-    // Slider rows (3-8)
-    char valBuf[64];
-    struct PMRow { const char* label; int idx; };
-    PMRow rows[] = {
-        {"Map Width:",      3}, {"Map Height:",    4},
-        {"Player HP:",      5}, {"Spawnrate:",     6},
-        {"Enemy HP:",       7}, {"Enemy Speed:",   8},
-    };
-
-    auto fmtVal = [&](int idx) -> const char* {
-        switch (idx) {
-            case 3:
-                if (mapDimTyping_ && mapDimField_ == 3) snprintf(valBuf,sizeof(valBuf),"%s", mapDimStr_.c_str());
-                else snprintf(valBuf,sizeof(valBuf),"%d", config_.mapWidth);
-                break;
-            case 4:
-                if (mapDimTyping_ && mapDimField_ == 4) snprintf(valBuf,sizeof(valBuf),"%s", mapDimStr_.c_str());
-                else snprintf(valBuf,sizeof(valBuf),"%d", config_.mapHeight);
-                break;
-            case 5:
-                if (hpTyping_) snprintf(valBuf,sizeof(valBuf),"%s", hpStr_.c_str());
-                else           snprintf(valBuf,sizeof(valBuf),"%d",   config_.playerMaxHp);
-                break;
-            case 6: snprintf(valBuf,sizeof(valBuf),"%.1fx",config_.spawnRateScale);  break;
-            case 7: snprintf(valBuf,sizeof(valBuf),"%.1fx",config_.enemyHpScale);    break;
-            case 8: snprintf(valBuf,sizeof(valBuf),"%.1fx",config_.enemySpeedScale); break;
-            default: valBuf[0]=0; break;
-        }
-        return valBuf;
-    };
-
-    for (auto& row : rows) {
-        bool sel = (playModeSelection_ == row.idx);
-        // Label
-        ui_.drawText(row.label, bx, by + (rowH - 14) / 2, 13, UI::W98::Black);
-        // Value field + arrow buttons: [<] [value field] [>]
-        const int arrowW = 22;
-        int fx   = ctrlX;                       // < button starts here
-        int fw   = ctrlW - arrowW * 2 - 4;     // value field width
-        int fldX = fx + arrowW + 2;             // value field x
-        int rgtX = fldX + fw + 2;              // > button x
-        // Left arrow
-        if (ui_.win98Button(row.idx*10+50, "<", fx, by, arrowW, rowH, false)) {
-            switch (row.idx) {
-                case 3: config_.mapWidth        = std::max(20,   config_.mapWidth        - 2);    break;
-                case 4: config_.mapHeight       = std::max(14,   config_.mapHeight       - 2);    break;
-                case 5: config_.playerMaxHp     = std::max(1,    config_.playerMaxHp     - 1);    break;
-                case 6: config_.spawnRateScale  = std::max(0.3f, config_.spawnRateScale  - 0.1f); break;
-                case 7: config_.enemyHpScale    = std::max(0.3f, config_.enemyHpScale    - 0.1f); break;
-                case 8: config_.enemySpeedScale = std::max(0.5f, config_.enemySpeedScale - 0.1f); break;
-            }
-        }
-        // Value display field
-        ui_.drawWin98TextField(fldX, by, fw, rowH, fmtVal(row.idx), sel, false, 0.f);
-        // Click the value box to type a number directly (width / height)
-        if ((row.idx == 3 || row.idx == 4) && !mapDimTyping_ &&
-            ui_.mouseClicked && ui_.pointInRect(ui_.mouseX, ui_.mouseY, fldX, by, fw, rowH)) {
-            playModeSelection_ = row.idx; menuSelection_ = row.idx;
-            beginMapDimEdit(row.idx);
-        }
-        // Right arrow
-        if (ui_.win98Button(row.idx*10+60, ">", rgtX, by, arrowW, rowH, false)) {
-            switch (row.idx) {
-                case 3: config_.mapWidth        = std::min(1000, config_.mapWidth        + 2);    break;
-                case 4: config_.mapHeight       = std::min(1000, config_.mapHeight       + 2);    break;
-                case 5: config_.playerMaxHp     = std::min(1000, config_.playerMaxHp     + 1);    break;
-                case 6: config_.spawnRateScale  = std::min(3.0f, config_.spawnRateScale  + 0.1f); break;
-                case 7: config_.enemyHpScale    = std::min(3.0f, config_.enemyHpScale    + 0.1f); break;
-                case 8: config_.enemySpeedScale = std::min(2.5f, config_.enemySpeedScale + 0.1f); break;
-            }
-        }
-        if (ui_.hoveredItem == row.idx && !usingGamepad_) { playModeSelection_ = row.idx; menuSelection_ = row.idx; }
-        by += rowH + gap;
-    }
-
-    // Endless toggle (9) - infinite seeded world
+    by += 8;
     {
-        char eb[32]; snprintf(eb, sizeof(eb), "Endless: %s", config_.endless ? "On" : "Off");
-        if (ui_.win98Button(70, eb, bx, by, winW - padX*2, btnH, playModeSelection_ == 9 || config_.endless)) {
-            config_.endless = !config_.endless; playModeSelection_ = 9; menuSelection_ = 9;
+        bool sel = (playModeSelection_ == 3);
+        if (ui_.win98Button(3, "Generated Settings...", bx, by, winW - padX*2, btnH, sel)) {
+            playModeSelection_ = 3; menuSelection_ = 3; playSub_ = 1; playSubSel_ = 0;
         }
-        if (ui_.hoveredItem == 70 && !usingGamepad_) { playModeSelection_ = 9; menuSelection_ = 9; }
+        if (ui_.hoveredItem == 3 && !usingGamepad_) { playModeSelection_ = 3; menuSelection_ = 3; }
         by += btnH + gap;
     }
 
-    // Seed field (10) - click to type; 0 = random each run
-    {
-        bool sel = (playModeSelection_ == 10);
-        ui_.drawText("Seed:", bx, by + (rowH - 14) / 2, 13, UI::W98::Black);
-        int fx = ctrlX, fw = ctrlW;
-        char sb[24];
-        if (seedTyping_) snprintf(sb, sizeof(sb), "%s", seedStr_.c_str());
-        else if (config_.worldSeed) snprintf(sb, sizeof(sb), "%u", config_.worldSeed);
-        else snprintf(sb, sizeof(sb), "random");
-        ui_.drawWin98TextField(fx, by, fw, rowH, sb, sel, false, 0.f);
-        if (!seedTyping_ && ui_.mouseClicked && ui_.pointInRect(ui_.mouseX, ui_.mouseY, fx, by, fw, rowH)) {
-            playModeSelection_ = 10; menuSelection_ = 10; beginSeedEdit();
-        }
-        if (ui_.hoveredItem == 10 && !usingGamepad_) { playModeSelection_ = 10; menuSelection_ = 10; }
-        by += rowH + gap;
-    }
-
-    // Back button (11)
+    // Cancel button (4)
     by += 4;
-    bool backSel = (playModeSelection_ == 11);
-    if (ui_.win98Button(11, "Cancel", bx, by, 80, btnH, backSel)) {
-        playModeSelection_ = 11; menuSelection_ = 11; confirmInput_ = true;
+    bool backSel = (playModeSelection_ == 4);
+    if (ui_.win98Button(4, "Cancel", bx, by, 80, btnH, backSel)) {
+        playModeSelection_ = 4; menuSelection_ = 4; confirmInput_ = true;
     }
-    if (ui_.hoveredItem == 11 && !usingGamepad_) { playModeSelection_ = 11; menuSelection_ = 11; }
+    if (ui_.hoveredItem == 4 && !usingGamepad_) { playModeSelection_ = 4; menuSelection_ = 4; }
 
     ui_.drawWin98StatusBar(SCREEN_H - 26, "Select a play mode or adjust settings.");
 }
 
+// Shared mutation for the Generated Map Settings submenu (mouse < > / gamepad
+// left-right/confirm). dir: -1 dec, +1 inc, 0 confirm (opens a keyboard / toggles).
+void Game::playGeneratedAction(int row, int dir) {
+    auto stepF = [&](float& v, float lo, float hi, float st){ v = std::clamp(v + dir*st, lo, hi); };
+    switch (row) {
+        case 0: if (dir) config_.mapWidth  = std::clamp(config_.mapWidth  + dir*2, 20, 1000); else beginMapDimEdit(3); break;
+        case 1: if (dir) config_.mapHeight = std::clamp(config_.mapHeight + dir*2, 14, 1000); else beginMapDimEdit(4); break;
+        case 2:
+            if (dir) config_.playerMaxHp = std::clamp(config_.playerMaxHp + dir, 1, 1000);
+            else {
+                hpStr_ = std::to_string(config_.playerMaxHp); hpTyping_ = true;
+                softKB_.open(&hpStr_, 4, [this](bool ok){
+                    hpTyping_ = false;
+                    if (ok && !hpStr_.empty()) { try { config_.playerMaxHp = std::clamp(std::stoi(hpStr_), 1, 1000); } catch (...) {} }
+                    hpStr_.clear();
+                });
+            }
+            break;
+        case 3: stepF(config_.spawnRateScale,  0.3f, 3.0f, 0.1f); break;
+        case 4: stepF(config_.enemyHpScale,    0.3f, 3.0f, 0.1f); break;
+        case 5: stepF(config_.enemySpeedScale, 0.5f, 2.5f, 0.1f); break;
+        case 6: config_.endless = (dir == 0) ? !config_.endless : (dir > 0); break;
+        case 7: if (dir == 0) beginSeedEdit(); break;
+        case 8: if (dir == 0) playSub_ = 0; break; // Close
+    }
+}
+
+// "Generated Map Settings" play submenu: map size/seed + difficulty scalars,
+// grouped out of the Play window. Cursor-aware (playSubSel_) for gamepad/keyboard.
+void Game::renderPlayGeneratedMenu() {
+    const int padX   = 16;
+    const int rowH   = 24;
+    const int rowGap = 6;
+    const int labelW = 150;
+    const int arrowW = 22;
+    const int winW   = 480;
+    const int padTY  = UI::W98::TitleH + 14;
+    const int numRows = 8 + 1;  // 8 setting rows + Close
+    const int winH   = padTY + numRows * (rowH + rowGap) + 16;
+    const int winX   = (SCREEN_W - winW) / 2;
+    const int winY   = std::max(4, (SCREEN_H - winH) / 2);
+
+    ui_.drawDarkOverlay(90);
+    ui_.drawWin98Window(winX, winY, winW, winH, "Generated Map Settings");
+
+    // X button closes back to the Play window
+    {
+        const int cbSz = UI::W98::TitleH - 4;
+        if (ui_.mouseClicked && ui_.pointInRect(ui_.mouseX, ui_.mouseY,
+                winX + winW - 3 - cbSz, winY + 5, cbSz, cbSz)) {
+            playSub_ = 0; ui_.mouseClicked = false; return;
+        }
+    }
+
+    const int lx = winX + padX;
+    const int fx = lx + labelW;
+    const int ctrlW = winW - padX - labelW - padX;
+    const int fwA = ctrlW - arrowW*2 - 4;
+    int y = winY + padTY;
+    char buf[64];
+
+    // Stepper row `row`, value box optionally click-to-type (typeField index or -1).
+    auto stepRow = [&](const char* label, const char* valText, int row, bool clickToType) {
+        bool sel = (playSubSel_ == row);
+        ui_.drawText(label, lx, y + (rowH - 12) / 2, 12, sel ? UI::W98::Navy : UI::W98::Black);
+        const int fldX = fx + arrowW + 2;
+        if (ui_.win98Button(PLAY_GEN_BASE_ID + row*2, "<", fx, y, arrowW, rowH, false)) playGeneratedAction(row, -1);
+        ui_.drawWin98TextField(fldX, y, fwA, rowH, valText, sel, false, 0.f);
+        if (clickToType && ui_.mouseClicked && ui_.pointInRect(ui_.mouseX, ui_.mouseY, fldX, y, fwA, rowH)) {
+            playSubSel_ = row; playGeneratedAction(row, 0);
+        }
+        if (ui_.win98Button(PLAY_GEN_BASE_ID + row*2 + 1, ">", fldX + fwA + 2, y, arrowW, rowH, false)) playGeneratedAction(row, +1);
+        if ((ui_.hoveredItem == PLAY_GEN_BASE_ID + row*2 || ui_.hoveredItem == PLAY_GEN_BASE_ID + row*2 + 1) && !usingGamepad_) playSubSel_ = row;
+        y += rowH + rowGap;
+    };
+
+    if (mapDimTyping_ && mapDimField_ == 3) snprintf(buf, sizeof(buf), "%s", mapDimStr_.c_str());
+    else snprintf(buf, sizeof(buf), "%d", config_.mapWidth);
+    stepRow("Map Width:", buf, 0, true);
+    if (mapDimTyping_ && mapDimField_ == 4) snprintf(buf, sizeof(buf), "%s", mapDimStr_.c_str());
+    else snprintf(buf, sizeof(buf), "%d", config_.mapHeight);
+    stepRow("Map Height:", buf, 1, true);
+    if (hpTyping_) snprintf(buf, sizeof(buf), "%s", hpStr_.c_str());
+    else snprintf(buf, sizeof(buf), "%d", config_.playerMaxHp);
+    stepRow("Player HP:", buf, 2, true);
+    snprintf(buf, sizeof(buf), "%.1fx", config_.spawnRateScale);  stepRow("Spawnrate:",   buf, 3, false);
+    snprintf(buf, sizeof(buf), "%.1fx", config_.enemyHpScale);    stepRow("Enemy HP:",    buf, 4, false);
+    snprintf(buf, sizeof(buf), "%.1fx", config_.enemySpeedScale); stepRow("Enemy Speed:", buf, 5, false);
+
+    // Endless toggle (row 6)
+    {
+        bool sel = (playSubSel_ == 6);
+        ui_.drawText("Endless:", lx, y + (rowH - 12) / 2, 12, sel ? UI::W98::Navy : UI::W98::Black);
+        if (ui_.win98Button(PLAY_GEN_BASE_ID + 12, config_.endless ? "On" : "Off", fx, y, 60, rowH, sel))
+            playGeneratedAction(6, 0);
+        if (ui_.hoveredItem == PLAY_GEN_BASE_ID + 12 && !usingGamepad_) playSubSel_ = 6;
+        y += rowH + rowGap;
+    }
+    // Seed field (row 7) - click to type; 0 = random
+    {
+        bool sel = (playSubSel_ == 7);
+        ui_.drawText("Seed:", lx, y + (rowH - 12) / 2, 12, sel ? UI::W98::Navy : UI::W98::Black);
+        if (seedTyping_) snprintf(buf, sizeof(buf), "%s", seedStr_.c_str());
+        else if (config_.worldSeed) snprintf(buf, sizeof(buf), "%u", config_.worldSeed);
+        else snprintf(buf, sizeof(buf), "random");
+        ui_.drawWin98TextField(fx, y, ctrlW, rowH, buf, sel, false, 0.f);
+        if (!seedTyping_ && ui_.mouseClicked && ui_.pointInRect(ui_.mouseX, ui_.mouseY, fx, y, ctrlW, rowH)) {
+            playSubSel_ = 7; playGeneratedAction(7, 0);
+        }
+        y += rowH + rowGap;
+    }
+    // Close (row 8)
+    {
+        bool sel = (playSubSel_ == 8);
+        if (ui_.win98Button(PLAY_GEN_BASE_ID + 16, "Close", lx, y, 80, 26, sel)) playSub_ = 0;
+        if (ui_.hoveredItem == PLAY_GEN_BASE_ID + 16 && !usingGamepad_) playSubSel_ = 8;
+    }
+
+    ui_.drawWin98StatusBar(SCREEN_H - 26, "Up/Down select - Left/Right adjust - Enter to type - Esc: Back");
+}
+
 void Game::renderConfigMenu() {
     ui_.drawDesktop();
+
+    // Grouped submenu takes over the screen so the main config's buttons behind
+    // it don't also consume clicks (win98Button consumes mouseClicked on hit).
+    if (configSub_ == 1) { renderConfigGameplayMenu(); return; }
 
     // Two-column layout: left = labels, right = controls
     const int winW   = 560;
@@ -3708,16 +3941,126 @@ void Game::renderConfigMenu() {
     }
 
 
-    // Back button
+    // Back button + Gameplay & Comfort submenu opener
     {
         bool sel = (configSelection_ == CONFIG_BACK_INDEX);
         if (ui_.win98Button(CONFIG_BACK_INDEX, "OK", lx, y, 70, 26, sel)) {
             configSelection_=CONFIG_BACK_INDEX; menuSelection_=CONFIG_BACK_INDEX; confirmInput_=true;
         }
         if (ui_.hoveredItem==CONFIG_BACK_INDEX && !usingGamepad_) { configSelection_=CONFIG_BACK_INDEX; menuSelection_=CONFIG_BACK_INDEX; }
+        // Opens the grouped Gameplay & Comfort submenu (mouse-driven, like Tools).
+        if (ui_.win98Button(CONFIG_GAMEPLAY_BTN_ID, "Gameplay && Comfort...", lx + 80, y, winW - padX*2 - 80, 26, false))
+            configSub_ = 1;
     }
 
     ui_.drawWin98StatusBar(SCREEN_H - 26, "Click < > to adjust values.  OK to save and close.");
+}
+
+// Shared mutation for the Gameplay & Comfort submenu so mouse (< > / toggle) and
+// gamepad (left/right/confirm) drive one code path. dir: -1 dec, +1 inc, 0 confirm.
+void Game::configGameplayAction(int row, int dir) {
+    auto stepF = [&](float& v, float lo, float hi, float st){ v = std::clamp(v + dir*st, lo, hi); };
+    switch (row) {
+        case 0: config_.bombingEnabled = (dir == 0) ? !config_.bombingEnabled : (dir > 0); break;
+        case 1: stepF(config_.bombingRateScale, 0.25f, 3.0f, 0.25f); break;
+        case 2: stepF(config_.playerSpeedScale, 0.5f,  2.0f, 0.05f); break;
+        case 3: config_.killsPerBomb = std::clamp(config_.killsPerBomb + (dir ? dir : 0), 1, 50); break;
+        case 4: stepF(config_.waveSizeScale,    0.5f,  3.0f, 0.25f); break;
+        case 5: stepF(config_.uiScale,          0.5f,  2.0f, 0.05f); break;
+        case 6: config_.reduceFlashing   = (dir == 0) ? !config_.reduceFlashing   : (dir > 0); break;
+        case 7: config_.showFloatingText = (dir == 0) ? !config_.showFloatingText : (dir > 0); break;
+        case 8: if (dir == 0) configSub_ = 0; break; // Close
+    }
+}
+
+// Grouped "Gameplay & Comfort" config submenu: exposes the curated gameplay
+// tuning and comfort/accessibility options. Cursor-aware (configSubSel_) so it is
+// navigable by gamepad/keyboard as well as mouse, matching the Tools submenu.
+void Game::renderConfigGameplayMenu() {
+    const int padX   = 16;
+    const int rowH   = 24;
+    const int rowGap = 7;
+    const int labelW = 210;
+    const int arrowW = 24;
+    const int winW   = 460;
+    const int padTY  = UI::W98::TitleH + 14;
+    // section "Gameplay" + 5 rows + section "Comfort" + 3 rows + Close
+    const int numRows = 1 + 5 + 1 + 3 + 1;
+    const int winH   = padTY + numRows * (rowH + rowGap) + 16;
+    const int winX   = (SCREEN_W - winW) / 2;
+    const int winY   = std::max(4, (SCREEN_H - winH) / 2);
+
+    ui_.drawDarkOverlay(90);
+    ui_.drawWin98Window(winX, winY, winW, winH, "Gameplay & Comfort");
+
+    // X button closes back to main config
+    {
+        const int cbSz = UI::W98::TitleH - 4;
+        if (ui_.mouseClicked && ui_.pointInRect(ui_.mouseX, ui_.mouseY,
+                winX + winW - 3 - cbSz, winY + 5, cbSz, cbSz)) {
+            configSub_ = 0;
+            ui_.mouseClicked = false;
+            return;
+        }
+    }
+
+    const int lx = winX + padX;
+    const int fx = lx + labelW;
+    const int fwA = winW - padX - labelW - arrowW*2 - 8 - padX;
+    int y = winY + padTY;
+
+    auto sectionLabel = [&](const char* t) {
+        ui_.drawWin98Bevel(lx, y, winW - padX*2, 2, false);
+        y += 4;
+        ui_.drawText(t, lx, y, 12, UI::W98::Shadow);
+        y += 18;
+    };
+    // Stepper row for logical index `row`. Highlights when selected; hover selects it.
+    auto stepRow = [&](const char* label, const char* valText, int row) {
+        bool sel = (configSubSel_ == row);
+        ui_.drawText(label, lx, y + (rowH - 12) / 2, 12, sel ? UI::W98::Navy : UI::W98::Black);
+        if (ui_.win98Button(CONFIG_GP_BASE_ID + row*2,     "<", fx, y, arrowW, rowH, false)) configGameplayAction(row, -1);
+        ui_.drawWin98TextField(fx + arrowW + 2, y, fwA, rowH, valText, sel, false, 0.f);
+        if (ui_.win98Button(CONFIG_GP_BASE_ID + row*2 + 1, ">", fx + arrowW + 2 + fwA + 2, y, arrowW, rowH, false)) configGameplayAction(row, +1);
+        if ((ui_.hoveredItem == CONFIG_GP_BASE_ID + row*2 || ui_.hoveredItem == CONFIG_GP_BASE_ID + row*2 + 1) && !usingGamepad_) configSubSel_ = row;
+        y += rowH + rowGap;
+    };
+    // Toggle row for logical index `row`.
+    auto toggleRow = [&](const char* label, bool val, int row) {
+        bool sel = (configSubSel_ == row);
+        ui_.drawText(label, lx, y + (rowH - 12) / 2, 12, sel ? UI::W98::Navy : UI::W98::Black);
+        if (ui_.win98Button(CONFIG_GP_BASE_ID + row*2, val ? "ON" : "OFF", fx, y, 54, rowH, sel)) configGameplayAction(row, 0);
+        if (ui_.hoveredItem == CONFIG_GP_BASE_ID + row*2 && !usingGamepad_) configSubSel_ = row;
+        y += rowH + rowGap;
+    };
+
+    char buf[32];
+
+    sectionLabel("Gameplay");
+    toggleRow("Enemy Bombings", config_.bombingEnabled, 0);
+    snprintf(buf, sizeof(buf), "%.2fx", config_.bombingRateScale);
+    stepRow("Bombing Frequency:", buf, 1);
+    snprintf(buf, sizeof(buf), "%.0f%%", config_.playerSpeedScale * 100.f);
+    stepRow("Player Speed:", buf, 2);
+    snprintf(buf, sizeof(buf), "%d", config_.killsPerBomb);
+    stepRow("Kills per Bomb:", buf, 3);
+    snprintf(buf, sizeof(buf), "%.2fx", config_.waveSizeScale);
+    stepRow("Wave Size:", buf, 4);
+
+    sectionLabel("Comfort");
+    snprintf(buf, sizeof(buf), "%.0f%%", config_.uiScale * 100.f);
+    stepRow("HUD Scale:", buf, 5);
+    toggleRow("Reduce Flashing", config_.reduceFlashing, 6);
+    toggleRow("Floating Combat Text", config_.showFloatingText, 7);
+
+    // Close button (row 8)
+    {
+        bool sel = (configSubSel_ == 8);
+        if (ui_.win98Button(CONFIG_GP_BASE_ID + 16, "Close", lx, y, 80, 26, sel)) configSub_ = 0;
+        if (ui_.hoveredItem == CONFIG_GP_BASE_ID + 16 && !usingGamepad_) configSubSel_ = 8;
+    }
+
+    ui_.drawWin98StatusBar(SCREEN_H - 26, "Up/Down select - Left/Right adjust - Esc: Back");
 }
 
 void Game::renderPauseMenu() {
@@ -3740,7 +4083,11 @@ void Game::renderPauseMenu() {
     const int winH = padTY + numRows * (btnH + gap) + 16;
     const int winX = (SCREEN_W - winW) / 2;
     const int winY = (SCREEN_H - winH) / 2;
-    ui_.drawWin98Window(winX, winY, winW, winH, "Paused");
+    // Generated maps show their seed in the title bar so it can be noted/shared.
+    char pauseTitle[48];
+    if (currentMapHasSeed_) snprintf(pauseTitle, sizeof(pauseTitle), "Paused - Seed %u", currentMapSeed_);
+    else                    snprintf(pauseTitle, sizeof(pauseTitle), "Paused");
+    ui_.drawWin98Window(winX, winY, winW, winH, pauseTitle);
 
     const int labelW = 90;
     const int arrowW = 20;
@@ -4196,6 +4543,7 @@ void Game::startCustomMap(const std::string& path, int modeOverride) {
         printf("Failed to load custom map: %s\n", path.c_str());
         return;
     }
+    currentMapHasSeed_ = false;  // custom maps have no generation seed
 
     // Load custom tile textures
     for (int i = 0; i < 8; i++) {
@@ -4355,6 +4703,7 @@ void Game::startCustomMapMultiplayer(const std::string& path) {
         printf("Failed to load custom map for multiplayer: %s\n", path.c_str());
         return;
     }
+    currentMapHasSeed_ = false;  // custom maps have no generation seed
 
     // Load custom tile textures
     for (int i = 0; i < 8; i++) {

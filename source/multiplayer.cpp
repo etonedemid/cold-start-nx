@@ -223,7 +223,7 @@ void Game::renderMultiplayerSplitscreen() {
             drawText(bombBuf, 8, 62, 12, {255, 180, 50, 255});
 
             char killBuf[32];
-            snprintf(killBuf, sizeof(killBuf), "KILLS %d/%d", cp.killCounter, coopSlots_[i].upgrades.killsPerBomb);
+            snprintf(killBuf, sizeof(killBuf), "KILLS %d/%d", cp.killCounter, killsPerBombFor(coopSlots_[i].upgrades));
             drawText(killBuf, 8, 78, 10, UI::Color::HintGray);
 
             char perkBuf[96] = "";
@@ -578,9 +578,16 @@ void Game::setupNetworkCallbacks() {
                     }
                 }
                 if (state_ != GameState::MultiplayerGame) {
-                    uint32_t mapSeed = (uint32_t)time(nullptr) ^ (uint32_t)rand();
-                    mapSrand(mapSeed);
+                    // Respect a user-typed world seed the same way singleplayer does;
+                    // route it through config_.worldSeed so startGame() actually
+                    // generates this exact seed, then broadcast it so clients
+                    // reproduce the identical map (host and client must agree).
+                    uint32_t savedWorldSeed = config_.worldSeed;
+                    uint32_t mapSeed = config_.worldSeed ? config_.worldSeed
+                                       : (uint32_t)time(nullptr) ^ (uint32_t)rand();
+                    config_.worldSeed = mapSeed;
                     startGame();
+                    config_.worldSeed = savedWorldSeed;
                     state_ = GameState::MultiplayerGame;
                     net2.startGame(mapSeed, config_.mapWidth, config_.mapHeight);
                     respawnTimer_ = currentRules_.respawnTime;
@@ -1103,12 +1110,17 @@ void Game::setupNetworkCallbacks() {
                 }
                 startCustomMapMultiplayer(tmpPath);
             } else {
-                mapSrand(mapSeed);             // same seed as host -> same map
+                // startGame() resolves its own seed from config_.worldSeed, ignoring
+                // any value mapSrand() was just primed with - route mapSeed through
+                // config_.worldSeed so the client actually reproduces the host's map.
+                uint32_t savedWorldSeed = config_.worldSeed;
+                config_.worldSeed = mapSeed;   // same seed as host -> same map
                 {
                     bool savedIsPvp = lobbySettings_.isPvp; // startGame() resets this to false
                     startGame();                // generates map, resets player & camera
                     lobbySettings_.isPvp = savedIsPvp;      // restore so updateSpawning blocks PvP waves
                 }
+                config_.worldSeed = savedWorldSeed;
                 player_.pos = pickSpawnPos(); // team corner or random, not map centre
             }
         }
@@ -1844,9 +1856,13 @@ void Game::startMultiplayerGame() {
         printf("Warning: custom map '%s' not found, using generated map\n", customMapFile.c_str());
     }
 
-    // Generate a shared map seed so host and client produce the same map
-    uint32_t mapSeed = (uint32_t)time(nullptr) ^ (uint32_t)rand();
-    mapSrand(mapSeed);
+    // Generate a shared map seed so host and client produce the same map. Respect
+    // a user-typed world seed the same way singleplayer does; route it through
+    // config_.worldSeed so startGame() actually generates this exact seed.
+    uint32_t savedWorldSeed = config_.worldSeed;
+    uint32_t mapSeed = config_.worldSeed ? config_.worldSeed
+                       : (uint32_t)time(nullptr) ^ (uint32_t)rand();
+    config_.worldSeed = mapSeed;
 
     // Start the game - use generated map
     {
@@ -1854,6 +1870,7 @@ void Game::startMultiplayerGame() {
         startGame();
         lobbySettings_.isPvp = savedIsPvp;      // restore so updateSpawning blocks PvP waves
     }
+    config_.worldSeed = savedWorldSeed;
     player_.pos = pickSpawnPos(); // team corner or random, not map centre
     if (lobbySettings_.isPvp) player_.invulnDuration = 0.0f;
     state_ = GameState::MultiplayerGame;

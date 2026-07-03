@@ -100,6 +100,7 @@ enum class GameState {
     LocalCoopDead,   // all local players dead
     // Tools
     SpriteEditor,    // standalone in-app pixel/sprite editor (TextureEditor)
+    MapLoading,      // black loading screen (spinning sawblade + seed/tip) before a generated map
 };
 
 struct GameConfig {
@@ -127,6 +128,17 @@ struct GameConfig {
     bool  acceptLocalMods      = false; // receive unverified locally-created mods from host
     float uiScale   = 1.0f;   // HUD + touch controls scale multiplier
     float shakeScale = 1.0f;  // screen shake intensity  0=off  1=full
+
+    // Comfort / accessibility
+    bool  reduceFlashing    = false; // dampen explosion white-flash, glitch strips, chromatic pulses (photosensitivity)
+    bool  showFloatingText  = true;  // floating combat text: kill "+1", multi-kill banners, combo popups
+
+    // Curated gameplay tuning (advanced) - scale factors applied over constants.h
+    bool  bombingEnabled    = true;  // telegraphed enemy air-strike barrages
+    float bombingRateScale  = 1.0f;  // >1 = more frequent barrages, <1 = rarer (0.25-3.0)
+    float playerSpeedScale  = 1.0f;  // multiplies base player move speed (0.5-2.0)
+    int   killsPerBomb      = KILLS_PER_BOMB; // enemy kills needed to earn a bomb
+    float waveSizeScale     = 1.0f;  // multiplies enemies-per-wave (0.5-3.0)
 };
 
 enum class DecalType : uint8_t { Blood, Scorch };
@@ -310,6 +322,24 @@ private:
     float biosTimer_      = 0;
     int   biosLine_       = 0;
     bool  biosBootPlayed_ = false;
+
+    // Map loading screen + CRT power-on (single-player generated maps): a black
+    // screen with a spinning sawblade, the seed as a big white title and a grey
+    // tip, that then "powers on" the CRT tube and reveals the gameplay view.
+    float        mapLoadTimer_     = 0.0f;
+    std::string  mapLoadTitle_;
+    std::string  mapLoadTip_;
+    GameState    pendingPlayState_ = GameState::Playing;
+    float        crtWarmup_        = 0.0f;   // >0 while the CRT tube "warms up"
+    SDL_Texture* sawbladeTex_      = nullptr;
+    static constexpr float kCrtWarmupSec = 0.55f;
+    uint32_t     currentMapSeed_   = 0;      // seed of the active generated map
+    bool         currentMapHasSeed_= false;  // true only for generated maps (not custom/pack)
+    // Multiplayer keeps its own game state (set by the caller) but raises this
+    // flag so every peer shows a synced loading screen with per-player ready
+    // status until everyone reports in (or a timeout elapses).
+    bool         mpLoadActive_     = false;
+    bool         mpLoadReadySent_  = false;
 
     // Music player window (main menu)
     int  musicWinX_        = 0;
@@ -582,6 +612,20 @@ private:
     int playModeSelection_ = 0;   // 0=Generated,1=Map,2=Pack,3-8=sliders,9=Back
     GameState prevMenuState_ = GameState::MainMenu; // for back nav in MapSelect/PackSelect
     int mainMenuSub_ = 0; // 0=main menu, 1=tools submenu
+    int configSub_   = 0; // 0=main config, 1=gameplay & comfort submenu
+    int configSubSel_ = 0; // cursor within the gameplay & comfort submenu (gamepad nav)
+    int playSub_     = 0; // 0=main play menu, 1=generated-map settings submenu
+    int playSubSel_  = 0; // cursor within the generated-map settings submenu (gamepad nav)
+
+    // Selected-mod banner: cached texture + the path it was loaded from (reloaded
+    // only when the selection changes, so the mod menu doesn't leak textures).
+    SDL_Texture* modBannerTex_ = nullptr;
+    std::string  modBannerFor_;
+
+    // Menu "juice": soft hover tick + a brief fade-in when entering a menu screen.
+    int       menuPrevHover_  = -1;                    // last frame's ui_.hoveredItem (for hover ticks)
+    GameState menuFadeState_  = GameState::MainMenu;   // last state a fade was armed for
+    float     menuFadeTimer_  = 0.0f;                  // counts down; drives the open-fade overlay
 
     // Map file browser
     std::vector<std::string> mapFiles_;
@@ -637,6 +681,11 @@ private:
     std::vector<Bomber>    bombers_;      // AVI planes mid-run (visual)
     SDL_Texture*           bomberPlaneSprite_ = nullptr;
     float bombingTimer_   = 18.0f;        // countdown to the next barrage
+    // Effective kills-per-bomb threshold: config sets the baseline (config_.killsPerBomb)
+    // while per-run pickup reductions (e.g. BombCore) still apply on top of it.
+    int killsPerBombFor(const PlayerUpgrades& u) const {
+        return std::max(1, u.killsPerBomb + (config_.killsPerBomb - KILLS_PER_BOMB));
+    }
     void updateAirStrikes(float dt);      // spawn/advance/detonate bombings
     void renderAirStrikes();              // draw the red converging-ring telegraph
     void spawnFloatText(Vec2 pos, const char* text, SDL_Color color, float scale = 1.0f);
@@ -724,6 +773,7 @@ private:
     Mix_Chunk* sfxPress_    = nullptr;
     Mix_Chunk* sfxClick_    = nullptr;  // UI mouse click
     Mix_Chunk* sfxBoot_     = nullptr;  // BIOS startup chime
+    Mix_Chunk* sfxTvShutdown_ = nullptr; // CRT power-on/off whir played on the loading->gameplay transition
     Mix_Music* bgMusic_        = nullptr;  // unused; kept for ABI compat
     Mix_Music* menuMusic_      = nullptr;
     Mix_Music* customMapMusic_ = nullptr;  // per-map music loaded at runtime
@@ -831,11 +881,22 @@ private:
     void renderMinimap();
     void invalidateMinimapCache();
     void renderBiosIntro();
+    int  renderMapLoadCore();          // shared black bg + sawblade + seed + tip; returns y below tip
+    void renderMapLoading();           // single-player loading screen
+    void renderMultiplayerLoading();   // multiplayer loading screen w/ per-player ready status
+    void renderCrtPowerOn(float t);
+    void beginCrtWarmup();             // start CRT power-on: kicks the sfx + gameplay music
     void renderLoginScreen();
     void renderMainMenu();
     void renderToolsMenu();
     void renderPlayModeMenu();
     void renderConfigMenu();
+    void renderConfigGameplayMenu();   // "Gameplay & Comfort" config submenu
+    void configGameplayAction(int row, int dir); // shared mouse/gamepad mutation (dir -1/0/+1)
+    static constexpr int CONFIG_GP_ROWS = 9;     // selectable rows in the gameplay submenu
+    void renderPlayGeneratedMenu();    // "Generated Map Settings" play submenu
+    void playGeneratedAction(int row, int dir);  // shared mouse/gamepad mutation (dir -1/0/+1)
+    static constexpr int PLAY_GEN_ROWS = 9;      // selectable rows in the generated-settings submenu (incl. Close)
     void renderPauseMenu();
     void renderWorkshopMenu();
     void renderDeathScreen();

@@ -1378,6 +1378,7 @@ void Game::handleInput() {
                     // Character Editor
                     mainMenuSub_ = 0;
                     scanCharacters();
+                    charCreator_.clearPreviews(renderer_);  // free any sprites from a prior session before reset
                     charCreator_ = CharCreatorState{};
                     state_ = GameState::CharCreator;
                     menuSelection_ = 0;
@@ -1490,28 +1491,25 @@ void Game::handleInput() {
 #endif
         }
     }
+    else if (state_ == GameState::PlayModeMenu && playSub_ == 1) {
+        // Generated Map Settings submenu: gamepad/keyboard navigable. Skip nav while
+        // a soft keyboard is capturing input (map dim / HP / seed typing).
+        if (!mapDimTyping_ && !hpTyping_ && !seedTyping_) {
+            playSubSel_ = std::clamp(playSubSel_, 0, PLAY_GEN_ROWS - 1);
+            if (moveInput_.y < -0.5f) playSubSel_ = std::max(0, playSubSel_ - 1);
+            if (moveInput_.y >  0.5f) playSubSel_ = std::min(PLAY_GEN_ROWS - 1, playSubSel_ + 1);
+            if (leftInput_)    playGeneratedAction(playSubSel_, -1);
+            if (rightInput_)   playGeneratedAction(playSubSel_, +1);
+            if (confirmInput_) playGeneratedAction(playSubSel_, 0);
+            if (backInput_ || pauseInput_) { playSub_ = 0; }
+        }
+    }
     else if (state_ == GameState::PlayModeMenu) {
         playModeSelection_ = menuSelection_;   // propagate DPad nav
+        // Selectable rows: 0-2 modes, 3 Generated Settings, 4 Cancel.
         if (playModeSelection_ < 0) playModeSelection_ = 0;
-        if (playModeSelection_ > 11) playModeSelection_ = 11;
+        if (playModeSelection_ > 4) playModeSelection_ = 4;
         menuSelection_ = playModeSelection_;
-
-        auto adjustIntPM = [&](int& value, int minV, int maxV, int step) {
-            if (leftInput_)  value = std::max(minV, value - step);
-            if (rightInput_) value = std::min(maxV, value + step);
-        };
-        auto adjustFloatPM = [&](float& value, float minV, float maxV, float step) {
-            if (leftInput_)  value = std::max(minV, value - step);
-            if (rightInput_) value = std::min(maxV, value + step);
-        };
-
-        if      (playModeSelection_ == 3) adjustIntPM  (config_.mapWidth,        20,   1000, 2);
-        else if (playModeSelection_ == 4) adjustIntPM  (config_.mapHeight,        14,    1000, 2);
-        else if (playModeSelection_ == 5) adjustIntPM  (config_.playerMaxHp,       1,  1000, 1);
-        else if (playModeSelection_ == 6) adjustFloatPM(config_.spawnRateScale,  0.3f,  3.0f, 0.1f);
-        else if (playModeSelection_ == 7) adjustFloatPM(config_.enemyHpScale,    0.3f,  3.0f, 0.1f);
-        else if (playModeSelection_ == 8) adjustFloatPM(config_.enemySpeedScale, 0.5f,  2.5f, 0.1f);
-        else if (playModeSelection_ == 9) { if (leftInput_) config_.endless = false; if (rightInput_) config_.endless = true; }
 
         if (confirmInput_) {
             if (playModeSelection_ == 0) {
@@ -1529,24 +1527,9 @@ void Game::handleInput() {
                 state_ = GameState::PackSelect;
                 packSelectIdx_ = 0;
                 menuSelection_ = 0;
-            } else if (playModeSelection_ == 3 || playModeSelection_ == 4) {
-                beginMapDimEdit(playModeSelection_);
-            } else if (playModeSelection_ == 5) {
-                hpStr_ = std::to_string(config_.playerMaxHp);
-                hpTyping_ = true;
-                softKB_.open(&hpStr_, 4, [this](bool ok) {
-                    hpTyping_ = false;
-                    if (ok && !hpStr_.empty()) {
-                        try { config_.playerMaxHp = std::max(1, std::min(1000, std::stoi(hpStr_))); }
-                        catch (...) {}
-                    }
-                    hpStr_.clear();
-                });
-            } else if (playModeSelection_ == 9) {
-                config_.endless = !config_.endless;
-            } else if (playModeSelection_ == 10) {
-                beginSeedEdit();
-            } else if (playModeSelection_ == 11) {
+            } else if (playModeSelection_ == 3) {
+                playSub_ = 1; playSubSel_ = 0;
+            } else if (playModeSelection_ == 4) {
                 saveConfig();
                 state_ = GameState::MainMenu;
                 menuSelection_ = 0;
@@ -1613,6 +1596,17 @@ void Game::handleInput() {
             state_ = GameState::MainMenu; menuSelection_ = 0;
             playMenuMusic();
         }
+    }
+    else if (state_ == GameState::ConfigMenu && configSub_ == 1) {
+        // Gameplay & Comfort submenu: navigable by gamepad/keyboard as well as mouse.
+        // Up/Down move the cursor, Left/Right adjust, Confirm toggles, Back closes.
+        configSubSel_ = std::clamp(configSubSel_, 0, CONFIG_GP_ROWS - 1);
+        if (moveInput_.y < -0.5f) configSubSel_ = std::max(0, configSubSel_ - 1);
+        if (moveInput_.y >  0.5f) configSubSel_ = std::min(CONFIG_GP_ROWS - 1, configSubSel_ + 1);
+        if (leftInput_)    configGameplayAction(configSubSel_, -1);
+        if (rightInput_)   configGameplayAction(configSubSel_, +1);
+        if (confirmInput_) configGameplayAction(configSubSel_, 0);
+        if (backInput_ || pauseInput_) { configSub_ = 0; }
     }
     else if (state_ == GameState::ConfigMenu) {
         if (configSelection_ < 0) configSelection_ = 0;
@@ -2933,9 +2927,16 @@ void Game::handleInput() {
                             }
                         }
                         if (state_ != GameState::MultiplayerGame) {
-                            uint32_t mapSeed = (uint32_t)time(nullptr) ^ (uint32_t)rand();
-                            mapSrand(mapSeed);
+                            // Respect a user-typed world seed the same way singleplayer does;
+                            // route it through config_.worldSeed so startGame() actually
+                            // generates this exact seed, then broadcast it so clients
+                            // reproduce the identical map (host and client must agree).
+                            uint32_t savedWorldSeed = config_.worldSeed;
+                            uint32_t mapSeed = config_.worldSeed ? config_.worldSeed
+                                               : (uint32_t)time(nullptr) ^ (uint32_t)rand();
+                            config_.worldSeed = mapSeed;
                             startGame();
+                            config_.worldSeed = savedWorldSeed;
                             player_.pos = pickSpawnPos(); // team corner or random spawn
                             if (lobbySettings_.isPvp) player_.invulnDuration = 0.0f;
                             state_ = GameState::MultiplayerGame;

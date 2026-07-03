@@ -649,6 +649,7 @@ void Game::loadAssets() {
     sfxPress_        = a.sfx("press.mp3");
     sfxClick_        = a.sfx("universfield-computer-mouse-click-352734.mp3");
     sfxBoot_         = a.sfx("freesound_community-bootup-63385.mp3");
+    sfxTvShutdown_   = a.sfx("dragon-studio-tv-shutdown-386167.mp3");
     sfxEnemyExplode_ = a.sfx("enemyexplode.mp3");
     vehicleCarSprite_ = a.loadRelTex("sprites/vehicles/car/test.png");
     bomberPlaneSprite_ = a.loadRelTex("sprites/vehicles/avi/bomber.png");
@@ -675,6 +676,19 @@ void Game::loadAssets() {
 }
 
 // Game State Management
+
+static std::string mapLoadingTip() {
+    static const char* kTips[] = {
+        "Reload while sprinting to keep your momentum",
+        "Melee at the right moment reflects bullets",
+        "✡︎⚐︎🕆︎🕯︎👎︎ ☠︎☜︎✞︎☜︎☼︎ 😐︎☠︎⚐︎🕈︎",
+        "Supply crates",
+        "A cornered swarm is a dead swarm",
+        "The grind never stops",
+        "Nothing ever happens",
+    };
+    return kTips[rand() % (int)(sizeof(kTips) / sizeof(kTips[0]))];
+}
 
 void Game::startGame() {
     state_ = GameState::Playing;
@@ -761,7 +775,37 @@ void Game::startGame() {
             if (!map_.worldCollides(spot.x, spot.y, 16.0f))
                 spawnCrate(spot);
 
-    playActionMusic();
+    // NOTE: gameplay music is intentionally NOT started here - it now begins on the
+    // loading->gameplay CRT transition (see beginCrtWarmup) so the loading screen
+    // itself stays quiet.
+
+    // Loading screen setup. Single-player switches to a dedicated MapLoading state
+    // that holds a black screen (spinning sawblade + seed + tip) and then powers on
+    // the CRT into gameplay. Multiplayer keeps whatever game state the caller sets
+    // right after this returns, but raises mpLoadActive_ so every peer shows a synced
+    // "waiting for players" screen until all report ready.
+    {
+        char title[80];
+        if (config_.endless) snprintf(title, sizeof(title), "ENDLESS   SEED %u", usedSeed);
+        else                 snprintf(title, sizeof(title), "SEED %u", usedSeed);
+        currentMapSeed_    = usedSeed;   // remembered so the pause menu can show it
+        currentMapHasSeed_ = true;
+        mapLoadTitle_ = title;
+        mapLoadTip_   = mapLoadingTip();
+        mapLoadTimer_ = 0.0f;
+        crtWarmup_    = 0.0f;
+        // Keep the loading screen silent; gameplay music starts on the CRT transition.
+        actionMusicActive_ = false;
+        Mix_HaltMusic();
+        if (NetworkManager::instance().isOnline()) {
+            mpLoadActive_    = true;
+            mpLoadReadySent_ = false;
+            // state_ is left for the caller to set (MultiplayerGame).
+        } else {
+            pendingPlayState_ = GameState::Playing;
+            state_ = GameState::MapLoading;
+        }
+    }
 }
 
 // Main Loop
@@ -825,6 +869,10 @@ void Game::run() {
             || state_ == GameState::MultiplayerDead
             || state_ == GameState::MultiplayerSpectator
             || state_ == GameState::LocalCoopGame) {
+            // Freeze the simulation while the multiplayer loading screen is up so
+            // every peer starts the match from the same moment (host included).
+            if (mpLoadActive_) { /* skip world update during synced load */ }
+            else {
             // Hit-stop: briefly freeze the world on big impacts so they land with
             // weight. Local play only - scaling the sim would desync online MP.
             float savedDt = dt_;
@@ -853,6 +901,7 @@ void Game::run() {
                     menuSelection_ = 0;
                 }
             }
+            } // end else (world update not frozen by MP loading)
         }
         else if (state_ == GameState::EditorConfig) {
             // Editor config screen handles its own input via events
@@ -1338,6 +1387,13 @@ void Game::saveConfig() {
     fprintf(f, "acceptLocalMods=%d\n",     config_.acceptLocalMods      ? 1 : 0);
     fprintf(f, "uiScale=%.2f\n", config_.uiScale);
     fprintf(f, "shakeScale=%.2f\n", config_.shakeScale);
+    fprintf(f, "reduceFlashing=%d\n", config_.reduceFlashing ? 1 : 0);
+    fprintf(f, "showFloatingText=%d\n", config_.showFloatingText ? 1 : 0);
+    fprintf(f, "bombingEnabled=%d\n", config_.bombingEnabled ? 1 : 0);
+    fprintf(f, "bombingRateScale=%.2f\n", config_.bombingRateScale);
+    fprintf(f, "playerSpeedScale=%.2f\n", config_.playerSpeedScale);
+    fprintf(f, "killsPerBomb=%d\n", config_.killsPerBomb);
+    fprintf(f, "waveSizeScale=%.2f\n", config_.waveSizeScale);
     fclose(f);
     printf("Config saved to config.txt\n");
 }
@@ -1376,6 +1432,13 @@ void Game::loadConfig() {
         else if (sscanf(line, "acceptMods=%d",          &ival) == 1) config_.acceptWorkshopMods  = (ival != 0);
         else if (sscanf(line, "uiScale=%f",   &fval) == 1) config_.uiScale   = std::clamp(fval, 0.5f, 2.0f);
         else if (sscanf(line, "shakeScale=%f", &fval) == 1) config_.shakeScale = std::clamp(fval, 0.0f, 1.0f);
+        else if (sscanf(line, "reduceFlashing=%d",    &ival) == 1) config_.reduceFlashing    = (ival != 0);
+        else if (sscanf(line, "showFloatingText=%d",  &ival) == 1) config_.showFloatingText  = (ival != 0);
+        else if (sscanf(line, "bombingEnabled=%d",    &ival) == 1) config_.bombingEnabled    = (ival != 0);
+        else if (sscanf(line, "bombingRateScale=%f",  &fval) == 1) config_.bombingRateScale  = std::clamp(fval, 0.25f, 3.0f);
+        else if (sscanf(line, "playerSpeedScale=%f",  &fval) == 1) config_.playerSpeedScale  = std::clamp(fval, 0.5f, 2.0f);
+        else if (sscanf(line, "killsPerBomb=%d",      &ival) == 1) config_.killsPerBomb      = std::clamp(ival, 1, 50);
+        else if (sscanf(line, "waveSizeScale=%f",     &fval) == 1) config_.waveSizeScale     = std::clamp(fval, 0.5f, 3.0f);
     }
     fclose(f);
     printf("Config loaded from config.txt\n");

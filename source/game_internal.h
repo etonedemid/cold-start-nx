@@ -153,6 +153,12 @@ constexpr int CONFIG_USERNAME_INDEX          = 14;
 constexpr int CONFIG_UI_SCALE_INDEX          = 15;
 constexpr int CONFIG_SHAKE_INDEX             = 17;
 constexpr int CONFIG_BACK_INDEX              = 16;
+// Button IDs for the Gameplay & Comfort submenu. Kept well above the main
+// config's win98Button IDs (which top out near ~271) to avoid collisions with
+// the "open submenu" button drawn in the main config window.
+constexpr int CONFIG_GAMEPLAY_BTN_ID         = 900; // opener button (main config)
+constexpr int CONFIG_GP_BASE_ID              = 800; // base id for submenu controls
+constexpr int PLAY_GEN_BASE_ID               = 700; // base id for the generated-settings submenu controls
 
 inline EnemyType enemyTypeFromSpawnId(uint8_t type) {
     switch (type) {

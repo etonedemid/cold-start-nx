@@ -1,12 +1,13 @@
 # build_all.ps1 - Build Cold Start for all platforms and bundle into release-out/
-# Platforms: Windows, Linux (via WSL archlinux), Switch (via WSL + devkitpro), Android
-# Usage: .\build_all.ps1 [-SkipWin] [-SkipLinux] [-SkipSwitch] [-SkipAndroid]
+# Platforms: Windows, Linux (via WSL archlinux), Switch (via WSL + devkitpro), Android, Wii U (via WSL + devkitpro)
+# Usage: .\build_all.ps1 [-SkipWin] [-SkipLinux] [-SkipSwitch] [-SkipAndroid] [-SkipWiiu]
 
 param(
     [switch]$SkipWin,
     [switch]$SkipLinux,
     [switch]$SkipSwitch,
-    [switch]$SkipAndroid
+    [switch]$SkipAndroid,
+    [switch]$SkipWiiu
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,6 +21,7 @@ $WIN_ZIP = "$OUT\cold_start-windows-$VER.zip"
 $LIN_ZIP = "$OUT\cold_start-linux-$VER.zip"
 $NRO_OUT = "$OUT\cold-start-nx.nro"
 $APK_OUT = "$OUT\cold_start-android-$VER.apk"
+$WUHB_OUT = "$OUT\cold_start-wiiu-$VER.wuhb"
 
 Write-Host ""
 Write-Host "Cold Start $VER - All-Platform Build" -ForegroundColor White
@@ -41,7 +43,14 @@ function Zip-Dir($srcDir, $outZip) {
 }
 
 function Wsl-Run($cmd) {
-    wsl -d $WSL -- bash -c "$cmd"   # ← added double quotes
+    # $ErrorActionPreference = "Stop" (set above) turns any stderr line from a
+    # native command - including ordinary GCC warnings - into a terminating
+    # error. Builds routinely warn, so relax to Continue for just this call;
+    # callers that care about success already check $LASTEXITCODE explicitly.
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    wsl -d $WSL -- bash -c "$cmd"
+    $ErrorActionPreference = $prevEAP
 }
 
 # ── Windows ───────────────────────────────────────────────────────────────────
@@ -63,56 +72,41 @@ if (-not $SkipWin) {
     Copy-Item "$ROOT\build-win\cold_start.exe" $winStage
     Copy-Item "$ROOT\romfs" "$winStage\romfs" -Recurse
 
-    # Bundle all DLLs required to run on a clean Windows install.
-    # List covers DLLs pulled in transitively (SDL2_ttf→HarfBuzz→Graphite2,
-    # FreeType→Brotli; SDL2_mixer→mpg123/opus/FLAC; libcurl→OpenSSL/libssh2).
+    # Bundle every DLL required to run on a clean Windows install by walking
+    # the import table transitively (exe -> SDL2/curl -> their own deps, e.g.
+    # libcurl->OpenSSL/libssh2, SDL2_ttf->HarfBuzz->Graphite2/Brotli, etc.).
+    # A hardcoded list goes stale the moment MSYS2 bumps a package version
+    # (versioned filenames like libFLAC-8.dll or libssl-3.dll change), so we
+    # resolve recursively from the binary's actual imports instead.
     $mingw = "C:\msys64\mingw64\bin"
-    $neededDlls = @(
-        # GCC/MinGW runtime
-        "libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll",
-        # SDL2 family
-        "SDL2.dll", "SDL2_image.dll", "SDL2_mixer.dll", "SDL2_ttf.dll",
-        # SDL2_image deps
-        "libjpeg-8.dll", "libpng16-16.dll", "zlib1.dll", "libbz2-1.dll",
-        "libwebp-7.dll", "libwebpdecoder-3.dll", "libwebpdemux-2.dll", "libwebpmux-3.dll",
-        # SDL2_mixer deps
-        "libogg-0.dll", "libvorbis-0.dll", "libvorbisfile-3.dll",
-        "libopus-0.dll", "libopusfile-0.dll",
-        "libmpg123-0.dll",
-        "libFLAC-8.dll", "libFLAC-12.dll",
-        "libmodplug-1.dll",
-        # SDL2_ttf deps (HarfBuzz text shaping + FreeType WOFF2 via Brotli)
-        "libfreetype-6.dll",
-        "libharfbuzz-0.dll", "libgraphite2.dll",
-        "libbrotlidec.dll", "libbrotlicommon.dll",
-        # Workshop / updates (curl + TLS)
-        "libcurl-4.dll",
-        "libssl-3.dll", "libcrypto-3.dll",
-        "libssl-1_1-x64.dll", "libcrypto-1_1-x64.dll",
-        "libssh2-1.dll",
-        # Multiplayer UPnP
-        "libminiupnpc.dll"
-    )
-    foreach ($dll in $neededDlls) {
-        $src = Join-Path $mingw $dll
-        if (Test-Path $src) { Copy-Item $src $winStage }
-        # Missing DLLs are silently skipped - some are optional or version-specific
+    $exePath = "$ROOT\build-win\cold_start.exe"
+    if (-not (Get-Command "objdump" -ErrorAction SilentlyContinue)) {
+        Fail "objdump not found (expected at $mingw) - cannot resolve DLL dependencies"
     }
 
-    # Auto-detect any additional imports the exe directly needs (requires objdump)
-    $exePath = "$ROOT\build-win\cold_start.exe"
-    if ((Get-Command "objdump" -ErrorAction SilentlyContinue) -and (Test-Path $exePath)) {
-        $autoDlls = (objdump -p $exePath 2>$null) | Select-String "DLL Name:" | ForEach-Object {
+    $resolvedDlls = @{}
+    $queue = [System.Collections.Generic.Queue[string]]::new()
+    $queue.Enqueue($exePath)
+    while ($queue.Count -gt 0) {
+        $current = $queue.Dequeue()
+        $imports = (objdump -p $current 2>$null) | Select-String "DLL Name:" | ForEach-Object {
             ($_ -replace ".*DLL Name:\s*", "").Trim()
         }
-        foreach ($dll in $autoDlls) {
+        foreach ($dll in $imports) {
+            if ($resolvedDlls.ContainsKey($dll)) { continue }
             $src = Join-Path $mingw $dll
-            if ((Test-Path $src) -and (-not (Test-Path "$winStage\$dll"))) {
-                Copy-Item $src $winStage
-                Write-Host "    + $dll (auto-detected)" -ForegroundColor DarkGray
+            if (Test-Path $src) {
+                $resolvedDlls[$dll] = $src
+                $queue.Enqueue($src)
             }
+            # Not found under mingw64\bin -> assumed to be a Windows system DLL
         }
     }
+    foreach ($dll in $resolvedDlls.Keys) {
+        Copy-Item $resolvedDlls[$dll] $winStage
+    }
+    Ok "$($resolvedDlls.Count) DLLs resolved and bundled"
+
     # Also pick up any DLLs the build placed next to the exe
     Get-ChildItem "$ROOT\build-win\*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination $winStage
 
@@ -124,14 +118,17 @@ if (-not $SkipWin) {
 if (-not $SkipLinux) {
     Banner "Building Linux (WSL: $WSL)..."
 
-    Wsl-Run 'cmake --build ~/cold-start-nx/build-pc -- -j\$(nproc)'
+    # Job count computed here (not via $(nproc) in Wsl-Run) since that command
+    # substitution doesn't survive the PowerShell -> wsl -> bash -c quoting chain.
+    Wsl-Run "cmake --build ~/cold-start-nx/build-pc -- -j$($env:NUMBER_OF_PROCESSORS)"
     Wsl-Run '/bin/sh ~/cold-start-nx/build-pc/bundle.sh'
     
     # Remove .log files inside the dist folder (using WSL find)
-    Wsl-Run 'find ~/cold-start-nx/build-pc/dist -name ''.log'' -delete'
-    
-    # Zip using PowerShell (no WSL quoting issues)
-    $distPath = "Z:\cold-start-nx\build-pc\dist"
+    Wsl-Run 'find ~/cold-start-nx/build-pc/dist -name ''*.log'' -delete'
+
+    # Zip using PowerShell (no WSL quoting issues). ~/cold-start-nx in WSL is a
+    # symlink to this checkout under /mnt/c, so the dist folder is also visible here.
+    $distPath = "$ROOT\build-pc\dist"
     if (Test-Path $distPath) {
         Remove-Item $LIN_ZIP -Force -ErrorAction SilentlyContinue
         Compress-Archive -Path "$distPath\*" -DestinationPath $LIN_ZIP -Force
@@ -157,6 +154,25 @@ if (-not $SkipSwitch) {
     Copy-Item $nroSrc $NRO_OUT -Force
     $sz = [math]::Round((Get-Item $NRO_OUT).Length / 1MB, 1)
     Ok "$NRO_OUT ($sz MB)"
+}
+
+# ── Wii U ─────────────────────────────────────────────────────────────────────
+if (-not $SkipWiiu) {
+    wsl -d $WSL -- test -d /opt/devkitpro/wut
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "    SKIP: WUT not found at /opt/devkitpro/wut (install via dkp-pacman: wiiu-dev)" -ForegroundColor Yellow
+    } else {
+        Banner "Building Wii U WUHB (WSL: $WSL)..."
+
+        Wsl-Run "/bin/sh ~/cold-start-nx/.build_wiiu.sh"
+        if ($LASTEXITCODE -ne 0) { Fail "Wii U build failed" }
+
+        $wuhbSrc = "$ROOT\cold_start.wuhb"
+        if (-not (Test-Path $wuhbSrc)) { Fail "cold_start.wuhb not found after Wii U build" }
+        Copy-Item $wuhbSrc $WUHB_OUT -Force
+        $sz = [math]::Round((Get-Item $WUHB_OUT).Length / 1MB, 1)
+        Ok "$WUHB_OUT ($sz MB)"
+    }
 }
 
 # ── Android ───────────────────────────────────────────────────────────────────

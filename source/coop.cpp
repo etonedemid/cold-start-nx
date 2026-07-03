@@ -71,6 +71,7 @@ void Game::startPackLevel() {
         return;
     }
 
+    currentMapHasSeed_ = false;  // pack levels are authored maps, no generation seed
     if (!customMap_.loadFromFile(path)) {
         printf("Failed to load pack level: %s\n", path.c_str());
         state_ = GameState::PackComplete;

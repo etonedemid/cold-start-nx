@@ -587,6 +587,11 @@ bool Context::win98Button(int idx, const char* label, int x, int y, int w, int h
 
     bool pressed = hovered && mouseDown;
 
+    // Smooth hover glow: ease a per-item value toward 1 while hovered, 0 otherwise.
+    int animIdx = ((idx % MAX_ANIM_ITEMS) + MAX_ANIM_ITEMS) % MAX_ANIM_ITEMS;
+    float& hoverAnim = itemAnim[animIdx];
+    hoverAnim += ((hovered ? 1.0f : 0.0f) - hoverAnim) * std::min(1.0f, dt * 12.0f);
+
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
     SDL_SetRenderDrawColor(renderer, W98::Silver.r, W98::Silver.g, W98::Silver.b, 255);
     SDL_Rect face = {x, y, w, h};
@@ -597,6 +602,14 @@ bool Context::win98Button(int idx, const char* label, int x, int y, int w, int h
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_Rect inner = {x+3, y+3, w-6, h-6};
         SDL_RenderDrawRect(renderer, &inner);
+    }
+
+    // Hover highlight overlay (skipped while pressed - the bevel inverts then).
+    if (hoverAnim > 0.01f && !pressed) {
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer, 255, 255, 255, (Uint8)(hoverAnim * 48));
+        SDL_Rect hl = {x + 2, y + 2, w - 4, h - 4};
+        SDL_RenderFillRect(renderer, &hl);
     }
 
     drawWin98Bevel(x, y, w, h, !pressed);

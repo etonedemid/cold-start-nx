@@ -200,6 +200,34 @@ bool Mod::loadFromFolder(const std::string& path) {
     if (workshopId.empty() && modSec.count("workshop_id"))
         workshopId = modSec["workshop_id"];
 
+    // Extended presentation metadata (all optional).
+    website = modSec.count("website") ? modSec["website"]
+            : (modSec.count("url") ? modSec["url"] : "");
+    // tags: comma-separated list, trimmed of surrounding whitespace.
+    tags.clear();
+    if (modSec.count("tags")) {
+        const std::string& t = modSec["tags"];
+        size_t start = 0;
+        while (start <= t.size()) {
+            size_t comma = t.find(',', start);
+            size_t end   = (comma == std::string::npos) ? t.size() : comma;
+            size_t a = t.find_first_not_of(" \t", start);
+            if (a != std::string::npos && a < end) {
+                size_t b = t.find_last_not_of(" \t", end - 1);
+                tags.push_back(t.substr(a, b - a + 1));
+            }
+            if (comma == std::string::npos) break;
+            start = comma + 1;
+        }
+    }
+    // banner image: banner.png / banner.jpg in the mod root, if present.
+    bannerPath.clear();
+    for (const char* bn : {"/banner.png", "/banner.jpg"}) {
+        std::string bp = path + bn;
+        struct stat bst;
+        if (stat(bp.c_str(), &bst) == 0 && S_ISREG(bst.st_mode)) { bannerPath = bp; break; }
+    }
+
     if (id.empty()) {
         printf("Mod: missing id in %s\n", cfgPath.c_str());
         return false;
