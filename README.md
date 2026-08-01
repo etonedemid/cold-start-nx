@@ -13,6 +13,7 @@ https://discord.gg/dv28MgtaNn
 
 ## Roadmap
 ~~1. Better enemy pathfinding and sound alert~~
+
 ~~2. Cutscenes and more triggers (maybe basic scripting) in editor~~
 
 3. Official content pack (Story mode) <- We're here
