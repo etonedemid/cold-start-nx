@@ -101,15 +101,15 @@ nxlink -a <SWITCH_IP> -s cold_start.nro
 
 ## Controls
 
-| Action | Keyboard/Mouse | Gamepad |
-|--------|---------------|---------|
-| Move | WASD | Left stick |
-| Aim | Mouse | Right stick |
-| Shoot | LMB | RT |
-| Parry | Space | LB |
-| Bomb | Q | LT |
-| Melee | E | RB |
-| Pause | Esc | Start |
+| Action | Keyboard/Mouse | Gamepad    |
+|--------|---------------|-------------|
+| Move   | WASD          | Left stick  |
+| Aim    | Mouse         | Right stick |
+| Shoot  | LMB           | RT          |
+| Parry  | Space         | LB          |
+| Bomb   | Q             | LT          |
+| Melee  | E             | RB          |
+| Pause  | Esc           | Start       |
 
 ## Modding
 
