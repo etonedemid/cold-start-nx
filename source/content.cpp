@@ -18,7 +18,8 @@ void Game::scanCharacters() {
     const auto& mods = ModManager::instance().mods();
     for (const auto& mod : mods) {
         if (!mod.enabled) continue;
-        std::string modCharDir = "mods/" + mod.id + "/characters";
+
+        std::string modCharDir = mod.folder + "/characters";
         auto found = ::scanCharacters(modCharDir, renderer_);
         for (auto& cd : found)
             availableChars_.push_back(std::move(cd));
@@ -248,12 +249,13 @@ void Game::renderMapSelectMenu() {
     ui_.drawDesktop();
 
     const int padX   = 14;
-    const int btnH   = 26;
-    const int btnGap = 4;
+    const int btnH   = ui_.win98ButtonHeight();
+    const int btnGap = ui_.buttonGap();
     const int winW   = 500;
     const int winX   = (SCREEN_W - winW) / 2;
     const int winY   = 60;
-    const int winH   = SCREEN_H - winY - 60;
+    const int statusBarH = ui_.statusBarHeight();
+    const int winH   = SCREEN_H - winY - statusBarH;
     ui_.drawWin98Window(winX, winY, winW, winH, "Select Map");
 
     // Reserve space for: separator + mode row + play+back row + padding
@@ -280,7 +282,6 @@ void Game::renderMapSelectMenu() {
             if (ui_.win98Button(animIdx, fname.c_str(), winX + padX, y, winW - padX * 2, btnH, sel)) {
                 mapSelectIdx_ = i; menuSelection_ = i;
             }
-            if (ui_.hoveredItem == animIdx && !usingGamepad_) { mapSelectIdx_ = i; menuSelection_ = i; }
         }
         if ((int)mapFiles_.size() > maxVisible) {
             float ratio = (float)maxVisible / mapFiles_.size();
@@ -314,7 +315,7 @@ void Game::renderMapSelectMenu() {
     const int playW = (innerW - btnGap) * 2 / 3;
     const int backW = innerW - playW - btnGap;
     bool hasMap = !mapFiles_.empty() && mapSelectIdx_ < (int)mapFiles_.size();
-    if (ui_.win98Button(60, "Play \xbb", winX + padX, botY, playW, btnH, false) && hasMap)
+    if (ui_.win98Button(60, "Play \xc2\xbb", winX + padX, botY, playW, btnH, false) && hasMap)
         confirmInput_ = true;
     if (ui_.win98Button(62, "Back", winX + padX + playW + btnGap, botY, backW, btnH, false))
         backInput_ = true;
@@ -322,7 +323,7 @@ void Game::renderMapSelectMenu() {
     char hint[64];
     snprintf(hint, sizeof(hint), "Select a map  |  Mode: %s",
              mapSelectMode_ == 0 ? "Arena" : "Sandbox");
-    ui_.drawWin98StatusBar(SCREEN_H - 26, hint);
+    ui_.drawWin98StatusBar(SCREEN_H - ui_.statusBarHeight(), hint);
 }
 
 void Game::renderMapConfigMenu() {
@@ -332,12 +333,13 @@ void Game::renderMapConfigMenu() {
 void Game::renderCharSelectMenu() {
     ui_.drawDesktop();
 
+    const int statusBarH = ui_.statusBarHeight();
     // Left window: character list
-    SDL_Rect listPanel = {90, 60, 440, SCREEN_H - 120};
+    SDL_Rect listPanel = {90, 60, 440, SCREEN_H - 120 - (statusBarH > 26 ? statusBarH - 26 : 0)};
     ui_.drawWin98Window(listPanel.x, listPanel.y, listPanel.w, listPanel.h, "Select Character");
 
     // Right window: preview
-    SDL_Rect detailPanel = {560, 60, SCREEN_W - 580, SCREEN_H - 120};
+    SDL_Rect detailPanel = {560, 60, SCREEN_W - 580, SCREEN_H - 120 - (statusBarH > 26 ? statusBarH - 26 : 0)};
     ui_.drawWin98Window(detailPanel.x, detailPanel.y, detailPanel.w, detailPanel.h, "Preview");
 
     // (color aliases removed - lambda now uses UI::W98 constants)
@@ -362,7 +364,8 @@ void Game::renderCharSelectMenu() {
             legFrames = &defaultLegSprites_;
         }
 
-        drawText(previewName, detailPanel.x + 14, detailPanel.y + UI::W98::TitleH + 8, 14, UI::W98::Black);
+        int previewFontSize = ui_.consoleUI_ ? 20 : 14;
+        drawText(previewName, detailPanel.x + 14, detailPanel.y + UI::W98::TitleH + 8, previewFontSize, UI::W98::Black);
 
         SDL_Rect previewBox = {detailPanel.x + 14, detailPanel.y + UI::W98::TitleH + 30, detailPanel.w - 28, 280};
         ui_.drawWin98Bevel(previewBox.x, previewBox.y, previewBox.w, previewBox.h, false);
@@ -412,8 +415,8 @@ void Game::renderCharSelectMenu() {
     };
 
     const int padX = 14;
-    const int btnH = 26;
-    const int btnGap = 4;
+    const int btnH = ui_.win98ButtonHeight();
+    const int btnGap = ui_.buttonGap();
     int baseY = listPanel.y + UI::W98::TitleH + 10;
     int bx = listPanel.x + padX;
     int bw = listPanel.w - padX * 2;
@@ -458,14 +461,14 @@ void Game::renderCharSelectMenu() {
     }
     if (ui_.hoveredItem == 63 && !usingGamepad_) menuSelection_ = backIdx;
 
-    ui_.drawWin98StatusBar(SCREEN_H - 26, "Choose a character");
+    ui_.drawWin98StatusBar(SCREEN_H - ui_.statusBarHeight(), "Choose a character");
 }
 
 void Game::renderCustomWinScreen() {
     ui_.drawDarkOverlay(160);
 
     const int padX = 14;
-    const int btnH = 26;
+    const int btnH = ui_.win98ButtonHeight();
     const int winW = 340;
     const int winH = UI::W98::TitleH + 14 + 20 + 14 + 2 + 14 + btnH + 14;
     const int winX = (SCREEN_W - winW) / 2;
@@ -478,7 +481,7 @@ void Game::renderCustomWinScreen() {
     snprintf(timeStr, sizeof(timeStr), "Time: %d:%02d", mins, secs);
 
     int cy = winY + UI::W98::TitleH + 14;
-    ui_.drawTextCentered(timeStr, cy, 16, UI::W98::Black);
+    ui_.drawTextCentered(timeStr, cy, ui_.consoleUI_ ? 20 : 16, UI::W98::Black);
     cy += 20;
     ui_.drawWin98Bevel(winX + padX, cy, winW - padX * 2, 2, false);
     cy += 14;
@@ -487,7 +490,7 @@ void Game::renderCustomWinScreen() {
         confirmInput_ = true;
     }
 
-    ui_.drawWin98StatusBar(SCREEN_H - 26, "Level complete - press Continue");
+    ui_.drawWin98StatusBar(SCREEN_H - ui_.statusBarHeight(), "Level complete - press Continue");
 }
 
 // Character Creator
@@ -525,8 +528,8 @@ void Game::renderCharCreator() {
     const int lPad  = 12;
     const int lCX   = leftWinX + lPad;
     const int lRW   = leftWinW - lPad * 2;
-    const int rowH  = 26;
-    const int rowGap = 4;
+    const int rowH  = ui_.win98ButtonHeight();
+    const int rowGap = ui_.buttonGap();
     int contentY = leftWinY + UI::W98::TitleH + 8;
 
     // Helper: draw a Win98 section separator with a label
@@ -677,9 +680,9 @@ void Game::renderCharCreator() {
     // SECTION: ACTIONS
     drawSection("ACTIONS");
     {
-        const int btnH  = 26;
+        const int btnH  = ui_.win98ButtonHeight();
         const int half  = (lRW - 4) / 2;
-        const int btnGp = 4;
+        const int btnGp = ui_.buttonGap();
 
         // Row 1: Reload | Test Play
         const char* reloadLabel = cc.loaded ? "Reload" : "Load Sprites";

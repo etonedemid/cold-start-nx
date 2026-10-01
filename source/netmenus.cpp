@@ -455,7 +455,7 @@ void Game::renderHostSetup() {
 
     if (softKB_.active) renderSoftKB();
 
-    ui_.drawWin98StatusBar(SCREEN_H-26,"Navigate with arrows/stick  |  Enter: Edit/Apply  |  Esc: Cancel");
+    ui_.drawWin98StatusBar(SCREEN_H-ui_.statusBarHeight(),"Navigate with arrows/stick  |  Enter: Edit/Apply  |  Esc: Cancel");
 }
 
 // Join Menu
@@ -463,7 +463,7 @@ void Game::renderHostSetup() {
 void Game::renderJoinMenu() {
     ui_.drawDesktop();
 
-    const int padX=14, fieldH=40, fieldGap=8, btnH=26, btnGap=6, winW=460;
+    const int padX=14, fieldH=40, fieldGap=8, btnH=ui_.win98ButtonHeight(), btnGap=ui_.buttonGap(), winW=460;
     const int TH=UI::W98::TitleH;
     const int TB_H=44, TBH_BTN=36, TBW_BTN=80;
 
@@ -1094,7 +1094,7 @@ void Game::renderMultiplayerHUD() {
 
             TTF_Font* nf = Assets::instance().font(12);
             if (nf) {
-                SDL_Surface* ns = TTF_RenderText_Blended(nf, rp.username.c_str(), nameColor);
+                SDL_Surface* ns = TTF_RenderUTF8_Blended(nf, rp.username.c_str(), nameColor);
                 if (ns) {
                     SDL_Texture* nt = SDL_CreateTextureFromSurface(renderer_, ns);
                     // Name sits 6px above the HP bar
@@ -1200,8 +1200,8 @@ void Game::renderMultiplayerPause() {
     }
 
     const int padX = 14;
-    const int btnH = 26;
-    const int btnGap = 6;
+    const int btnH = ui_.win98ButtonHeight();
+    const int btnGap = ui_.buttonGap();
     const int winW = 320;
     const int winH = UI::W98::TitleH + 14 + itemCount * (btnH + btnGap) + 10;
     const int winX = (SCREEN_W - winW) / 2;
@@ -1222,7 +1222,7 @@ void Game::renderMultiplayerPause() {
             int bx = bx0 + t * (boxW + btnGap);
             ui_.win98Button(t, t < 4 ? teamNames[t] : "Team", bx, by, boxW, btnH, sel);
         }
-        ui_.drawWin98StatusBar(SCREEN_H - 26, "Choose a team  |  Esc/B: Back");
+        ui_.drawWin98StatusBar(SCREEN_H - ui_.statusBarHeight(), "Choose a team  |  Esc/B: Back");
         return;
     }
 
@@ -1265,7 +1265,7 @@ void Game::renderMultiplayerPause() {
         by += btnH + btnGap;
     }
 
-    ui_.drawWin98StatusBar(SCREEN_H - 26, "Game paused");
+    ui_.drawWin98StatusBar(SCREEN_H - ui_.statusBarHeight(), "Game paused");
 
     // Admin overlay on top
     if (adminMenuOpen_) {
@@ -1324,7 +1324,7 @@ void Game::renderAdminMenu() {
         rowY += rowH + 4;
     }
 
-    ui_.drawWin98StatusBar(SCREEN_H - 26, "Navigate: arrows/stick  |  Confirm  |  Esc/B: Close");
+    ui_.drawWin98StatusBar(SCREEN_H - ui_.statusBarHeight(), "Navigate: arrows/stick  |  Confirm  |  Esc/B: Close");
 }
 
 void Game::renderMultiplayerDeath() {
@@ -1401,7 +1401,7 @@ void Game::renderMultiplayerDeath() {
         ui_.drawTextCentered(statBuf, cy, 12, UI::W98::Shadow);
     }
 
-    ui_.drawWin98StatusBar(SCREEN_H - 26, "TAB - Scoreboard");
+    ui_.drawWin98StatusBar(SCREEN_H - ui_.statusBarHeight(), "TAB - Scoreboard");
 }
 
 void Game::renderWinLoss() {
@@ -1563,9 +1563,9 @@ void Game::renderScoreboard() {
     cy += 10;
 
     const int btnW = 160, btnX = WX + (WW - btnW) / 2;
-    if (ui_.win98Button(0, "Continue", btnX, cy, btnW, 26, true)) confirmInput_ = true;
+    if (ui_.win98Button(0, "Continue", btnX, cy, btnW, ui_.win98ButtonHeight(), true)) confirmInput_ = true;
 
-    ui_.drawWin98StatusBar(SCREEN_H - 26, "Press Enter to return to lobby");
+    ui_.drawWin98StatusBar(SCREEN_H - ui_.statusBarHeight(), "Press Enter to return to lobby");
 }
 
 void Game::renderRemotePlayers() {
@@ -1709,7 +1709,7 @@ void Game::renderTeamSelect() {
         auto drawBoxCentered = [&](const char* text, int y, int size, SDL_Color col) {
             TTF_Font* fnt = Assets::instance().font(size);
             if (!fnt || !text || !text[0]) return;
-            SDL_Surface* s = TTF_RenderText_Blended(fnt, text, col);
+            SDL_Surface* s = TTF_RenderUTF8_Blended(fnt, text, col);
             if (!s) return;
             SDL_Texture* tx = SDL_CreateTextureFromSurface(renderer_, s);
             SDL_Rect dst = {cx - s->w / 2, y, s->w, s->h};

@@ -95,6 +95,7 @@ enum class NetPacketType : uint8_t {
     CharacterSync   = 0x60,  // reliable chunked sync of selected character bundle
     SubPlayerDied   = 0x61,  // host->all: authoritative death of a local splitscreen sub-player
     SubPlayerHpSync = 0x62,  // host->all: authoritative HP update of a local splitscreen sub-player
+    EnemyHit        = 0x63,  // client->host: "my bullet hit enemy X for Y damage"
 };
 
 // Network channels
@@ -282,7 +283,7 @@ public:
     // Game state sending (called by game update)
     void sendPlayerState(const NetPlayer& state);
     void sendSubPlayerStates(uint8_t localId, const SubPlayerInfo* subs, int count);
-    void sendBulletSpawn(Vec2 pos, float angle, uint8_t playerId, uint32_t netId = 0, uint8_t playerSlot = 0);
+    void sendBulletSpawn(Vec2 pos, float angle, uint8_t playerId, uint32_t netId, uint8_t playerSlot, int damage);
     void sendBulletHit(uint32_t bulletNetId);
     void sendBombSpawn(Vec2 pos, Vec2 vel, uint8_t playerId, uint8_t playerSlot = 0);
     void sendBombOrbit(uint8_t ownerId, uint8_t ownerSlot = 0);            // broadcast "I have an orbiting bomb"
@@ -294,6 +295,8 @@ public:
     void sendPlayerDied(uint8_t playerId, uint8_t killerId);
     void sendPlayerRespawn(uint8_t playerId, Vec2 pos);
     void sendEnemyKilled(uint32_t enemyIdx, uint8_t killerId);
+    // PvE: client reports bullet hit on enemy to host for authoritative damage
+    void sendEnemyHit(uint32_t enemyIdx, int damage, uint8_t ownerId, uint8_t ownerSlot);
     // PvP host-authoritative hit validation
     void sendHitRequest(uint32_t bulletNetId, int damage, uint8_t ownerId, uint8_t targetSlot = 0); // client->host
     void sendMeleeHitRequest(uint8_t targetId, int damage, uint8_t targetSlot = 0);                  // client->host
@@ -329,7 +332,7 @@ public:
     std::function<void(uint8_t id, const std::string& name)> onPlayerJoined;
     std::function<void(uint8_t id)> onPlayerLeft;
     std::function<void(const NetPlayer& state)> onPlayerStateReceived;
-    std::function<void(Vec2 pos, float angle, uint8_t playerId, uint32_t netId, uint8_t playerSlot)> onBulletSpawned;
+    std::function<void(Vec2 pos, float angle, uint8_t playerId, uint32_t netId, uint8_t playerSlot, int damage)> onBulletSpawned;
     std::function<void(uint32_t netId)> onBulletRemoved;
     std::function<void(Vec2 pos, Vec2 vel, uint8_t playerId, uint8_t playerSlot)> onBombSpawned;
     std::function<void(uint8_t ownerId, uint8_t ownerSlot)> onBombOrbit;
@@ -340,6 +343,8 @@ public:
     std::function<void(Vec2 pos, Vec2 dir)> onEnemyBulletSpawned;
     std::function<void(uint32_t enemyIdx, uint8_t killerId)> onEnemyKilled;
     std::function<void(const LobbySettings& settings)> onConfigSyncReceived;
+    // PvE: host receives enemy hit from client; applies damage
+    std::function<bool(uint32_t enemyIdx, int damage, uint8_t ownerId, uint8_t ownerSlot)> onEnemyHit;
     std::function<void(uint8_t playerId, int8_t team)> onTeamAssigned;
     std::function<void(int teamCount)> onTeamSelectStarted;
     std::function<void(uint8_t targetId)> onAdminKicked;

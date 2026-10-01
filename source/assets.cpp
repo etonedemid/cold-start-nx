@@ -225,16 +225,22 @@ bool Assets::init(SDL_Renderer* renderer) {
 
 std::string Assets::prefix() { return assetPrefix(); }
 
-SDL_Texture* Assets::loadRelTex(const std::string& relPath) {
+SDL_Texture* Assets::loadRelTex(const std::string& relPath, bool required) {
     auto it = textures_.find(relPath);
     if (it != textures_.end()) return it->second;
     SDL_Texture* t = loadTex(assetPrefix() + relPath);
-    if (t) textures_[relPath] = t;
+    if (t || required) textures_[relPath] = t;  // cache required misses: many callers ask every frame
+    if (!t && required) noteMissing(relPath);
     return t;
 }
 
+void Assets::noteMissing(const std::string& what) {
+    for (auto& m : missing_) if (m == what) return;
+    missing_.push_back(what);
+}
+
 void Assets::shutdown() {
-    for (auto& [k,v] : textures_) SDL_DestroyTexture(v);
+    for (auto& [k,v] : textures_) if (v) SDL_DestroyTexture(v);
     for (auto& [k,v] : chunks_)   Mix_FreeChunk(v);
     for (auto& [k,v] : musics_)   Mix_FreeMusic(v);
     for (auto& [k,v] : fonts_)    TTF_CloseFont(v);
@@ -275,6 +281,7 @@ SDL_Texture* Assets::tex(const std::string& name) {
     if (t) { textures_[name] = t; return t; }
 
     printf("Failed to load texture: %s\n", name.c_str());
+    noteMissing(name);
     return nullptr;
 }
 
@@ -296,7 +303,7 @@ Mix_Chunk* Assets::sfx(const std::string& name) {
         c = Mix_LoadWAV(path.c_str());
     }
     if (c) chunks_[name] = c;
-    else printf("Failed to load sfx: %s (%s)\n", name.c_str(), Mix_GetError());
+    else { printf("Failed to load sfx: %s (%s)\n", name.c_str(), Mix_GetError()); noteMissing("sounds/" + name); }
     return c;
 }
 
@@ -318,7 +325,7 @@ Mix_Music* Assets::music(const std::string& name) {
         m = Mix_LoadMUS(path.c_str());
     }
     if (m) musics_[name] = m;
-    else printf("Failed to load music: %s (%s)\n", name.c_str(), Mix_GetError());
+    else { printf("Failed to load music: %s (%s)\n", name.c_str(), Mix_GetError()); noteMissing("sounds/" + name); }
     return m;
 }
 
@@ -331,7 +338,7 @@ TTF_Font* Assets::font(int size) {
     if (!f) f = TTF_OpenFont((pfx + "fonts/Pixeled.ttf").c_str(), size);
     if (!f) f = TTF_OpenFont("fonts/pixelmix.ttf", size);
     if (f) fonts_[size] = f;
-    else printf("Failed to load font size %d: %s\n", size, TTF_GetError());
+    else { printf("Failed to load font size %d: %s\n", size, TTF_GetError()); noteMissing("fonts/pixelmix.ttf"); }
     return f;
 }
 

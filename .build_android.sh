@@ -28,5 +28,7 @@ if [ -z "$JAVA_HOME" ]; then
 fi
 
 export PATH=$JAVA_HOME/bin:$PATH
-cd ~/cold-start-nx/android
-./gradlew clean assembleRelease
+# Use COLD_START_ROOT if set, otherwise fall back to repo root
+ROOT="${COLD_START_ROOT:-$(dirname "$0")}"
+cd "$ROOT/android"
+./gradlew assembleRelease

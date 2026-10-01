@@ -125,6 +125,7 @@ inline bool isBossType(EnemyType type) {
 // Play a sound with a random ±8% pitch shift. Cleans up after itself.
 void playSFX(Mix_Chunk* chunk, int volume);
 void initPitchSFX();  // call once after Mix_AllocateChannels
+std::string mapLoadingTip();  // random gameplay tip for the loading screen
 
 inline bool isCrateSpawnType(uint8_t type) {
     return type == ENTITY_CRATE || type == ENTITY_UPGRADE_CRATE;

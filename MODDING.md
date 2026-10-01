@@ -1,6 +1,6 @@
 # Cold Start NX - Modding Reference
 
-Version: 3.5.0 (engine v2.5.1)
+Version: 3.5.1 (engine v2.5.1)
 
 ---
 

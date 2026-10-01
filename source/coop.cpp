@@ -19,8 +19,8 @@ void Game::renderPackSelectMenu() {
     ui_.drawDesktop();
 
     const int padX = 14;
-    const int btnH = 26;
-    const int btnGap = 6;
+    const int btnH = ui_.win98ButtonHeight();
+    const int btnGap = ui_.buttonGap();
     const int winW = 560;
     const int winX = (SCREEN_W - winW) / 2;
     const int winY = 60;
@@ -60,7 +60,7 @@ void Game::renderPackSelectMenu() {
     }
     if (ui_.hoveredItem == 63 && !usingGamepad_) packSelectIdx_ = backIdx;
 
-    ui_.drawWin98StatusBar(SCREEN_H - 26, "Select a map pack");
+    ui_.drawWin98StatusBar(SCREEN_H - ui_.statusBarHeight(), "Select a map pack");
 }
 
 void Game::startPackLevel() {
@@ -173,8 +173,8 @@ void Game::renderPackLevelWin() {
     ui_.drawDarkOverlay(160);
 
     const int padX = 14;
-    const int btnH = 26;
-    const int btnGap = 6;
+    const int btnH = ui_.win98ButtonHeight();
+    const int btnGap = ui_.buttonGap();
     const int winW = 360;
     const int winH = UI::W98::TitleH + 14 + 20 + 14 + 2 + 14 + 2 * (btnH + btnGap) + 10;
     const int winX = (SCREEN_W - winW) / 2;
@@ -204,7 +204,7 @@ void Game::renderPackLevelWin() {
     }
     if (ui_.hoveredItem == 1 && !usingGamepad_) menuSelection_ = 1;
 
-    ui_.drawWin98StatusBar(SCREEN_H - 26, "Level complete");
+    ui_.drawWin98StatusBar(SCREEN_H - ui_.statusBarHeight(), "Level complete");
 }
 
 // Local Co-op (splitscreen, up to 4 players)
@@ -638,7 +638,7 @@ void Game::renderLocalCoopLobby() {
     snprintf(buf, sizeof(buf), "%d HP", lobbySettings_.playerMaxHp);
     drawSetting("Player HP:", buf);
 
-    ui_.drawWin98StatusBar(SCREEN_H - 26, "TAB: Cycle Mode  |  Enter/Start: Begin  |  Esc/B: Back");
+    ui_.drawWin98StatusBar(SCREEN_H - ui_.statusBarHeight(), "TAB: Cycle Mode  |  Enter/Start: Begin  |  Esc/B: Back");
 }
 
 void Game::renderLocalCoopGame() {
@@ -651,7 +651,7 @@ void Game::renderPackComplete() {
     ui_.drawDesktop();
 
     const int padX = 14;
-    const int btnH = 26;
+    const int btnH = ui_.win98ButtonHeight();
     const int winW = 400;
     // TitleH + pad + pack name + creator (optional) + levels line + sep + btn + pad
     const int winH = UI::W98::TitleH + 14 + 22 + 20 + 20 + 14 + 2 + 14 + btnH + 14;
@@ -680,7 +680,7 @@ void Game::renderPackComplete() {
         confirmInput_ = true;
     }
 
-    ui_.drawWin98StatusBar(SCREEN_H - 26, "Campaign complete!");
+    ui_.drawWin98StatusBar(SCREEN_H - ui_.statusBarHeight(), "Campaign complete!");
 }
 
 // Multiplayer Splitscreen Rendering

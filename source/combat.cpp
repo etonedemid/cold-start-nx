@@ -1731,7 +1731,7 @@ void Game::spawnBullet(Vec2 pos, float angle) {
 
     // Sync bullet to other players
     if (net.isInGame()) {
-        net.sendBulletSpawn(b.pos, angle, net.localPlayerId(), b.netId, b.ownerSubSlot);
+        net.sendBulletSpawn(b.pos, angle, net.localPlayerId(), b.netId, b.ownerSubSlot, b.damage);
     }
 }
 
@@ -3056,6 +3056,10 @@ void Game::resolveCollisions() {
                     if (e.hp <= 0) {
                         creditEnemyKill(e, b.ownerId);
                     }
+                } else if (net.isInGame()) {
+                    // Non-simAuth client: report hit to host for authoritative damage
+                    uint32_t eIdx = (uint32_t)(ei);
+                    net.sendEnemyHit(eIdx, b.damage, b.ownerId, b.ownerSubSlot);
                 }
                 if (!b.piercing) break;
             }
@@ -3975,36 +3979,149 @@ void Game::updateVehicles(float dt) {
         float latSpd = latDir.dot(v.vel);
         v.vel -= latDir * (latSpd * fminf(1.0f, Vehicle::GRIP * dt));
 
-        // Move
-        v.pos += v.vel * dt;
-
         // OBB extents (sprite is rendered at scale 1.5× with facing-up convention)
         float halfL = (v.spriteH > 0 ? v.spriteH : v.size) * 0.75f;
         float halfW = (v.spriteW > 0 ? v.spriteW : v.size) * 0.42f;
         fwdDir = {cosf(v.rotation), sinf(v.rotation)};
         latDir = {-fwdDir.y, fwdDir.x};
 
-        // Wall tile collision: 8 OBB probe points (4 corners + 4 edge midpoints)
+        // Wall tile collision with swept detection:
+        // Boxes always break on contact; walls/glass require minimum speed.
         {
-            auto pushOut = [&](Vec2 pt) {
-                if (!map_.worldCollides(pt.x, pt.y, 4.0f)) return;
-                Vec2 toCenter = v.pos - pt;
-                float len = toCenter.length();
-                if (len < 0.1f) { v.pos += Vec2{4.0f, 0.0f}; return; }
-                Vec2 pushDir = toCenter * (1.0f / len);
-                float velInto = -(v.vel.dot(pushDir));
-                if (velInto > 0.0f) v.vel += pushDir * velInto;
-                v.pos += pushDir * 6.0f;
+            float impactSpeed = v.vel.length();
+            bool canCrushWalls = (impactSpeed >= Vehicle::WALL_CRUSH_SPD);
+            struct DestroyedTile {
+                int x, y;
+                uint8_t type;  // original tile type before destruction
             };
-            for (int pass = 0; pass < 2; pass++) {
-                pushOut(v.pos + fwdDir * halfL + latDir * halfW);
-                pushOut(v.pos + fwdDir * halfL - latDir * halfW);
-                pushOut(v.pos - fwdDir * halfL + latDir * halfW);
-                pushOut(v.pos - fwdDir * halfL - latDir * halfW);
-                pushOut(v.pos + fwdDir * halfL);
-                pushOut(v.pos - fwdDir * halfL);
-                pushOut(v.pos + latDir * halfW);
-                pushOut(v.pos - latDir * halfW);
+            std::vector<DestroyedTile> destroyedTiles;
+
+            Vec2 oldPos = v.pos;  // position before this frame's movement
+
+            // Helper: check if a tile is crushable and queue it for destruction.
+            // Boxes/desks break on any contact; walls/glass require minimum speed.
+            auto tryDestroyTile = [&](int tx, int ty) {
+                if (!map_.isInBounds(tx, ty)) return;
+                uint8_t tile = map_.get(tx, ty);
+                bool isBoxOrDesk   = (tile == TILE_BOX || tile == TILE_DESK);
+                bool isWallOrGlass = (tile == TILE_WALL || tile == TILE_GLASS);
+                if (!isBoxOrDesk && !isWallOrGlass) return;
+                if (!map_.isSolid(tx, ty)) return;  // already destroyed or non-solid
+                bool canDestroyThis = isBoxOrDesk || (isWallOrGlass && canCrushWalls);
+                if (!canDestroyThis) return;
+
+                // Check if we already queued this tile
+                for (size_t i = 0; i < destroyedTiles.size(); i++) {
+                    if (destroyedTiles[i].x == tx && destroyedTiles[i].y == ty) return;
+                }
+
+                // For boxes/desks, destroyBox() will handle the tile replacement.
+                // For walls/glass, we set it here and spawn effects later.
+                if (!isBoxOrDesk) {
+                    map_.set(tx, ty, TILE_FLOOR);
+                }
+                destroyedTiles.push_back({tx, ty, tile});
+            };
+
+            // Swept collision: check tiles along the movement path this frame.
+            // This ensures we destroy walls/boxes even when moving fast enough to
+            // skip over them in a single frame, or when bounce would push us back.
+            if (impactSpeed > 1.0f) {
+                Vec2 moveThisFrame = v.vel * dt;
+                float moveDist = moveThisFrame.length();
+                int steps = (int)std::max(1.0f, moveDist / 8.0f);  // check every ~8 pixels
+                Vec2 stepDir = moveThisFrame * (1.0f / moveDist);
+                float stepLen = moveDist / steps;
+
+                for (int s = 0; s <= steps; s++) {
+                    Vec2 samplePos = oldPos + stepDir * (stepLen * s);
+                    // Check tiles around this sampled position with generous radius
+                    int txCenter = TileMap::toTile(samplePos.x);
+                    int tyCenter = TileMap::toTile(samplePos.y);
+                    for (int dy = -1; dy <= 1; dy++) {
+                        for (int dx = -1; dx <= 1; dx++) {
+                            tryDestroyTile(txCenter + dx, tyCenter + dy);
+                        }
+                    }
+                }
+            } else {
+                // Stationary or very slow: just check tiles around current position
+                int txCenter = TileMap::toTile(v.pos.x);
+                int tyCenter = TileMap::toTile(v.pos.y);
+                for (int dy = -1; dy <= 1; dy++) {
+                    for (int dx = -1; dx <= 1; dx++) {
+                        tryDestroyTile(txCenter + dx, tyCenter + dy);
+                    }
+                }
+            }
+
+            // Now move the car after destruction is resolved
+            v.pos += v.vel * dt;
+
+            // Spawn debris and effects for all destroyed tiles
+            if (!destroyedTiles.empty()) {
+                invalidateMinimapCache();
+                camera_.addShake(2.0f);
+                v.vel *= Vehicle::WALL_CRUSH_REBOUND;  // lose some speed smashing through
+
+                for (size_t i = 0; i < destroyedTiles.size(); i++) {
+                    int tx = destroyedTiles[i].x;
+                    int ty = destroyedTiles[i].y;
+                    uint8_t origType = destroyedTiles[i].type;
+
+                    if (origType == TILE_BOX || origType == TILE_DESK) {
+                        // Use proper box destruction effects for boxes and desks
+                        destroyBox(tx, ty);
+                    } else {
+                        // Wall/glass: spawn concrete/shatter debris
+                        float wx = TileMap::toWorld(tx);
+                        float wy = TileMap::toWorld(ty);
+                        int numFrags = 10 + rand() % 8;
+                        for (int j = 0; j < numFrags; j++) {
+                            BoxFragment f;
+                            f.pos = {wx + (float)(rand() % 24 - 12), wy + (float)(rand() % 24 - 12)};
+                            float angle = (float)(rand() % 360) * M_PI / 180.0f;
+                            float spd = 100.0f + (float)(rand() % 250);
+                            f.vel = {cosf(angle) * spd, sinf(angle) * spd};
+                            f.rotation = (float)(rand() % 360);
+                            f.rotSpeed = (float)(rand() % 700 - 350);
+                            f.size = 3.0f + (float)(rand() % 7);
+                            f.lifetime = 0.4f + (float)(rand() % 40) / 100.0f;
+                            if (origType == TILE_GLASS) {
+                                // Glass shards: light blue/white
+                                int bright = 180 + rand() % 75;
+                                f.color = {(Uint8)bright, (Uint8)(bright - 20), (Uint8)(bright - 40), 255};
+                            } else {
+                                // Wall/concrete: gray
+                                int shade = 90 + rand() % 80;
+                                f.color = {(Uint8)shade, (Uint8)(shade - 5), (Uint8)(shade - 15), 255};
+                            }
+                            boxFragments_.push_back(f);
+                        }
+                    }
+                }
+            } else {
+                // No tiles destroyed — normal bounce response for solid collisions
+                auto pushOut = [&](Vec2 pt) {
+                    if (!map_.worldCollides(pt.x, pt.y, 4.0f)) return;
+                    Vec2 toCenter = v.pos - pt;
+                    float len = toCenter.length();
+                    if (len < 0.1f) { v.pos += Vec2{4.0f, 0.0f}; return; }
+                    Vec2 pushDir = toCenter * (1.0f / len);
+                    float velInto = -(v.vel.dot(pushDir));
+                    if (velInto > 0.0f) v.vel += pushDir * velInto;
+                    v.pos += pushDir * 6.0f;
+                };
+                for (int pass = 0; pass < 2; pass++) {
+                    pushOut(v.pos + fwdDir * halfL + latDir * halfW);
+                    pushOut(v.pos + fwdDir * halfL - latDir * halfW);
+                    pushOut(v.pos - fwdDir * halfL + latDir * halfW);
+                    pushOut(v.pos - fwdDir * halfL - latDir * halfW);
+                    pushOut(v.pos + fwdDir * halfL);
+                    pushOut(v.pos - fwdDir * halfL);
+                    pushOut(v.pos + latDir * halfW);
+                    pushOut(v.pos - latDir * halfW);
+                }
             }
         }
 
@@ -4232,7 +4349,7 @@ void Game::updateAirStrikes(float dt) {
             Bomber b;
             b.pos  = first - dir * leadIn;
             b.vel  = dir * speed;
-            b.life = (leadIn + spacing * (N - 1) + 1600.0f) / speed;     // cross + fly off
+            b.life = (leadIn + spacing * (N - 1) + 3200.0f) / speed;     // cross + fly well past screen
             bombers_.push_back(b);
         } else {
             // Static barrage (70%): 1-3 shells near/on a player.

@@ -306,14 +306,14 @@ void Game::renderBystanders() {
         int sx = (int)sp.x, sy = (int)sp.y;
         if (sx < -64 || sx > SCREEN_W + 64 || sy < -64 || sy > SCREEN_H + 64) continue;
 
-        SDL_Color col; const char* tag = "";
+        SDL_Color col; const char* tag = ""; uint8_t ent = 0xFF;
         switch (b.kind) {
             case Bystander::Kind::Civilian: col = {120, 220, 255, 255}; tag = "CIV"; break;
             case Bystander::Kind::Operator: col = {255, 230, 140, 255}; tag = "SURR"; break;
-            case Bystander::Kind::MedRelay: col = {120, 255, 160, 255}; tag = "MED"; break;
-            case Bystander::Kind::Power:    col = {255, 230,  80, 255}; tag = "PWR"; break;
-            case Bystander::Kind::Water:    col = { 90, 180, 255, 255}; tag = "H2O"; break;
-            case Bystander::Kind::Antenna:  col = {200, 160, 255, 255}; tag = "ANT"; break;
+            case Bystander::Kind::MedRelay: col = {120, 255, 160, 255}; tag = "MED"; ent = ENTITY_INFRA_MEDRELAY; break;
+            case Bystander::Kind::Power:    col = {255, 230,  80, 255}; tag = "PWR"; ent = ENTITY_INFRA_POWER;    break;
+            case Bystander::Kind::Water:    col = { 90, 180, 255, 255}; tag = "H2O"; ent = ENTITY_INFRA_WATER;    break;
+            case Bystander::Kind::Antenna:  col = {200, 160, 255, 255}; tag = "ANT"; ent = ENTITY_INFRA_ANTENNA;  break;
         }
         int half = (int)b.radius;
         bool people = (b.kind == Bystander::Kind::Civilian || b.kind == Bystander::Kind::Operator);
@@ -326,19 +326,25 @@ void Game::renderBystanders() {
             SDL_SetRenderDrawColor(renderer_, 30, 30, 40, 255);
             SDL_RenderDrawRect(renderer_, &body);
         } else {
-            // infrastructure: bevelled box with HP bar
+            // infrastructure: sprite (or a tinted box if missing) with HP bar
             SDL_Rect box = {sx - half, sy - half, half * 2, half * 2};
-            SDL_SetRenderDrawColor(renderer_, col.r/3, col.g/3, col.b/3, 235);
-            SDL_RenderFillRect(renderer_, &box);
-            SDL_SetRenderDrawColor(renderer_, col.r, col.g, col.b, 255);
-            SDL_RenderDrawRect(renderer_, &box);
+            const char* path = infraSpritePath(ent);
+            SDL_Texture* tex = path ? Assets::instance().loadRelTex(path) : nullptr;
+            if (tex) {
+                SDL_RenderCopy(renderer_, tex, nullptr, &box);
+            } else {
+                SDL_SetRenderDrawColor(renderer_, col.r/3, col.g/3, col.b/3, 235);
+                SDL_RenderFillRect(renderer_, &box);
+                SDL_SetRenderDrawColor(renderer_, col.r, col.g, col.b, 255);
+                SDL_RenderDrawRect(renderer_, &box);
+            }
             float hpRatio = (b.maxHp > 0) ? std::max(0.0f, b.hp / b.maxHp) : 1.0f;
             SDL_Rect bar = {sx - half, sy - half - 8, (int)(half * 2 * hpRatio), 4};
             SDL_SetRenderDrawColor(renderer_, 80, 230, 110, 255);
             SDL_RenderFillRect(renderer_, &bar);
         }
         SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
-        ui_.drawText(tag, sx - ui_.textWidth(tag, 11) / 2, sy + half/2 + 2, 11, col);
+        ui_.drawText(tag, sx - ui_.textWidth(tag, 11) / 2, sy + (people ? half/2 : half) + 2, 11, col);
     }
 }
 

@@ -5,11 +5,13 @@
 #include "assets.h"
 #include "ui.h"
 #include "cutscene_editor.h"
+#include "cutscene.h"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 #include <string>
 #include <vector>
 #include <deque>
+#include <cmath>
 
 // Undo/redo snapshot (full map state)
 struct UndoState {
@@ -20,6 +22,12 @@ struct UndoState {
     std::vector<MapTrigger>  triggers;
     std::vector<EnemySpawn>  enemySpawns;
     std::vector<PropSpawn>   props;
+    // Trigger configs live in the cutscene library but are keyed by trigger
+    // index, so they must be undone together with the triggers themselves.
+    std::vector<TriggerVarAction>   trigVarActions;
+    std::vector<TriggerCondition>   trigConditions;
+    std::vector<TriggerMapLoad>     trigMapLoads;
+    std::vector<TriggerMultiConfig> trigMultiConfigs;
 };
 
 // Editor tile palette entry (loaded from tiles/ subfolders)
@@ -65,6 +73,18 @@ static constexpr uint8_t ENTITY_SPITTER        = 15;
 static constexpr uint8_t ENTITY_WARDEN         = 16;
 static constexpr uint8_t ENTITY_TYPE_COUNT     = 17;
 
+// Sprite for an infrastructure entity (nullptr for everything else).
+// ponytail: Kenney CC0 placeholders, swap the PNGs for final art
+inline const char* infraSpritePath(uint8_t entityType) {
+    switch (entityType) {
+        case ENTITY_INFRA_MEDRELAY: return "sprites/props/infra_medrelay.png";
+        case ENTITY_INFRA_POWER:    return "sprites/props/infra_power.png";
+        case ENTITY_INFRA_WATER:    return "sprites/props/infra_water.png";
+        case ENTITY_INFRA_ANTENNA:  return "sprites/props/infra_antenna.png";
+        default:                    return nullptr;
+    }
+}
+
 // Trigger placement ghost
 struct TriggerGhost {
     TriggerType type = TriggerType::LevelStart;
@@ -95,6 +115,7 @@ struct EditorConfig {
     std::vector<std::string> availableMaps; // scanned .csm files
     int    field     = 0;        // currently selected field
     int    loadIdx   = 0;        // selected map index for loading
+    Uint32 lastListClickT = 0;   // for double-click-to-open in the map list
     bool   textEditing = false;
     std::string textBuf;
     int    gpCharIdx = 0;        // gamepad char palette index
@@ -120,6 +141,7 @@ public:
     // Test play - set by editor, checked by Game
     bool wantsTestPlay() const { return wantsTestPlay_; }
     void clearTestPlay() { wantsTestPlay_ = false; }
+    void requestTestPlay() { wantsTestPlay_ = true; }
     CustomMap& getMap() { return map_; }
 
     // Set map metadata
@@ -139,7 +161,7 @@ public:
     // True when a text field (config or cutscene editor) is capturing typing,
     // so the host can keep ESC/Backspace/Enter from leaking into menu actions.
     bool isTextEditing() const {
-        return config_.textEditing || trigCondEditingName_ || trigMultiCooldownEditing_ ||
+        return config_.textEditing || trigText_ != TrigText::None ||
                varListEditingName_ || varListEditingValue_ ||
                (showCutsceneEditor_ && csEditor_.textEditing());
     }
@@ -212,11 +234,14 @@ private:
     float origTrigW_ = 0, origTrigH_ = 0;
     float origTrigX_ = 0, origTrigY_ = 0;
 
-    // Inline text editing for trigger condition variable name
-    bool        trigCondEditingName_ = false;
-    std::string trigCondNameBuf_;
-    bool        trigMultiCooldownEditing_ = false;
-    std::string trigMultiCooldownBuf_;
+    // Inline text editing of the selected trigger's config fields
+    enum class TrigText : uint8_t { None, CondName, Cooldown, VarKey, MapPath };
+    TrigText    trigText_ = TrigText::None;
+    std::string trigTextBuf_;
+    void beginTrigText(TrigText field, const std::string& initial);
+    void endTrigText(bool commit);
+    int  trigTextIdx_ = -1;  // trigger being edited (commit target)
+    void trigTextField(TrigText field, const std::string& value, int x, int y, int w, int h);
 
     // Move drag (grab ball or object body)
     bool  draggingMove_  = false;
@@ -274,6 +299,12 @@ private:
     // used so canvas painting never happens under a panel.
     int leftPanelH_   = 0;  // properties/context panel at x=8, y=TOOLBAR_H+8, w=220
     int mapPropsH_    = 0;  // map properties panel height (right side)
+    int varListX_     = 0;  // variables panel rect (right side)
+    int varListY_     = 0;
+    int varListH_     = 0;  // variables panel height (0 = not shown)
+
+    // Exit guard: first Esc with unsaved changes only warns
+    float exitArmedT_ = 0.0f;
 
     // Gamepad virtual cursor
     float cursorX_ = 640.0f;     // virtual cursor X
@@ -299,11 +330,23 @@ private:
     float screenToWorldY(int sy) const { return (float)(sy - uiToolbarH()) / zoom_ + camera_.pos.y; }
     int   worldToScreenX(float wx) const { return (int)((wx - camera_.pos.x) * zoom_); }
     int   worldToScreenY(float wy) const { return (int)((wy - camera_.pos.y) * zoom_) + uiToolbarH(); }
+    // floor, not truncation: world -0.5 is tile -1, not tile 0
+    static int worldToTile(float w) { return (int)floorf(w / TILE_SIZE); }
 
     // Methods
+    UndoState snapshot() const;
+    void restore(const UndoState& s);
     void pushUndo();
     void undo();
     void redo();
+    void deleteTrigger(int idx);           // erase + keep trigger configs indexed correctly
+    void deleteEnemy(int idx);
+    void fitView();                        // zoom/center so the whole map is visible
+    void applyConfig();                    // config screen OK: create or load the map
+    bool requestExit();                    // Esc/Back: true when it is OK to leave now
+    bool spacePanHeld() const {            // Space + left drag pans the view
+        return !showCutsceneEditor_ && !isTextEditing() && SDL_GetKeyboardState(nullptr)[SDL_SCANCODE_SPACE];
+    }
     bool isOverUI(int sx, int sy) const;   // true when a UI panel covers this point
     void floodFill(int tx, int ty);        // bucket fill with selected tile
     void pickTileAt(int tx, int ty, float wx, float wy);  // eyedropper

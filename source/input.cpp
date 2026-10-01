@@ -1347,9 +1347,9 @@ void Game::handleInput() {
 #endif
                 }
 #ifdef __SWITCH__
-                else { logOffConfirm_ = false; menuSelection_ = 10; }
+                else { logOffConfirm_ = false; confirmInput_ = false; menuSelection_ = 9; }
 #else
-                else { logOffConfirm_ = false; menuSelection_ = 11; }
+                else { logOffConfirm_ = false; confirmInput_ = false; menuSelection_ = 10; }
 #endif
             }
 #ifdef __SWITCH__
@@ -1495,9 +1495,10 @@ void Game::handleInput() {
         // Generated Map Settings submenu: gamepad/keyboard navigable. Skip nav while
         // a soft keyboard is capturing input (map dim / HP / seed typing).
         if (!mapDimTyping_ && !hpTyping_ && !seedTyping_) {
-            playSubSel_ = std::clamp(playSubSel_, 0, PLAY_GEN_ROWS - 1);
-            if (moveInput_.y < -0.5f) playSubSel_ = std::max(0, playSubSel_ - 1);
-            if (moveInput_.y >  0.5f) playSubSel_ = std::min(PLAY_GEN_ROWS - 1, playSubSel_ + 1);
+            // Propagate the debounced menuSelection_ (driven by D-pad and analog stick
+            // with proper hold-repeat) so the submenu cursor doesn't jump every frame.
+            playSubSel_ = std::clamp(menuSelection_, 0, PLAY_GEN_ROWS - 1);
+            menuSelection_ = playSubSel_;  // mirror back so clamping is visible
             if (leftInput_)    playGeneratedAction(playSubSel_, -1);
             if (rightInput_)   playGeneratedAction(playSubSel_, +1);
             if (confirmInput_) playGeneratedAction(playSubSel_, 0);
@@ -1600,9 +1601,10 @@ void Game::handleInput() {
     else if (state_ == GameState::ConfigMenu && configSub_ == 1) {
         // Gameplay & Comfort submenu: navigable by gamepad/keyboard as well as mouse.
         // Up/Down move the cursor, Left/Right adjust, Confirm toggles, Back closes.
-        configSubSel_ = std::clamp(configSubSel_, 0, CONFIG_GP_ROWS - 1);
-        if (moveInput_.y < -0.5f) configSubSel_ = std::max(0, configSubSel_ - 1);
-        if (moveInput_.y >  0.5f) configSubSel_ = std::min(CONFIG_GP_ROWS - 1, configSubSel_ + 1);
+        // Propagate the debounced menuSelection_ (driven by D-pad and analog stick
+        // with proper hold-repeat) so the submenu cursor doesn't jump every frame.
+        configSubSel_ = std::clamp(menuSelection_, 0, CONFIG_GP_ROWS - 1);
+        menuSelection_ = configSubSel_;  // mirror back so clamping is visible
         if (leftInput_)    configGameplayAction(configSubSel_, -1);
         if (rightInput_)   configGameplayAction(configSubSel_, +1);
         if (confirmInput_) configGameplayAction(configSubSel_, 0);
@@ -1794,14 +1796,9 @@ void Game::handleInput() {
         // Config screen handles its own input; transitions checked in run loop
     }
     else if (state_ == GameState::Editor) {
-        // Editor handles its own input via SDL events above. Only ESC exits,
-        // and never while a text field is being edited (Backspace must never
-        // exit - it is used to delete tiles/objects and edit fields).
-        if (pauseInput_ && !editor_.isTextEditing()) {
-            editor_.setActive(false);
-            state_ = GameState::MainMenu;
-            menuSelection_ = 0;
-        }
+        // Editor handles its own input (incl. Esc -> exit with unsaved-changes
+        // guard) via SDL events above; pauseInput_ is already folded into
+        // backInput_ for this state, so nothing to do here.
     }
     else if (state_ == GameState::MapSelect) {
         int maxIdx = std::max(0, (int)mapFiles_.size() - 1);
@@ -1888,7 +1885,12 @@ void Game::handleInput() {
             else { state_ = GameState::MainMenu; }
         }
         if (confirmInput_) {
-            if (menuSelection_ == 0 && !customMap_.name.empty() && !testPlayFromEditor_) {
+            if (menuSelection_ == 0 && testPlayFromEditor_) {
+                // Retry an editor playtest: bounce through the editor, which restarts it
+                testPlayFromEditor_ = false;
+                state_ = GameState::Editor;
+                editor_.requestTestPlay();
+            } else if (menuSelection_ == 0 && !customMap_.name.empty()) {
                 startCustomMap("maps/" + customMap_.name + ".csm");
             } else {
                 playMenuMusic(); menuSelection_ = 0; playingCustomMap_ = false;

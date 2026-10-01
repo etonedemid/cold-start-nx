@@ -104,6 +104,9 @@ struct Context {
     SDL_Texture*  desktopBg = nullptr; // optional background image for drawDesktop()
     TextCache     textCache;
 
+    // Console UI mode: larger fonts, bigger buttons, more spacing
+    bool consoleUI_ = false;
+
     // Mouse / touch state - updated each frame from SDL events
     int  mouseX  = 0;
     int  mouseY  = 0;
@@ -138,6 +141,17 @@ struct Context {
     void beginFrame(float dt, bool gamepad);
     void endFrame();
     void shutdown();
+
+    // Console UI helpers - return scaled values based on consoleUI_ mode
+    int menuFontSize() const;
+    int menuSelFontSize() const;
+    int win98ButtonHeight() const;
+    int win98ButtonFontSize() const;
+    int statusBarHeight() const;
+    int statusBarFontSize() const;
+    int hintBarFontSize() const;
+    int menuItemHeight() const;
+    int buttonGap() const;
 
     // Drawing Helpers
 
@@ -191,6 +205,8 @@ struct Context {
 
     // Full window chrome: silver bg + bevel + navy title bar + close button
     void drawWin98Window(int x, int y, int w, int h, const char* title, bool active = true);
+    // True (and consumes the click) when the title-bar [X] of that window was clicked
+    bool win98CloseClicked(int x, int y, int w);
 
     // 3D button with click animation; returns true when activated
     bool win98Button(int idx, const char* label, int x, int y, int w, int h, bool sel);

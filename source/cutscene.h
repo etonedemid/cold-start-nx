@@ -5,6 +5,7 @@
 #include <vector>
 #include <unordered_map>
 #include <functional>
+#include <algorithm>
 #include <cstdint>
 
 // ---- Enums ----
@@ -284,6 +285,21 @@ struct CutsceneLibrary {
         cutscenes.clear(); onDeathId.clear();
         triggerVarActions.clear(); triggerConditions.clear(); triggerMapLoads.clear();
         triggerMultiConfigs.clear(); varDefaults.clear();
+    }
+    bool empty() const {
+        return cutscenes.empty() && onDeathId.empty() && triggerVarActions.empty() &&
+               triggerConditions.empty() && triggerMapLoads.empty() &&
+               triggerMultiConfigs.empty() && varDefaults.empty();
+    }
+    // Trigger configs are keyed by index into map.triggers[]; call this when
+    // trigger `idx` is erased so configs stay attached to the right triggers.
+    void onTriggerErased(int idx) {
+        auto fix = [idx](auto& v) {
+            v.erase(std::remove_if(v.begin(), v.end(),
+                        [idx](const auto& e) { return e.triggerIndex == idx; }), v.end());
+            for (auto& e : v) if (e.triggerIndex > idx) e.triggerIndex--;
+        };
+        fix(triggerVarActions); fix(triggerConditions); fix(triggerMapLoads); fix(triggerMultiConfigs);
     }
     const Cutscene* findById(const std::string& id) const {
         for (const auto& cs : cutscenes) if (cs.id == id) return &cs;

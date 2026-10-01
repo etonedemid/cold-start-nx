@@ -39,7 +39,8 @@ SDL2_ROOT="$MINGW_DEPS/SDL2-2.30.11/x86_64-w64-mingw32"
 SDL2_IMAGE_ROOT="$MINGW_DEPS/SDL2_image-2.8.2/x86_64-w64-mingw32"
 SDL2_TTF_ROOT="$MINGW_DEPS/SDL2_ttf-2.24.0/x86_64-w64-mingw32"
 SDL2_MIXER_ROOT="$MINGW_DEPS/SDL2_mixer-2.8.1/x86_64-w64-mingw32"
-CURL_ROOT="$MINGW_DEPS/curl-build/curl-8.20.0_5-win64-mingw"
+# Official curl.se Windows build (any version): curl-build/curl-*-win64-mingw
+CURL_ROOT="$(ls -d "$MINGW_DEPS"/curl-build/curl-*win64*mingw* 2>/dev/null | sort -V | tail -1)"
 MINIUPNPC_ROOT="$MINGW_DEPS/miniupnpc-win64"
 COMPAT_HEADER="$MINGW_DEPS/mingw_compat.h"
 
@@ -80,9 +81,9 @@ if [[ "$SKIP_WIN" == false ]]; then
             -DSDL2_ttf_DIR="$SDL2_TTF_ROOT/lib/cmake/SDL2_ttf" \
             -DSDL2_mixer_DIR="$SDL2_MIXER_ROOT/lib/cmake/SDL2_mixer" \
             -DCURL_INCLUDE_DIR="$CURL_ROOT/include" \
-            -DCURL_LIBRARY="$CURL_ROOT/lib/libcurl.a" \
+            -DCURL_LIBRARY="$CURL_ROOT/lib/libcurl.dll.a" \
             -DMINIUPNPC_INCLUDE_DIR="$MINIUPNPC_ROOT/include" \
-            -DMINIUPNPC_LIBRARY="$MINIUPNPC_ROOT/lib/libminiupnpc.a" \
+            -DMINIUPNPC_LIBRARY="$MINIUPNPC_ROOT/lib/libminiupnpc.dll.a" \
             -DCMAKE_INCLUDE_PATH="$SDL2_ROOT/include;$SDL2_IMAGE_ROOT/include;$SDL2_TTF_ROOT/include;$SDL2_MIXER_ROOT/include" \
             -DCMAKE_CXX_FLAGS="-include $COMPAT_HEADER -D_WIN32_WINNT=0x0600 -I$SDL2_ROOT/include -I$SDL2_IMAGE_ROOT/include -I$SDL2_TTF_ROOT/include -I$SDL2_MIXER_ROOT/include" \
             -DCMAKE_C_FLAGS="-include $COMPAT_HEADER -D_WIN32_WINNT=0x0600" \
@@ -112,22 +113,28 @@ if [[ "$SKIP_WIN" == false ]]; then
         fi
     done
 
-    # SDL2 DLLs (from your mingw-deps builds)
-    sdlDllDirs=(
+    # Workaround: Arch MinGW GCC 16 builds SDL2 with DW2 unwind but only ships SEH runtime.
+    # Copy seh as dw2 so the DLLs can find their expected symbol names.
+    if [[ -f "$winStage/libgcc_s_seh-1.dll" ]]; then
+        cp "$winStage/libgcc_s_seh-1.dll" "$winStage/libgcc_s_dw2-1.dll"
+    fi
+
+    # All DLLs from mingw-deps bin directories (SDL2_image/ttf/mixer + codecs + FreeType/HarfBuzz)
+    allDllDirs=(
         "$SDL2_ROOT/bin"
         "$SDL2_IMAGE_ROOT/bin"
         "$SDL2_TTF_ROOT/bin"
         "$SDL2_MIXER_ROOT/bin"
+        "$CURL_ROOT/bin"
+        "$MINGW_DEPS/freetype-build/bin"
+        "$MINIUPNPC_ROOT/bin"
     )
-    for dir in "${sdlDllDirs[@]}"; do
-        for dll in "$dir"/*.dll; do
-            [[ -f "$dll" ]] && cp "$dll" "$winStage/"
-        done
-    done
-
-    # curl DLL if present (dynamic build)
-    for dll in "$CURL_ROOT/bin"/*.dll; do
-        [[ -f "$dll" ]] && cp "$dll" "$winStage/"
+    for dir in "${allDllDirs[@]}"; do
+        if [[ -d "$dir" ]]; then
+            for dll in "$dir"/*.dll; do
+                [[ -f "$dll" ]] && cp "$dll" "$winStage/"
+            done
+        fi
     done
 
     # Any DLLs cmake placed next to the exe

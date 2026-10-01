@@ -930,8 +930,8 @@ static int dlgText(SDL_Renderer* r, const char* text, int x, int y, int size,
     TTF_Font* f = Assets::instance().font(size);
     if (!f || !text || !text[0]) return 0;
     SDL_Surface* surf = (wrapW > 0)
-        ? TTF_RenderText_Blended_Wrapped(f, text, c, wrapW)
-        : TTF_RenderText_Blended(f, text, c);
+        ? TTF_RenderUTF8_Blended_Wrapped(f, text, c, wrapW)
+        : TTF_RenderUTF8_Blended(f, text, c);
     if (!surf) return 0;
     SDL_Texture* t = SDL_CreateTextureFromSurface(r, surf);
     int h = surf->h;

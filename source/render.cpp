@@ -253,6 +253,7 @@ void Game::render() {
 
         if (state_ == GameState::Paused)   renderPauseMenu();
         if (state_ == GameState::Workshop) renderWorkshopMenu();
+
         if (state_ == GameState::Dead)     renderDeathScreen();
         break;
 
@@ -834,6 +835,7 @@ void Game::render() {
     touchControls_.render(renderer_, config_.uiScale);
 #endif
 
+    renderAssetToast();
     SDL_RenderPresent(renderer_);
 }
 
@@ -853,16 +855,81 @@ void Game::renderPostFXComposite(bool gameplayView) {
 
     if (!sceneTarget_) return;
 
-    // CRT power-on: after a loading screen we "warm up" the tube, expanding the
-    // freshly-rendered scene from a bright horizontal seam into the full frame
-    // before the normal CRT overlays take over.
-    if (gameplayView && crtWarmup_ > 0.0f) {
-        float t = 1.0f - crtWarmup_ / kCrtWarmupSec;
-        if (t < 0.0f) t = 0.0f;
-        if (t > 1.0f) t = 1.0f;
-        renderCrtPowerOn(t);
+    // CRT power-on. The CRT "tells" (scanlines / phosphor / vignette) are drawn
+    // FULL-SCREEN for the whole warm-up, so the tube reads as ON across the black
+    // screen from the first frame - before the picture appears. The picture itself
+    // (scene + chromatic/glow/glitch/acid) is clipped to a band that first holds as
+    // a thin seam on the CRT-black for a beat, then opens vertically to reveal
+    // gameplay. Net: the CRT is on "on the black screen that's about to open", not
+    // snapped on at the end.
+    bool  warming   = gameplayView && crtWarmup_ > 0.0f;
+    float warmT     = 1.0f;
+    int   warmBy    = 0;
+    int   warmBandH = SCREEN_H;
+    if (warming) {
+        warmT = 1.0f - crtWarmup_ / kCrtWarmupSec;
+        if (warmT < 0.0f) warmT = 0.0f;
+        if (warmT > 1.0f) warmT = 1.0f;
         crtWarmup_ = std::max(0.0f, crtWarmup_ - dt_);
-        return;
+
+        const float holdEnd   = 0.30f;   // CRT-black-with-seam beat before the picture opens
+        const float expandEnd = 0.75f;
+        float bandH;
+        if (warmT < holdEnd) {
+            bandH = 2.0f;                                    // just the seam on CRT-black
+        } else if (warmT < expandEnd) {
+            float k = (warmT - holdEnd) / (expandEnd - holdEnd);
+            k = 1.0f - (1.0f - k) * (1.0f - k);              // ease-out
+            bandH = std::max(2.0f, k * (float)SCREEN_H);
+        } else {
+            bandH = (float)SCREEN_H;
+        }
+        warmBandH = (int)bandH;
+        warmBy    = (int)(((float)SCREEN_H - bandH) * 0.5f);
+    }
+
+    // Cutscene camera rotation. Applied uniformly to the WHOLE picture layer
+    // (scene + chromatic + glow + glitch + acid) by rendering that layer into an
+    // offscreen target and rotating the single resulting composite around the
+    // screen center when we resolve it to the backbuffer. This makes rotation
+    // work no matter which shaders are on (including shaderCRT's per-strip curve
+    // pass, which previously bypassed rotation entirely), and keeps every FX
+    // layer pinned together instead of only the base scene copy rotating while
+    // chromatic/glow/glitch/acid stayed screen-locked.
+    float csRot    = (gameplayView && csPlay_.active) ? csPlay_.cam.rotation : 0.0f;
+    bool  rotating = fabsf(csRot) > 0.01f;
+
+    static SDL_Texture* pictureTarget  = nullptr;
+    static int          pictureTargetW = 0;
+    static int          pictureTargetH = 0;
+    if (rotating) {
+        if (!pictureTarget || pictureTargetW != SCREEN_W || pictureTargetH != SCREEN_H) {
+            if (pictureTarget) SDL_DestroyTexture(pictureTarget);
+            Uint32 fmt = SDL_PIXELFORMAT_RGBA8888;
+            Uint32 qfmt; int qacc, qw, qh;
+            if (SDL_QueryTexture(sceneTarget_, &qfmt, &qacc, &qw, &qh) == 0) fmt = qfmt;
+            pictureTarget = SDL_CreateTexture(renderer_, fmt, SDL_TEXTUREACCESS_TARGET, SCREEN_W, SCREEN_H);
+            SDL_SetTextureBlendMode(pictureTarget, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureScaleMode(pictureTarget, SDL_ScaleModeLinear); // smoother rotated edges
+            pictureTargetW = SCREEN_W;
+            pictureTargetH = SCREEN_H;
+        }
+    }
+
+    SDL_Texture* prevTarget = SDL_GetRenderTarget(renderer_);
+    if (rotating && pictureTarget) {
+        SDL_SetRenderTarget(renderer_, pictureTarget);
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 0);
+        SDL_RenderClear(renderer_);
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    } else {
+        rotating = false; // texture creation failed - fall back to the old unrotated path
+    }
+
+    if (warming) {
+        SDL_Rect clip = {0, warmBy, SCREEN_W, warmBandH};
+        SDL_RenderSetClipRect(renderer_, &clip);   // clips the picture; reset before the CRT tells
     }
 
     // Use base viewport dimensions for rendering
@@ -896,12 +963,16 @@ void Game::renderPostFXComposite(bool gameplayView) {
             SDL_Rect dst = {inset, y, dstW, h};
             SDL_RenderCopy(renderer_, sceneTarget_, &src, &dst);
         }
+    } else if (rotating) {
+        // Rotation is handled once, uniformly, when we resolve pictureTarget to
+        // the backbuffer below - draw the base scene straight here.
+        SDL_RenderCopy(renderer_, sceneTarget_, nullptr, &full);
     } else {
-        float csRot = csPlay_.active ? csPlay_.cam.rotation : 0.0f;
-        if (fabsf(csRot) > 0.01f) {
+        float csRotLegacy = csRot; // unrotated path never reaches here with rotation active
+        if (fabsf(csRotLegacy) > 0.01f) {
             SDL_Point center = { SCREEN_W / 2, SCREEN_H / 2 };
             SDL_RenderCopyEx(renderer_, sceneTarget_, nullptr, &full,
-                             (double)csRot, &center, SDL_FLIP_NONE);
+                             (double)csRotLegacy, &center, SDL_FLIP_NONE);
         } else {
             SDL_RenderCopy(renderer_, sceneTarget_, nullptr, &full);
         }
@@ -956,6 +1027,72 @@ void Game::renderPostFXComposite(bool gameplayView) {
             SDL_SetTextureAlphaMod(sceneTarget_, 255);
         }
 
+        // Acid PostFX - drawn here (still part of the picture layer) so it
+        // rotates with the camera along with everything else.
+        if (acidFXFade_ > 0.001f) {
+            float a = acidFXFade_;
+            float t = acidFXTimer_;
+
+            // 1. Green tint overlay using additive draw
+            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_ADD);
+            Uint8 tr = (Uint8)(acidColor1_.r * 0.18f * a);
+            Uint8 tg = (Uint8)(acidColor1_.g * 0.22f * a);
+            Uint8 tb = (Uint8)(acidColor1_.b * 0.12f * a);
+            SDL_SetRenderDrawColor(renderer_, tr, tg, tb, (Uint8)(60 * a));
+            SDL_RenderFillRect(renderer_, &full);
+
+            // 2. Animated wavy scan lines (acid ripple approximation)
+            int waveCount = 6;
+            for (int w = 0; w < waveCount; w++) {
+                float phase = t * 1.2f + w * (float)M_PI * 2.0f / waveCount;
+                int y = (int)((0.1f + 0.8f * (w / (float)waveCount)) * SCREEN_H);
+                float waveY = y + sinf(phase) * 12.0f * a;
+                int iy = (int)waveY;
+                Uint8 wr = (Uint8)(acidColor1_.r * 0.6f * a);
+                Uint8 wg = (Uint8)(acidColor1_.g * 0.7f * a);
+                Uint8 wb = (Uint8)(acidColor1_.b * 0.5f * a);
+                SDL_SetRenderDrawColor(renderer_, wr, wg, wb, (Uint8)(30 * a));
+                for (int h = 0; h < 3; h++)
+                    SDL_RenderDrawLine(renderer_, 0, iy + h, SCREEN_W, iy + h);
+            }
+
+            // 3. Edge foam (lime-green border glow)
+            float foamPulse = 0.5f + 0.5f * sinf(t * 3.0f);
+            Uint8 fr = (Uint8)(acidColor2_.r * foamPulse * a);
+            Uint8 fg = (Uint8)(acidColor2_.g * foamPulse * a);
+            Uint8 fb = (Uint8)(acidColor2_.b * foamPulse * a);
+            Uint8 fa = (Uint8)(40 * foamPulse * a);
+            for (int i = 0; i < 8; i++) {
+                SDL_SetRenderDrawColor(renderer_, fr, fg, fb, fa);
+                SDL_Rect border = {i, i, SCREEN_W - i * 2, SCREEN_H - i * 2};
+                SDL_RenderDrawRect(renderer_, &border);
+            }
+
+            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        }
+    }
+
+    // --- End of the picture layer. If we were rendering it offscreen because the
+    // camera is rotated, resolve it back to the real target now, rotated as one
+    // unit around the screen center. ---
+    if (rotating) {
+        SDL_RenderSetClipRect(renderer_, nullptr);
+        SDL_SetRenderTarget(renderer_, prevTarget);
+
+        SDL_SetTextureBlendMode(pictureTarget, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureColorMod(pictureTarget, 255, 255, 255);
+        SDL_SetTextureAlphaMod(pictureTarget, 255);
+        SDL_Point center = { SCREEN_W / 2, SCREEN_H / 2 };
+        SDL_RenderCopyEx(renderer_, pictureTarget, nullptr, &full,
+                         (double)csRot, &center, SDL_FLIP_NONE);
+    }
+
+    if (gameplayView) {
+        // From here the CRT "tells" are drawn full-screen (clip reset, unrotated),
+        // so the tube reads as on across the whole screen regardless of what the
+        // in-world picture is doing.
+        if (warming && !rotating) SDL_RenderSetClipRect(renderer_, nullptr);
+
         // Scanlines
         SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
         if (config_.shaderScanlines) {
@@ -1001,49 +1138,28 @@ void Game::renderPostFXComposite(bool gameplayView) {
                 SDL_RenderFillRect(renderer_, &rightBand);
             }
         }
+    }
 
-        // Acid PostFX
-        if (acidFXFade_ > 0.001f) {
-            float a = acidFXFade_;
-            float t = acidFXTimer_;
-
-            // 1. Green tint overlay using additive draw
-            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_ADD);
-            Uint8 tr = (Uint8)(acidColor1_.r * 0.18f * a);
-            Uint8 tg = (Uint8)(acidColor1_.g * 0.22f * a);
-            Uint8 tb = (Uint8)(acidColor1_.b * 0.12f * a);
-            SDL_SetRenderDrawColor(renderer_, tr, tg, tb, (Uint8)(60 * a));
-            SDL_RenderFillRect(renderer_, &full);
-
-            // 2. Animated wavy scan lines (acid ripple approximation)
-            int waveCount = 6;
-            for (int w = 0; w < waveCount; w++) {
-                float phase = t * 1.2f + w * (float)M_PI * 2.0f / waveCount;
-                int y = (int)((0.1f + 0.8f * (w / (float)waveCount)) * SCREEN_H);
-                float waveY = y + sinf(phase) * 12.0f * a;
-                int iy = (int)waveY;
-                Uint8 wr = (Uint8)(acidColor1_.r * 0.6f * a);
-                Uint8 wg = (Uint8)(acidColor1_.g * 0.7f * a);
-                Uint8 wb = (Uint8)(acidColor1_.b * 0.5f * a);
-                SDL_SetRenderDrawColor(renderer_, wr, wg, wb, (Uint8)(30 * a));
-                for (int h = 0; h < 3; h++)
-                    SDL_RenderDrawLine(renderer_, 0, iy + h, SCREEN_W, iy + h);
-            }
-
-            // 3. Edge foam (lime-green border glow)
-            float foamPulse = 0.5f + 0.5f * sinf(t * 3.0f);
-            Uint8 fr = (Uint8)(acidColor2_.r * foamPulse * a);
-            Uint8 fg = (Uint8)(acidColor2_.g * foamPulse * a);
-            Uint8 fb = (Uint8)(acidColor2_.b * foamPulse * a);
-            Uint8 fa = (Uint8)(40 * foamPulse * a);
-            for (int i = 0; i < 8; i++) {
-                SDL_SetRenderDrawColor(renderer_, fr, fg, fb, fa);
-                SDL_Rect border = {i, i, SCREEN_W - i * 2, SCREEN_H - i * 2};
-                SDL_RenderDrawRect(renderer_, &border);
-            }
-
-            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    // Power-on flair, drawn unclipped on top of the (clipped) CRT picture: bright
+    // scan seams at the opening band's edges + a phosphor flash that fades out.
+    if (warming) {
+        SDL_RenderSetClipRect(renderer_, nullptr);
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_ADD);
+        if (warmT < 0.55f) {
+            Uint8 a = (Uint8)(220.0f * (1.0f - warmT / 0.55f));
+            SDL_SetRenderDrawColor(renderer_, 210, 230, 255, a);
+            SDL_Rect topEdge = {0, warmBy, SCREEN_W, 2};
+            SDL_Rect botEdge = {0, warmBy + warmBandH - 2, SCREEN_W, 2};
+            SDL_RenderFillRect(renderer_, &topEdge);
+            SDL_RenderFillRect(renderer_, &botEdge);
         }
+        Uint8 flash = (Uint8)(std::max(0.0f, 0.5f - warmT) / 0.5f * 90.0f);
+        if (flash > 0) {
+            SDL_SetRenderDrawColor(renderer_, 150, 190, 255, flash);
+            SDL_Rect fr = {0, 0, SCREEN_W, SCREEN_H};
+            SDL_RenderFillRect(renderer_, &fr);
+        }
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
     }
 }
 
@@ -1985,7 +2101,7 @@ void Game::renderUI() {
     // STATUS readout (top-left) - anchored at (0,0), so a plain scale works.
     {
         SDL_RenderSetScale(renderer_, hudScale, hudScale);
-        const int panX = 8, panY = 8, panW = 188, panH = 92;
+        const int panX = 8, panY = 8, panW = 188, panH = 96;
         const int cx = panX + 9, iW = panW - 18;
         tacPanel(panX, panY, panW, panH);
         int cy = panY + 8;
@@ -2019,6 +2135,8 @@ void Game::renderUI() {
             snprintf(ordBuf, sizeof(ordBuf), "BMB %d", orbiting + player_.bombCount);
         ui_.drawText(ordBuf, cx, cy, 12, HUD_VALUE);
         cy += 16;
+
+
 
         // Parry readiness bar
         bool ready = player_.canParry;
@@ -2400,15 +2518,23 @@ void Game::renderMapLoading() {
         if (mapSetupPending_) finishMapSetup();
         state_ = pendingPlayState_;
         beginCrtWarmup();
+        startLoadedMapMusic();
     }
 }
 
-// Kick off the CRT power-on: arm the warmup animation, play the tube whir, and
-// start the gameplay music so it comes in exactly as the picture appears.
+// Kick off the CRT power-on: arm the warmup animation and play the tube whir.
+// Music is started by the caller (per map type) so it comes in with the picture.
 void Game::beginCrtWarmup() {
     crtWarmup_ = kCrtWarmupSec;
     if (sfxTvShutdown_) playSFX(sfxTvShutdown_, config_.sfxVolume);
-    playActionMusic();
+}
+
+// Start the gameplay track that belongs to the map we're transitioning into.
+void Game::startLoadedMapMusic() {
+    if (pendingPlayState_ == GameState::PlayingCustom)
+        playMapMusic(pendingMapMusicDir_, pendingMapMusicPath_);
+    else
+        playActionMusic();
 }
 
 void Game::renderMultiplayerLoading() {
@@ -2451,48 +2577,9 @@ void Game::renderMultiplayerLoading() {
     if (!net.isOnline() || (allReady && mpLoadReadySent_ && minTime) || timeout) {
         mpLoadActive_ = false;
         beginCrtWarmup();
+        playActionMusic();
     }
 }
-
-// CRT power-on animation. t goes 0 (just switched on) -> 1 (fully warmed up).
-void Game::renderCrtPowerOn(float t) {
-    const float expandEnd = 0.38f;
-    float bandH;
-    if (t < expandEnd) {
-        float k = t / expandEnd;                 // 0..1
-        k = 1.0f - (1.0f - k) * (1.0f - k);      // ease-out for a snappy bloom
-        bandH = std::max(2.0f, k * (float)SCREEN_H);
-    } else {
-        bandH = (float)SCREEN_H;
-    }
-    int by = (int)(((float)SCREEN_H - bandH) * 0.5f);
-    SDL_Rect dst = {0, by, SCREEN_W, (int)bandH};
-
-    SDL_SetTextureBlendMode(sceneTarget_, SDL_BLENDMODE_BLEND);
-    SDL_SetTextureColorMod(sceneTarget_, 255, 255, 255);
-    SDL_SetTextureAlphaMod(sceneTarget_, 255);
-    SDL_RenderCopy(renderer_, sceneTarget_, nullptr, &dst);
-
-    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_ADD);
-    // Bright scan seams at the expanding edges.
-    if (t < 0.55f) {
-        Uint8 a = (Uint8)(220.0f * (1.0f - t / 0.55f));
-        SDL_SetRenderDrawColor(renderer_, 210, 230, 255, a);
-        SDL_Rect topEdge = {0, by, SCREEN_W, 2};
-        SDL_Rect botEdge = {0, by + (int)bandH - 2, SCREEN_W, 2};
-        SDL_RenderFillRect(renderer_, &topEdge);
-        SDL_RenderFillRect(renderer_, &botEdge);
-    }
-    // Whole-tube phosphor flash that fades as the picture settles.
-    Uint8 flash = (Uint8)(std::max(0.0f, 0.5f - t) / 0.5f * 90.0f);
-    if (flash > 0) {
-        SDL_SetRenderDrawColor(renderer_, 150, 190, 255, flash);
-        SDL_Rect full = {0, 0, SCREEN_W, SCREEN_H};
-        SDL_RenderFillRect(renderer_, &full);
-    }
-    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-}
-
 
 std::string getrandomhint() {
     std::vector<std::string> hints = {"also try hotline miami!", "we hit 100 downloads!", "have a good day", "never stop trying", "i hate this codebase", "trololo"};
@@ -2504,6 +2591,23 @@ std::string getrandomhint() {
 }
 
 std::string hint = "Hint: " + getrandomhint() ;
+// Missing-asset toast (top-right, above everything, fades out)
+void Game::renderAssetToast() {
+    reportMissingAssets(false);
+    if (assetToastT_ <= 0.0f) return;
+    assetToastT_ -= dt_;
+    Uint8 a = (Uint8)(255 * std::min(1.0f, std::max(0.0f, assetToastT_)));
+    std::string text = "! " + assetToast_;
+    int tw = ui_.textWidth(text.c_str(), 12);
+    SDL_Rect box = {SCREEN_W - tw - 28, 56, tw + 16, 24};  // below the editor toolbar
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer_, 255, 255, 225, a);
+    SDL_RenderFillRect(renderer_, &box);
+    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, a);
+    SDL_RenderDrawRect(renderer_, &box);
+    ui_.drawText(text.c_str(), box.x + 8, box.y + 5, 12, {150, 0, 0, a});
+}
+
 // Login Screen
 
 void Game::renderLoginScreen() {
@@ -2512,19 +2616,21 @@ void Game::renderLoginScreen() {
     // Teal Win98 desktop
     ui_.drawDesktop();
 
-    // Window dimensions
-    const int winW = 380;
-    const int winH = 240;
-    const int winX = (SCREEN_W - winW) / 2;
-    const int winY = (SCREEN_H - winH) / 2;
+    // Window dimensions (compute before use)
+    const int btnH   = ui_.win98ButtonHeight();
+    const int fieldH = 24;
+    const int rowGap = 36;
+    const int winW   = 380;
+    // Mirrors the layout below: intro text, hint, two field rows, separator, buttons
+    const int winH   = UI::W98::TitleH + 20 + 22 + 28 + rowGap + (rowGap + 8) + 12 + btnH + 16;
+    const int winX   = (SCREEN_W - winW) / 2;
+    const int winY   = std::max(4, (SCREEN_H - winH) / 2);
     ui_.drawWin98Window(winX, winY, winW, winH, "Log On");
 
     const int contentX = winX + 16;
     int       cy       = winY + UI::W98::TitleH + 20;
     const int labelW   = 100;
     const int fieldW   = winW - labelW - 32;
-    const int fieldH   = 24;
-    const int rowGap   = 36;
 
     // Instructional text
     ui_.drawText("Enter your network username and password.", contentX, cy, 12, UI::W98::Black);
@@ -2568,7 +2674,6 @@ void Game::renderLoginScreen() {
 
     // OK / Cancel buttons (centered)
     const int btnW = 80;
-    const int btnH = 26;
     const int gap  = 12;
     int bx = winX + (winW - btnW * 2 - gap) / 2;
 
@@ -2594,7 +2699,7 @@ void Game::renderLoginScreen() {
     }
 
     // Keyboard hint
-    ui_.drawWin98StatusBar(SCREEN_H - 26,
+    ui_.drawWin98StatusBar(SCREEN_H - ui_.statusBarHeight(),
         "Tab: switch field    Enter: OK    Esc: Cancel");
 }
 
@@ -2675,8 +2780,8 @@ void Game::renderMainMenu() {
 #endif
 
     // Window sizing: fit all buttons
-    const int btnH   = 26;
-    const int btnGap = 4;
+    const int btnH   = ui_.win98ButtonHeight();
+    const int btnGap = ui_.buttonGap();
     const int btnW   = 220;
     const int padX   = 16;
     const int padTop = UI::W98::TitleH + 14;
@@ -2917,7 +3022,8 @@ void Game::renderMainMenu() {
     // Status bar
     char statusBuf[80];
     snprintf(statusBuf, sizeof(statusBuf), "AVAOS v1.6");
-    ui_.drawWin98StatusBar(SCREEN_H - 26, statusBuf);
+    const int statusBarH = ui_.statusBarHeight();
+    ui_.drawWin98StatusBar(SCREEN_H - statusBarH, statusBuf);
 
     // Discord button - bottom-right of status bar (Win98-style button with icon)
 #ifndef __SWITCH__
@@ -2925,7 +3031,7 @@ void Game::renderMainMenu() {
         const int btnH  = 22;
         const int btnW  = discordTex_ ? 26 : 70;
         const int btnX  = SCREEN_W - btnW - 2;
-        const int btnY2 = SCREEN_H - 26 + (26 - btnH) / 2;
+        const int btnY2 = SCREEN_H - statusBarH + (statusBarH - btnH) / 2;
         if (ui_.win98Button(300, "", btnX, btnY2, btnW, btnH, false)) {
             SDL_OpenURL("https://discord.gg/dv28MgtaNn");
         }
@@ -3568,8 +3674,8 @@ void Game::renderMainMenu() {
 
 void Game::renderToolsMenu() {
     const int padX   = 14;
-    const int btnH   = 26;
-    const int btnGap = 6;
+    const int btnH   = ui_.win98ButtonHeight();
+    const int btnGap = ui_.buttonGap();
     const int btnW   = 200;
     const int winW   = btnW + padX * 2;
     const int winH   = UI::W98::TitleH + 14 + 3 * (btnH + btnGap) + 4;
@@ -3599,7 +3705,7 @@ void Game::renderToolsMenu() {
         if (ui_.hoveredItem == i && !usingGamepad_) menuSelection_ = i;
         by += btnH + btnGap;
     }
-    ui_.drawWin98StatusBar(SCREEN_H - 26, "Esc: Back");
+    ui_.drawWin98StatusBar(SCREEN_H - ui_.statusBarHeight(), "Esc: Back");
 }
 
 void Game::renderPlayModeMenu() {
@@ -3613,9 +3719,9 @@ void Game::renderPlayModeMenu() {
     const int winW  = 500;
     const int padX  = 14;
     const int padTY = UI::W98::TitleH + 14;
-    const int btnH  = 26;
+    const int btnH  = ui_.win98ButtonHeight();
     const int rowH  = 24;
-    const int gap   = 6;
+    const int gap   = ui_.buttonGap();
 
     // Rows: 3 mode buttons + separator + "Generated Settings" + Cancel
     const int totalRows = 3 + 1 + 1 + 1;
@@ -3674,7 +3780,7 @@ void Game::renderPlayModeMenu() {
     }
     if (ui_.hoveredItem == 4 && !usingGamepad_) { playModeSelection_ = 4; menuSelection_ = 4; }
 
-    ui_.drawWin98StatusBar(SCREEN_H - 26, "Select a play mode or adjust settings.");
+    ui_.drawWin98StatusBar(SCREEN_H - ui_.statusBarHeight(), "Select a play mode or adjust settings.");
 }
 
 // Shared mutation for the Generated Map Settings submenu (mouse < > / gamepad
@@ -3791,11 +3897,11 @@ void Game::renderPlayGeneratedMenu() {
     // Close (row 8)
     {
         bool sel = (playSubSel_ == 8);
-        if (ui_.win98Button(PLAY_GEN_BASE_ID + 16, "Close", lx, y, 80, 26, sel)) playSub_ = 0;
+        if (ui_.win98Button(PLAY_GEN_BASE_ID + 16, "Close", lx, y, 80, ui_.win98ButtonHeight(), sel)) playSub_ = 0;
         if (ui_.hoveredItem == PLAY_GEN_BASE_ID + 16 && !usingGamepad_) playSubSel_ = 8;
     }
 
-    ui_.drawWin98StatusBar(SCREEN_H - 26, "Up/Down select - Left/Right adjust - Enter to type - Esc: Back");
+    ui_.drawWin98StatusBar(SCREEN_H - ui_.statusBarHeight(), "Up/Down select - Left/Right adjust - Enter to type - Esc: Back");
 }
 
 void Game::renderConfigMenu() {
@@ -3955,11 +4061,14 @@ void Game::renderConfigMenu() {
         }
         if (ui_.hoveredItem==CONFIG_BACK_INDEX && !usingGamepad_) { configSelection_=CONFIG_BACK_INDEX; menuSelection_=CONFIG_BACK_INDEX; }
         // Opens the grouped Gameplay & Comfort submenu (mouse-driven, like Tools).
-        if (ui_.win98Button(CONFIG_GAMEPLAY_BTN_ID, "Gameplay && Comfort...", lx + 80, y, winW - padX*2 - 80, 26, false))
+        if (ui_.win98Button(CONFIG_GAMEPLAY_BTN_ID, "Gameplay && Comfort...", lx + 80, y, winW - padX*2 - 80, 26, false)) {
             configSub_ = 1;
+            configSubSel_ = 0;
+            menuSelection_ = 0;  // sync so gamepad nav (dpad/stick) starts at top
+        }
     }
 
-    ui_.drawWin98StatusBar(SCREEN_H - 26, "Click < > to adjust values.  OK to save and close.");
+    ui_.drawWin98StatusBar(SCREEN_H - ui_.statusBarHeight(), "Click < > to adjust values.  OK to save and close.");
 }
 
 // Shared mutation for the Gameplay & Comfort submenu so mouse (< > / toggle) and
@@ -3975,7 +4084,8 @@ void Game::configGameplayAction(int row, int dir) {
         case 5: stepF(config_.uiScale,          0.5f,  2.0f, 0.05f); break;
         case 6: config_.reduceFlashing   = (dir == 0) ? !config_.reduceFlashing   : (dir > 0); break;
         case 7: config_.showFloatingText = (dir == 0) ? !config_.showFloatingText : (dir > 0); break;
-        case 8: if (dir == 0) configSub_ = 0; break; // Close
+        case 8: config_.consoleUI        = (dir == 0) ? !config_.consoleUI        : (dir > 0); break;
+        case 9: if (dir == 0) configSub_ = 0; break; // Close
     }
 }
 
@@ -3990,8 +4100,8 @@ void Game::renderConfigGameplayMenu() {
     const int arrowW = 24;
     const int winW   = 460;
     const int padTY  = UI::W98::TitleH + 14;
-    // section "Gameplay" + 5 rows + section "Comfort" + 3 rows + Close
-    const int numRows = 1 + 5 + 1 + 3 + 1;
+    // section "Gameplay" + 5 rows + section "Comfort" + 4 rows + Close
+    const int numRows = 1 + 5 + 1 + 4 + 1;
     const int winH   = padTY + numRows * (rowH + rowGap) + 16;
     const int winX   = (SCREEN_W - winW) / 2;
     const int winY   = std::max(4, (SCREEN_H - winH) / 2);
@@ -4059,14 +4169,17 @@ void Game::renderConfigGameplayMenu() {
     toggleRow("Reduce Flashing", config_.reduceFlashing, 6);
     toggleRow("Floating Combat Text", config_.showFloatingText, 7);
 
-    // Close button (row 8)
+    sectionLabel("Display");
+    toggleRow("Console UI Mode", config_.consoleUI, 8);
+
+    // Close button (row 9)
     {
-        bool sel = (configSubSel_ == 8);
-        if (ui_.win98Button(CONFIG_GP_BASE_ID + 16, "Close", lx, y, 80, 26, sel)) configSub_ = 0;
-        if (ui_.hoveredItem == CONFIG_GP_BASE_ID + 16 && !usingGamepad_) configSubSel_ = 8;
+        bool sel = (configSubSel_ == 9);
+        if (ui_.win98Button(CONFIG_GP_BASE_ID + 18, "Close", lx, y, 80, ui_.win98ButtonHeight(), sel)) configSub_ = 0;
+        if (ui_.hoveredItem == CONFIG_GP_BASE_ID + 18 && !usingGamepad_) configSubSel_ = 9;
     }
 
-    ui_.drawWin98StatusBar(SCREEN_H - 26, "Up/Down select - Left/Right adjust - Esc: Back");
+    ui_.drawWin98StatusBar(SCREEN_H - ui_.statusBarHeight(), "Up/Down select - Left/Right adjust - Esc: Back");
 }
 
 void Game::renderPauseMenu() {
@@ -4075,11 +4188,11 @@ void Game::renderPauseMenu() {
 
     // Win98 dialog window on top
     const int winW = 300;
-    const int btnH = 26;
+    const int btnH = ui_.win98ButtonHeight();
     const int rowH = 22;
     const int padX = 14;
     const int padTY = UI::W98::TitleH + 14;
-    const int gap = 6;
+    const int gap = ui_.buttonGap();
 
 #ifndef __SWITCH__
     const int numRows = 5; // Resume, Music, SFX, Fullscreen, Main Menu
@@ -4143,6 +4256,10 @@ void Game::renderPauseMenu() {
         by += rowH + gap;
     }
 
+    // Test plays (map editor / character creator) return to their tool
+    const char* exitLabel = !testPlayFromEditor_ ? "Main Menu"
+                          : (state_ == GameState::CustomPaused ? "Back to Editor" : "Back to Creator");
+
 #ifndef __SWITCH__
     // 3: Fullscreen toggle
     {
@@ -4158,13 +4275,13 @@ void Game::renderPauseMenu() {
     }
 
     // 4: Main Menu
-    if (ui_.win98Button(4, "Main Menu", bx, by, winW - padX*2, btnH, menuSelection_ == 4)) {
+    if (ui_.win98Button(4, exitLabel, bx, by, winW - padX*2, btnH, menuSelection_ == 4)) {
         menuSelection_ = 4; confirmInput_ = true;
     }
     if (ui_.hoveredItem == 4 && !usingGamepad_) menuSelection_ = 4;
 #else
     // 3: Main Menu (Switch)
-    if (ui_.win98Button(3, "Main Menu", bx, by, winW - padX*2, btnH, menuSelection_ == 3)) {
+    if (ui_.win98Button(3, exitLabel, bx, by, winW - padX*2, btnH, menuSelection_ == 3)) {
         menuSelection_ = 3; confirmInput_ = true;
     }
     if (ui_.hoveredItem == 3 && !usingGamepad_) menuSelection_ = 3;
@@ -4310,7 +4427,7 @@ void Game::renderWorkshopMenu() {
     SDL_Rect mbBg = {winX, mbY, winW, mbH};
     SDL_RenderFillRect(renderer_, &mbBg);
     ui_.drawText("Browse", winX + 8, mbY + 3, 11, UI::W98::Black);
-    ui_.drawText("Forge / Salvage", winX + 70, mbY + 3, 11, UI::W98::Shadow);
+
 
     // ── Toolbar row (filter buttons mirroring web) ────────────────────────────
     static int wsFilter = 0; // 0=all,1=map,2=pack,3=character,4=item
@@ -4439,8 +4556,8 @@ void Game::renderDeathScreen() {
     ui_.drawDarkOverlay(160, 30, 4, 4);
 
     const int winW    = 340;
-    const int btnH    = 26;
-    const int btnGap  = 6;
+    const int btnH    = ui_.win98ButtonHeight();
+    const int btnGap  = ui_.buttonGap();
     const int padX    = 14;
     const int padTop  = 14;
     const int rowH    = 20;
@@ -4522,12 +4639,13 @@ void Game::renderDeathScreen() {
     if (ui_.hoveredItem == 0 && !usingGamepad_) menuSelection_ = 0;
     cy += btnH + btnGap;
 
-    if (ui_.win98Button(1, "Main Menu", bx, cy, winW - padX * 2, btnH, menuSelection_ == 1)) {
+    const char* exitLabel = (state_ == GameState::CustomDead && testPlayFromEditor_) ? "Back to Editor" : "Main Menu";
+    if (ui_.win98Button(1, exitLabel, bx, cy, winW - padX * 2, btnH, menuSelection_ == 1)) {
         menuSelection_ = 1; confirmInput_ = true;
     }
     if (ui_.hoveredItem == 1 && !usingGamepad_) menuSelection_ = 1;
 
-    ui_.drawWin98StatusBar(SCREEN_H - 26, "Select an option");
+    ui_.drawWin98StatusBar(SCREEN_H - ui_.statusBarHeight(), "Select an option");
 }
 
 void Game::drawText(const char* text, int x, int y, int size, SDL_Color color) {
@@ -4567,11 +4685,11 @@ void Game::startCustomMap(const std::string& path, int modeOverride) {
         if (dot != std::string::npos) base = base.substr(0, dot);
         if (customMap_.bgImagePath.empty()) {
             std::string cand = "sprites/" + base + ".png";
-            if (Assets::instance().loadRelTex(cand)) customMap_.bgImagePath = cand;
+            if (Assets::instance().loadRelTex(cand, false)) customMap_.bgImagePath = cand;
         }
         if (customMap_.topImagePath.empty()) {
             std::string cand = "sprites/" + base + "top.png";
-            if (Assets::instance().loadRelTex(cand)) customMap_.topImagePath = cand;
+            if (Assets::instance().loadRelTex(cand, false)) customMap_.topImagePath = cand;
         }
     }
 
@@ -4613,6 +4731,7 @@ void Game::startCustomMap(const std::string& path, int modeOverride) {
     vehicles_.clear(); inVehicle_ = false; vehicleIdx_ = -1;
     upgrades_.reset();
     crateSpawnTimer_ = 0;
+
 
     // Apply game mode: explicit override from launcher takes priority over map's stored value
     sandboxMode_ = (modeOverride >= 0) ? (modeOverride == 1) : (customMap_.gameMode == 1);
@@ -4692,16 +4811,32 @@ void Game::startCustomMap(const std::string& path, int modeOverride) {
     // Also generate spawn points for wave spawning if map has them
     map_.findSpawnPoints();
 
+    // Defer this map's music to the CRT transition (started after the loading screen).
     {
-        std::string mf;
         size_t sl = path.find_last_of('/');
-        mf = (sl != std::string::npos) ? path.substr(0, sl + 1) : "./";
-        playMapMusic(mf, customMap_.musicPath);
+        pendingMapMusicDir_  = (sl != std::string::npos) ? path.substr(0, sl + 1) : "./";
+        pendingMapMusicPath_ = customMap_.musicPath;
     }
 
-    // Auto-play an intro cutscene (id "intro") if the library provides one.
+    // Auto-play an intro cutscene (id "intro") if the library provides one. It stays
+    // frozen behind the loading screen and plays once we power on into the map.
     if (storyCutscenes_.findById("intro"))
         startStoryCutscene("intro");
+
+    // Route through the loading screen (spinning sawblade + map name + tip) that then
+    // powers the CRT on into the map - same treatment as generated maps. There is no
+    // heavy generation here (the map is already loaded), so it's a brief cosmetic hold.
+    currentMapHasSeed_ = false;
+    mapLoadTitle_ = customMap_.name.empty() ? "CUSTOM MAP" : customMap_.name;
+    mapLoadTip_   = mapLoadingTip();
+    mapLoadTimer_ = 0.0f;
+    crtWarmup_    = 0.0f;
+    actionMusicActive_ = false;
+    Mix_HaltMusic();
+    mapGenDone_.store(true, std::memory_order_release);  // nothing to generate
+    mapSetupPending_  = false;                            // setup already done above
+    pendingPlayState_ = GameState::PlayingCustom;
+    state_ = GameState::MapLoading;
 }
 
 void Game::startCustomMapMultiplayer(const std::string& path) {
@@ -4726,11 +4861,11 @@ void Game::startCustomMapMultiplayer(const std::string& path) {
         if (dot != std::string::npos) base = base.substr(0, dot);
         if (customMap_.bgImagePath.empty()) {
             std::string cand = "sprites/" + base + ".png";
-            if (Assets::instance().loadRelTex(cand)) customMap_.bgImagePath = cand;
+            if (Assets::instance().loadRelTex(cand, false)) customMap_.bgImagePath = cand;
         }
         if (customMap_.topImagePath.empty()) {
             std::string cand = "sprites/" + base + "top.png";
-            if (Assets::instance().loadRelTex(cand)) customMap_.topImagePath = cand;
+            if (Assets::instance().loadRelTex(cand, false)) customMap_.topImagePath = cand;
         }
     }
 

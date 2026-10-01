@@ -117,6 +117,41 @@ void drawGlyph(SDL_Renderer* r, TIcon ic, int cx, int cy, SDL_Color c) {
     }
 }
 
+// Every placeable trigger type, in UI order (the enum has gaps).
+struct TrigTypeInfo { TriggerType type; const char* shortName; const char* longName; };
+const TrigTypeInfo kTrigTypes[] = {
+    {TriggerType::LevelStart,      "Start",     "Level Start"},
+    {TriggerType::LevelEnd,        "End",       "Level End"},
+    {TriggerType::Crate,           "Crate",     "Crate"},
+    {TriggerType::Effect,          "Effect",    "Effect"},
+    {TriggerType::TeamSpawnRed,    "SpnR",      "Spawn Red"},
+    {TriggerType::TeamSpawnBlue,   "SpnB",      "Spawn Blue"},
+    {TriggerType::TeamSpawnGreen,  "SpnG",      "Spawn Green"},
+    {TriggerType::TeamSpawnYellow, "SpnY",      "Spawn Yellow"},
+    {TriggerType::LayerFade,       "Fade",      "Layer Fade"},
+    {TriggerType::CollisionZone,   "Collision", "Collision"},
+    {TriggerType::Cutscene,        "Cutscene",  "Cutscene"},
+    {TriggerType::Waypoint,        "Waypoint",  "Waypoint"},
+    {TriggerType::SignalZone,      "Signal",    "Signal Zone"},
+    {TriggerType::Objective,       "Objective", "Objective"},
+    {TriggerType::SetVariable,     "SetVar",    "Set Variable"},
+    {TriggerType::LoadMap,         "LoadMap",   "Load Map"},
+};
+constexpr int kTrigTypeCount = (int)(sizeof(kTrigTypes) / sizeof(kTrigTypes[0]));
+
+int trigTypeIndex(TriggerType t) {
+    for (int i = 0; i < kTrigTypeCount; i++) if (kTrigTypes[i].type == t) return i;
+    return 0;
+}
+
+const char* const kEntityNames[] = {
+    "Melee", "Shooter", "Crate", "Upgrade Crate", "Brute", "Scout", "Sniper", "Gunner",
+    "Civilian", "Responder", "Med-Relay", "Power", "Water", "Antenna",
+    "Bomber", "Spitter", "Warden",
+};
+static_assert(sizeof(kEntityNames) / sizeof(kEntityNames[0]) == ENTITY_TYPE_COUNT,
+              "kEntityNames must name every ENTITY_* type");
+
 // On Switch, A/B and X/Y are physically swapped compared to Xbox layout
 inline Uint8 remapButton(Uint8 btn) {
 #ifdef __SWITCH__
@@ -179,19 +214,61 @@ void MapEditor::getCustomTileTextures(SDL_Texture** out) const {
 
 // Undo / Redo
 
-void MapEditor::pushUndo() {
+UndoState MapEditor::snapshot() const {
     UndoState s;
-    s.tiles         = map_.tiles;
-    s.ceiling       = map_.ceiling;
-    s.tileRotations = map_.tileRotations;
-    s.tileNoCollide = map_.tileNoCollide;
-    s.triggers      = map_.triggers;
-    s.enemySpawns   = map_.enemySpawns;
-    s.props         = map_.props;
-    undoStack_.push_back(std::move(s));
+    s.tiles            = map_.tiles;
+    s.ceiling          = map_.ceiling;
+    s.tileRotations    = map_.tileRotations;
+    s.tileNoCollide    = map_.tileNoCollide;
+    s.triggers         = map_.triggers;
+    s.enemySpawns      = map_.enemySpawns;
+    s.props            = map_.props;
+    s.trigVarActions   = csLib_.triggerVarActions;
+    s.trigConditions   = csLib_.triggerConditions;
+    s.trigMapLoads     = csLib_.triggerMapLoads;
+    s.trigMultiConfigs = csLib_.triggerMultiConfigs;
+    return s;
+}
+
+void MapEditor::restore(const UndoState& s) {
+    map_.tiles                 = s.tiles;
+    map_.ceiling               = s.ceiling;
+    map_.tileRotations         = s.tileRotations;
+    map_.tileNoCollide         = s.tileNoCollide;
+    map_.triggers              = s.triggers;
+    map_.enemySpawns           = s.enemySpawns;
+    map_.props                 = s.props;
+    csLib_.triggerVarActions   = s.trigVarActions;
+    csLib_.triggerConditions   = s.trigConditions;
+    csLib_.triggerMapLoads     = s.trigMapLoads;
+    csLib_.triggerMultiConfigs = s.trigMultiConfigs;
+    selectedTrigger_ = -1;
+    selectedEnemy_   = -1;
+    endTrigText(false);
+    dirty_ = true;
+}
+
+void MapEditor::pushUndo() {
+    undoStack_.push_back(snapshot());
     if ((int)undoStack_.size() > UNDO_MAX) undoStack_.pop_front();
     redoStack_.clear();
     dirty_ = true;
+}
+
+void MapEditor::deleteTrigger(int idx) {
+    if (idx < 0 || idx >= (int)map_.triggers.size()) return;
+    map_.triggers.erase(map_.triggers.begin() + idx);
+    csLib_.onTriggerErased(idx);
+    endTrigText(false);
+    if (selectedTrigger_ == idx) selectedTrigger_ = -1;
+    else if (selectedTrigger_ > idx) selectedTrigger_--;
+}
+
+void MapEditor::deleteEnemy(int idx) {
+    if (idx < 0 || idx >= (int)map_.enemySpawns.size()) return;
+    map_.enemySpawns.erase(map_.enemySpawns.begin() + idx);
+    if (selectedEnemy_ == idx) selectedEnemy_ = -1;
+    else if (selectedEnemy_ > idx) selectedEnemy_--;
 }
 
 // True when a UI panel covers the given screen point (clicks there belong to
@@ -211,6 +288,10 @@ bool MapEditor::isOverUI(int sx, int sy) const {
         if (sx >= px && sx < px + 230 &&
             sy >= uiToolbarH() + 8 && sy < uiToolbarH() + 8 + mapPropsH_)
             return true;                                  // map properties panel
+    }
+    if (showVarList_ && varListH_ > 0) {
+        if (sx >= varListX_ && sx < varListX_ + 256 && sy >= varListY_ && sy < varListY_ + varListH_)
+            return true;                                  // variables panel
     }
     if (showCutsceneEditor_ && sy >= screenH_ - csEditor_.panelHeight())
         return true;                                      // cutscene panel
@@ -313,52 +394,18 @@ void MapEditor::pickTileAt(int tx, int ty, float wx, float wy) {
 
 void MapEditor::undo() {
     if (undoStack_.empty()) return;
-    UndoState cur;
-    cur.tiles         = map_.tiles;
-    cur.ceiling       = map_.ceiling;
-    cur.tileRotations = map_.tileRotations;
-    cur.tileNoCollide = map_.tileNoCollide;
-    cur.triggers      = map_.triggers;
-    cur.enemySpawns   = map_.enemySpawns;
-    cur.props         = map_.props;
-    redoStack_.push_back(std::move(cur));
+    redoStack_.push_back(snapshot());
     if ((int)redoStack_.size() > UNDO_MAX) redoStack_.pop_front();
-    auto& s = undoStack_.back();
-    map_.tiles         = s.tiles;
-    map_.ceiling       = s.ceiling;
-    map_.tileRotations = s.tileRotations;
-    map_.tileNoCollide = s.tileNoCollide;
-    map_.triggers      = s.triggers;
-    map_.enemySpawns   = s.enemySpawns;
-    map_.props         = s.props;
+    restore(undoStack_.back());
     undoStack_.pop_back();
-    selectedTrigger_ = -1;
-    selectedEnemy_   = -1;
 }
 
 void MapEditor::redo() {
     if (redoStack_.empty()) return;
-    UndoState cur;
-    cur.tiles         = map_.tiles;
-    cur.ceiling       = map_.ceiling;
-    cur.tileRotations = map_.tileRotations;
-    cur.tileNoCollide = map_.tileNoCollide;
-    cur.triggers      = map_.triggers;
-    cur.enemySpawns   = map_.enemySpawns;
-    cur.props         = map_.props;
-    undoStack_.push_back(std::move(cur));
+    undoStack_.push_back(snapshot());
     if ((int)undoStack_.size() > UNDO_MAX) undoStack_.pop_front();
-    auto& s = redoStack_.back();
-    map_.tiles         = s.tiles;
-    map_.ceiling       = s.ceiling;
-    map_.tileRotations = s.tileRotations;
-    map_.tileNoCollide = s.tileNoCollide;
-    map_.triggers      = s.triggers;
-    map_.enemySpawns   = s.enemySpawns;
-    map_.props         = s.props;
+    restore(redoStack_.back());
     redoStack_.pop_back();
-    selectedTrigger_ = -1;
-    selectedEnemy_   = -1;
 }
 
 // Palette loading
@@ -565,46 +612,52 @@ void MapEditor::rebuildFilteredPalette() {
 
 // Palette scroll helpers
 
+// Palette layout (must match renderPalette): tab row, then the item list
+// starting at paletteTop() + 4, category headers 20px, rows TILE_PREVIEW + 6.
+static constexpr int kPaletteTabsH = 30;
+
 int MapEditor::paletteContentHeight() const {
-    if (palette_.empty()) return 0;
-    int h = 10;  // initial top padding
+    int h = 4;  // top padding
     std::string lastCat;
-    for (auto& pt : palette_) {
-        if (pt.category != lastCat) { lastCat = pt.category; h += 20; }
+    for (int i : filteredPalette_) {
+        if (palette_[i].category != lastCat) { lastCat = palette_[i].category; h += 20; }
         h += TILE_PREVIEW + 6;
     }
     return h + 10;  // bottom padding
 }
 
+// Y of palette item idx (index into palette_) with scroll = 0, -1 if filtered out
 int MapEditor::paletteItemRawY(int idx) const {
-    int y = TOOLBAR_H + 10;
+    int y = TOOLBAR_H + kPaletteTabsH + 4;
     std::string lastCat;
-    for (int i = 0; i < (int)palette_.size(); i++) {
+    for (int i : filteredPalette_) {
         if (palette_[i].category != lastCat) { lastCat = palette_[i].category; y += 20; }
         if (i == idx) return y;
         y += TILE_PREVIEW + 6;
     }
-    return y;
+    return -1;
 }
 
 void MapEditor::scrollPaletteToSelection() {
-    if (selectedPalette_ < 0 || selectedPalette_ >= (int)palette_.size()) return;
-    int rawY   = paletteItemRawY(selectedPalette_);
-    int viewH  = screenH_ - TOOLBAR_H;
-    // Scroll down if item is below the visible area
-    if (rawY - paletteScroll_ + TILE_PREVIEW > screenH_ - 10)
-        paletteScroll_ = rawY + TILE_PREVIEW - screenH_ + 10;
-    // Scroll up if item is above the visible area
-    if (rawY - paletteScroll_ < TOOLBAR_H + 4)
-        paletteScroll_ = rawY - TOOLBAR_H - 4;
-    if (paletteScroll_ < 0) paletteScroll_ = 0;
-    int maxScroll = paletteContentHeight() - viewH;
-    if (maxScroll > 0 && paletteScroll_ > maxScroll) paletteScroll_ = maxScroll;
+    int rawY = paletteItemRawY(selectedPalette_);
+    if (rawY < 0) return;
+    const int top    = TOOLBAR_H + kPaletteTabsH;
+    const int bottom = screenH_ - csEditorBottom();
+    if (rawY - paletteScroll_ + TILE_PREVIEW + 6 > bottom) paletteScroll_ = rawY + TILE_PREVIEW + 6 - bottom;
+    if (rawY - paletteScroll_ < top)                      paletteScroll_ = rawY - top - 4;
+    int maxScroll = std::max(0, paletteContentHeight() - (bottom - top));
+    paletteScroll_ = std::max(0, std::min(paletteScroll_, maxScroll));
 }
 
 // Map operations
 
 void MapEditor::newMap(int w, int h) {
+    // Clear ALL prior map state, not just tiles/triggers, so background/top images,
+    // custom tile paths, music, player config and game mode never leak from the last
+    // map edited. csLib_ carries the cutscenes AND trigger configs (var actions,
+    // conditions, map-loads, multi-fire) - drop those too.
+    map_ = CustomMap{};
+    csLib_.clear();
     map_.width  = w;
     map_.height = h;
     map_.tiles.assign(w * h, TILE_GRASS);
@@ -683,11 +736,19 @@ void MapEditor::saveCutsceneLib() {
     size_t dot = cscPath.rfind('.');
     if (dot != std::string::npos) cscPath = cscPath.substr(0, dot);
     cscPath += ".csc";
-    if (!csLib_.cutscenes.empty())
+    // The .csc also holds trigger configs (var actions, conditions, map loads,
+    // multi-fire), so save whenever anything is in it - and rewrite an existing
+    // file even when emptied, or deleted cutscenes would come back on reload.
+    FILE* existing = fopen(cscPath.c_str(), "rb");
+    if (existing) fclose(existing);
+    if (!csLib_.empty() || existing)
         csLib_.save(cscPath);
 }
 
 void MapEditor::loadCutsceneLib() {
+    // Start clean so a map without a .csc file doesn't inherit the previous map's
+    // cutscenes and trigger configs (the classic "playtest B shows A's triggers" bug).
+    csLib_.clear();
     if (savePath_.empty()) return;
     std::string cscPath = savePath_;
     size_t dot = cscPath.rfind('.');
@@ -713,7 +774,9 @@ void MapEditor::performModSave(const std::string& modFolder) {
 }
 
 bool MapEditor::loadMap(const std::string& path) {
-    if (!map_.loadFromFile(path)) return false;
+    CustomMap loaded;
+    if (!loaded.loadFromFile(path)) return false;
+    map_ = std::move(loaded);
     // Ensure parallel arrays match tile count (older maps may be missing them)
     map_.tileRotations.resize(map_.tiles.size(), 0);
     map_.tileNoCollide.resize(map_.tiles.size(), 0);
@@ -739,11 +802,11 @@ bool MapEditor::loadMap(const std::string& path) {
         if (dot != std::string::npos) base = base.substr(0, dot);
         if (map_.bgImagePath.empty()) {
             std::string cand = "sprites/" + base + ".png";
-            if (Assets::instance().loadRelTex(cand)) map_.bgImagePath = cand;
+            if (Assets::instance().loadRelTex(cand, false)) map_.bgImagePath = cand;
         }
         if (map_.topImagePath.empty()) {
             std::string cand = "sprites/" + base + "top.png";
-            if (Assets::instance().loadRelTex(cand)) map_.topImagePath = cand;
+            if (Assets::instance().loadRelTex(cand, false)) map_.topImagePath = cand;
         }
     }
 
@@ -862,12 +925,18 @@ void MapEditor::handleInput(SDL_Event& e) {
             rightDown_ = false;
             return;
         }
+
+        // Space held: left-drag pans the view instead of using the tool
+        if (e.button.button == SDL_BUTTON_LEFT && spacePanHeld()) {
+            mouseDown_ = false;
+            return;
+        }
         
         // Eyedropper: Alt+click picks the hovered tile into the palette
         if (e.button.button == SDL_BUTTON_LEFT && (SDL_GetModState() & KMOD_ALT)) {
             float wx = screenToWorldX(mouseX_);
             float wy = screenToWorldY(mouseY_);
-            pickTileAt((int)(wx / TILE_SIZE), (int)(wy / TILE_SIZE), wx, wy);
+            pickTileAt(worldToTile(wx), worldToTile(wy), wx, wy);
             mouseDown_ = false;
             return;
         }
@@ -963,8 +1032,10 @@ void MapEditor::handleInput(SDL_Event& e) {
             mouseX_ < screenW_ - uiPaletteW() && mouseY_ > uiToolbarH()) {
             float wx2 = screenToWorldX(mouseX_);
             float wy2 = screenToWorldY(mouseY_);
-            rectStartTX_ = (int)(wx2 / TILE_SIZE);
-            rectStartTY_ = (int)(wy2 / TILE_SIZE);
+            // Clamped so a drag started off-map still anchors on the map edge
+            // (and -1 stays free as the "not dragging" sentinel)
+            rectStartTX_ = std::max(0, std::min(map_.width  - 1, worldToTile(wx2)));
+            rectStartTY_ = std::max(0, std::min(map_.height - 1, worldToTile(wy2)));
         }
 
         // Trigger tool: record drag start in world coords (no tile snap)
@@ -983,8 +1054,8 @@ void MapEditor::handleInput(SDL_Event& e) {
                 e.button.x < screenW_ - uiPaletteW() && e.button.y > uiToolbarH()) {
                 float wx2 = screenToWorldX(e.button.x);
                 float wy2 = screenToWorldY(e.button.y);
-                int endTX = (int)(wx2 / TILE_SIZE);
-                int endTY = (int)(wy2 / TILE_SIZE);
+                int endTX = worldToTile(wx2);
+                int endTY = worldToTile(wy2);
                 int x0 = std::min(rectStartTX_, endTX), x1 = std::max(rectStartTX_, endTX);
                 int y0 = std::min(rectStartTY_, endTY), y1 = std::max(rectStartTY_, endTY);
                 pushUndo();
@@ -1091,8 +1162,9 @@ void MapEditor::handleInput(SDL_Event& e) {
             }
         }
 
-        // Camera pan with middle mouse
-        if (e.motion.state & SDL_BUTTON_MMASK) {
+        // Camera pan with middle mouse (or Space + left drag)
+        if ((e.motion.state & SDL_BUTTON_MMASK) ||
+            ((e.motion.state & SDL_BUTTON_LMASK) && spacePanHeld())) {
             camera_.pos.x -= e.motion.xrel / zoom_;
             camera_.pos.y -= e.motion.yrel / zoom_;
         }
@@ -1100,12 +1172,10 @@ void MapEditor::handleInput(SDL_Event& e) {
 
     if (e.type == SDL_MOUSEWHEEL) {
         if (showUI_ && mouseX_ >= screenW_ - PALETTE_W) {
-            // Palette scroll
+            // Palette scroll (clamped in renderPalette)
             paletteScroll_ -= e.wheel.y * 30;
-            if (paletteScroll_ < 0) paletteScroll_ = 0;
-            // Clamp to max
-            int maxScroll = paletteContentHeight() - (screenH_ - TOOLBAR_H);
-            if (maxScroll > 0 && paletteScroll_ > maxScroll) paletteScroll_ = maxScroll;
+        } else if (isOverUI(mouseX_, mouseY_)) {
+            // Over a floating panel: don't zoom the map underneath
         } else {
             // Zoom in/out
             float oldZoom = zoom_;
@@ -1120,58 +1190,21 @@ void MapEditor::handleInput(SDL_Event& e) {
         }
     }
 
-    // Var name text editing for trigger condition
-    if (trigCondEditingName_) {
-        // Find live pointer
-        TriggerCondition* tc = nullptr;
-        for (auto& c : csLib_.triggerConditions)
-            if (c.triggerIndex == selectedTrigger_) { tc = &c; break; }
-        if (!tc) { trigCondEditingName_ = false; }
-        else if (e.type == SDL_TEXTINPUT) {
-            trigCondNameBuf_ += e.text.text;
-            return;
-        } else if (e.type == SDL_KEYDOWN) {
-            if (e.key.keysym.sym == SDLK_BACKSPACE && !trigCondNameBuf_.empty()) {
-                trigCondNameBuf_.pop_back();
-            } else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_ESCAPE) {
-                if (e.key.keysym.sym == SDLK_RETURN && !trigCondNameBuf_.empty())
-                    tc->varName = trigCondNameBuf_;
-                trigCondEditingName_ = false;
-#ifndef __SWITCH__
-                SDL_StopTextInput();
-#endif
+    // Inline text editing of the selected trigger's config fields
+    if (trigText_ != TrigText::None) {
+        if (e.type == SDL_TEXTINPUT) {
+            for (const char* p = e.text.text; *p; ++p) {
+                bool ok = trigText_ != TrigText::Cooldown || (*p >= '0' && *p <= '9') ||
+                          (*p == '.' && trigTextBuf_.find('.') == std::string::npos);
+                if (ok) trigTextBuf_ += *p;
             }
             return;
         }
-    }
-
-    // Cooldown text editing for multi-fire config
-    if (trigMultiCooldownEditing_) {
-        TriggerMultiConfig* mc = nullptr;
-        for (auto& m : csLib_.triggerMultiConfigs)
-            if (m.triggerIndex == selectedTrigger_) { mc = &m; break; }
-        if (!mc) { trigMultiCooldownEditing_ = false; }
-        else if (e.type == SDL_TEXTINPUT) {
-            // Only allow digits and a single decimal point
-            for (const char* p = e.text.text; *p; ++p) {
-                if ((*p >= '0' && *p <= '9') || (*p == '.' && trigMultiCooldownBuf_.find('.') == std::string::npos))
-                    trigMultiCooldownBuf_ += *p;
-            }
-            return;
-        } else if (e.type == SDL_KEYDOWN) {
-            if (e.key.keysym.sym == SDLK_BACKSPACE && !trigMultiCooldownBuf_.empty()) {
-                trigMultiCooldownBuf_.pop_back();
-            } else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_ESCAPE) {
-                if (e.key.keysym.sym == SDLK_RETURN && !trigMultiCooldownBuf_.empty()) {
-                    float v = (float)atof(trigMultiCooldownBuf_.c_str());
-                    if (v < 0.0f) v = 0.0f;
-                    mc->cooldown = v;
-                }
-                trigMultiCooldownEditing_ = false;
-#ifndef __SWITCH__
-                SDL_StopTextInput();
-#endif
-            }
+        if (e.type == SDL_KEYDOWN) {
+            SDL_Keycode k = e.key.keysym.sym;
+            if (k == SDLK_BACKSPACE && !trigTextBuf_.empty()) trigTextBuf_.pop_back();
+            else if (k == SDLK_RETURN || k == SDLK_KP_ENTER)  endTrigText(true);
+            else if (k == SDLK_ESCAPE)                         endTrigText(false);
             return;
         }
     }
@@ -1298,23 +1331,27 @@ void MapEditor::handleInput(SDL_Event& e) {
                 // Eyedropper: pick the hovered tile into the palette
                 float wx = screenToWorldX(mouseX_);
                 float wy = screenToWorldY(mouseY_);
-                pickTileAt((int)(wx / TILE_SIZE), (int)(wy / TILE_SIZE), wx, wy);
+                pickTileAt(worldToTile(wx), worldToTile(wy), wx, wy);
                 break;
             }
             case SDLK_ESCAPE:
-        // If an item is selected or a drag is in progress, cancel/deselect it
-        if (selectedTrigger_ >= 0 || selectedEnemy_ >= 0 || trigDragging_ || rectStartTX_ >= 0) {
-            selectedTrigger_ = -1;
-            selectedEnemy_   = -1;
-            trigDragging_    = false;
-            rectStartTX_     = -1; 
-            rectStartTY_     = -1;
-        } 
-        // Otherwise, exit the editor
-        else {
-            wantsBack_ = true;
-        }
-        break;
+                // Peel off one layer per press: drag/selection, then open
+                // panels, and only then leave the editor.
+                if (selectedTrigger_ >= 0 || selectedEnemy_ >= 0 || trigDragging_ || rectStartTX_ >= 0) {
+                    selectedTrigger_ = -1;
+                    selectedEnemy_   = -1;
+                    trigDragging_    = false;
+                    rectStartTX_     = -1;
+                    rectStartTY_     = -1;
+                } else if (showCutsceneEditor_) {
+                    showCutsceneEditor_ = false;
+                    csEditor_.setActive(false);
+                } else if (showVarList_ || showMapProps_) {
+                    showVarList_ = showMapProps_ = false;
+                } else if (requestExit()) {
+                    wantsBack_ = true;
+                }
+                break;
             case SDLK_MINUS:
             case SDLK_EQUALS: {
                 // Zoom around the view center
@@ -1329,20 +1366,9 @@ void MapEditor::handleInput(SDL_Event& e) {
                 camera_.pos.y = wy - (float)(cy - uiToolbarH()) / zoom_;
                 break;
             }
-            case SDLK_0: {
-                // Fit the whole map in the viewport
-                float viewW = (float)(screenW_ - uiPaletteW());
-                float viewH = (float)(screenH_ - uiToolbarH() - csEditorBottom());
-                float worldW = (float)(map_.width  * TILE_SIZE);
-                float worldH = (float)(map_.height * TILE_SIZE);
-                if (worldW > 1 && worldH > 1) {
-                    zoom_ = fmaxf(ZOOM_MIN, fminf(ZOOM_MAX,
-                            fminf(viewW / worldW, viewH / worldH) * 0.95f));
-                    camera_.pos.x = (worldW - viewW / zoom_) * 0.5f;
-                    camera_.pos.y = (worldH - viewH / zoom_) * 0.5f;
-                }
+            case SDLK_0:
+                fitView();
                 break;
-            }
 
             case SDLK_z:
                 if (SDL_GetModState() & KMOD_CTRL) {
@@ -1354,20 +1380,13 @@ void MapEditor::handleInput(SDL_Event& e) {
                 if (SDL_GetModState() & KMOD_CTRL) redo();
                 break;
             case SDLK_DELETE:
-            case SDLK_BACKSPACE: {
-                bool deleted = false;
-                if (selectedTrigger_ >= 0 && selectedTrigger_ < (int)map_.triggers.size()) {
-                    if (!deleted) { pushUndo(); deleted = true; }
-                    map_.triggers.erase(map_.triggers.begin() + selectedTrigger_);
-                    selectedTrigger_ = -1;
-                }
-                if (selectedEnemy_ >= 0 && selectedEnemy_ < (int)map_.enemySpawns.size()) {
-                    if (!deleted) { pushUndo(); deleted = true; }
-                    map_.enemySpawns.erase(map_.enemySpawns.begin() + selectedEnemy_);
-                    selectedEnemy_ = -1;
+            case SDLK_BACKSPACE:
+                if (selectedTrigger_ >= 0 || selectedEnemy_ >= 0) {
+                    pushUndo();
+                    deleteTrigger(selectedTrigger_);
+                    deleteEnemy(selectedEnemy_);
                 }
                 break;
-            }
 
             case SDLK_q: {
                 // Rotate selected CollisionZone trigger CCW by 15°
@@ -1384,30 +1403,8 @@ void MapEditor::handleInput(SDL_Event& e) {
             }
 
             case SDLK_t:
-                if (currentTool_ == EditorTool::Trigger) {
-                    static const TriggerType kValidTypes[] = {
-                        TriggerType::LevelStart,
-                        TriggerType::LevelEnd,
-                        TriggerType::Crate,
-                        TriggerType::Effect,
-                        TriggerType::TeamSpawnRed,
-                        TriggerType::TeamSpawnBlue,
-                        TriggerType::TeamSpawnGreen,
-                        TriggerType::TeamSpawnYellow,
-                        TriggerType::LayerFade,
-                        TriggerType::CollisionZone,
-                        TriggerType::Cutscene,
-                        TriggerType::Waypoint,
-                        TriggerType::SignalZone,
-                        TriggerType::Objective,
-                    };
-                    static const int kTypeCount = 14;
-                    int cur = 0;
-                    for (int i = 0; i < kTypeCount; i++) {
-                        if (kValidTypes[i] == triggerGhost_.type) { cur = i; break; }
-                    }
-                    triggerGhost_.type = kValidTypes[(cur + 1) % kTypeCount];
-                }
+                if (currentTool_ == EditorTool::Trigger)
+                    triggerGhost_.type = kTrigTypes[(trigTypeIndex(triggerGhost_.type) + 1) % kTrigTypeCount].type;
                 break;
             case SDLK_c:
                 if (currentTool_ == EditorTool::Trigger && triggerGhost_.type == TriggerType::LevelEnd) {
@@ -1448,6 +1445,28 @@ void MapEditor::handleInput(SDL_Event& e) {
     }
 }
 
+// Fit the whole map in the viewport
+void MapEditor::fitView() {
+    float viewW = (float)(screenW_ - uiPaletteW());
+    float viewH = (float)(screenH_ - uiToolbarH() - csEditorBottom());
+    float worldW = (float)(map_.width  * TILE_SIZE);
+    float worldH = (float)(map_.height * TILE_SIZE);
+    if (worldW > 1 && worldH > 1) {
+        zoom_ = fmaxf(ZOOM_MIN, fminf(ZOOM_MAX, fminf(viewW / worldW, viewH / worldH) * 0.95f));
+        camera_.pos.x = (worldW - viewW / zoom_) * 0.5f;
+        camera_.pos.y = (worldH - viewH / zoom_) * 0.5f;
+    }
+}
+
+// Leaving with unsaved changes needs a second press within a few seconds.
+bool MapEditor::requestExit() {
+    if (!dirty_ || exitArmedT_ > 0.0f) { exitArmedT_ = 0.0f; return true; }
+    exitArmedT_       = 3.0f;
+    saveMessage_      = "Unsaved changes! Press again to leave without saving (Ctrl+S saves)";
+    saveMessageTimer_ = 3.0f;
+    return false;
+}
+
 // Update
 
 void MapEditor::update(float dt) {
@@ -1456,6 +1475,7 @@ void MapEditor::update(float dt) {
 
     // Tick timers
     if (saveMessageTimer_ > 0) saveMessageTimer_ -= dt;
+    if (exitArmedT_ > 0) exitArmedT_ -= dt;
 
     // Cutscene editor
     if (showCutsceneEditor_) {
@@ -1489,8 +1509,8 @@ void MapEditor::update(float dt) {
         mouseX_ < screenW_ - uiPaletteW() && mouseY_ > uiToolbarH()) {
         float wx = screenToWorldX(mouseX_);
         float wy = screenToWorldY(mouseY_);
-        int tx = (int)(wx / TILE_SIZE);
-        int ty = (int)(wy / TILE_SIZE);
+        int tx = worldToTile(wx);
+        int ty = worldToTile(wy);
 
         // Determine if selected palette entry is a free-placed prop
         bool isFreeProp = false;
@@ -1583,21 +1603,11 @@ void MapEditor::eraseTile(int tx, int ty) {
 }
 
 void MapEditor::eraseTriggerAt(float wx, float wy) {
-    int idx = triggerAt(wx, wy);
-    if (idx >= 0) {
-        map_.triggers.erase(map_.triggers.begin() + idx);
-        if (selectedTrigger_ == idx) selectedTrigger_ = -1;
-        else if (selectedTrigger_ > idx) selectedTrigger_--;
-    }
+    deleteTrigger(triggerAt(wx, wy));
 }
 
 void MapEditor::eraseEnemyAt(float wx, float wy) {
-    int idx = enemyAt(wx, wy);
-    if (idx >= 0) {
-        map_.enemySpawns.erase(map_.enemySpawns.begin() + idx);
-        if (selectedEnemy_ == idx) selectedEnemy_ = -1;
-        else if (selectedEnemy_ > idx) selectedEnemy_--;
-    }
+    deleteEnemy(enemyAt(wx, wy));
 }
 
 void MapEditor::erasePropAt(float wx, float wy) {
@@ -1783,8 +1793,8 @@ void MapEditor::render(SDL_Renderer* renderer) {
     if (mouseX_ < screenW_ - uiPaletteW() && mouseY_ > uiToolbarH()) {
         float wx = screenToWorldX(mouseX_);
         float wy = screenToWorldY(mouseY_);
-        int tx = (int)(wx / TILE_SIZE);
-        int ty = (int)(wy / TILE_SIZE);
+        int tx = worldToTile(wx);
+        int ty = worldToTile(wy);
         int sx = worldToScreenX((float)(tx * TILE_SIZE));
         int sy = worldToScreenY((float)(ty * TILE_SIZE));
 
@@ -1879,6 +1889,7 @@ void MapEditor::render(SDL_Renderer* renderer) {
         renderMapPropsPanel(renderer);
 
     // Variable list floating panel
+    varListH_ = 0;
     if (showVarList_ && !dlgModal)
         renderVarListPanel(renderer);
 
@@ -1895,7 +1906,7 @@ void MapEditor::render(SDL_Renderer* renderer) {
         static const char* toolNames[(int)EditorTool::TOOL_COUNT] =
             {"Tile", "Trigger", "Entity", "Erase", "Select", "Rect", "Fill"};
         static const char* toolHints[(int)EditorTool::TOOL_COUNT] = {
-            "LMB paint  RMB erase  [ ] brush  Alt+click pick",
+            "LMB paint  RMB erase  [ ] brush  Alt+click pick  Space+drag pan",
             "Drag to place  T cycle type",
             "Click to place  E cycle type",
             "LMB/RMB erase tiles, triggers, entities, props",
@@ -1915,7 +1926,7 @@ void MapEditor::render(SDL_Renderer* renderer) {
             char right[160];
             snprintf(right, sizeof(right), "T:%d E:%d  (%d,%d)  %.0f%%  F1 help",
                      (int)map_.triggers.size(), (int)map_.enemySpawns.size(),
-                     (int)(wx / TILE_SIZE), (int)(wy / TILE_SIZE), zoom_ * 100);
+                     worldToTile(wx), worldToTile(wy), zoom_ * 100);
             int tw = ui_ ? ui_->textWidth(right, 12) : 0;
             drawEditorText(renderer, right, screenW_ - uiPaletteW() - tw - 10,
                            screenH_ - 22, 12, {100, 102, 115, 255});
@@ -1924,11 +1935,16 @@ void MapEditor::render(SDL_Renderer* renderer) {
         // Save message
         if (saveMessageTimer_ > 0) {
             Uint8 alpha = (saveMessageTimer_ < 0.5f) ? (Uint8)(saveMessageTimer_ * 510) : 255;
-            bool isError = saveMessage_.find("failed") != std::string::npos;
+            bool isError = saveMessage_.find("failed") != std::string::npos ||
+                           saveMessage_.find("Unsaved") != std::string::npos;
             SDL_Color msgC = isError ? SDL_Color{255, 80, 80, alpha} : SDL_Color{50, 255, 100, alpha};
             int tw = ui_ ? ui_->textWidth(saveMessage_.c_str(), 13) : 0;
-            drawEditorText(renderer, saveMessage_.c_str(),
-                           (screenW_ - uiPaletteW() - tw) / 2, screenH_ - 56, 13, msgC);
+            int mx = (screenW_ - uiPaletteW() - tw) / 2;
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(renderer, 12, 14, 24, (Uint8)(alpha * 0.85f));
+            SDL_Rect msgBg = {mx - 8, screenH_ - 60, tw + 16, 22};
+            SDL_RenderFillRect(renderer, &msgBg);
+            drawEditorText(renderer, saveMessage_.c_str(), mx, screenH_ - 56, 13, msgC);
         }
     } else if (saveMessageTimer_ > 0) {
         Uint8 alpha = (saveMessageTimer_ < 0.5f) ? (Uint8)(saveMessageTimer_ * 510) : 255;
@@ -1965,6 +1981,7 @@ void MapEditor::renderHelpOverlay(SDL_Renderer* renderer) {
         {"LMB",        "Paint / place / select"},
         {"RMB",        "Erase under cursor"},
         {"MMB drag",   "Pan camera"},
+        {"Space+drag", "Pan camera"},
         {"Wheel",      "Zoom (palette: scroll)"},
         {"Arrows",     "Pan camera"},
         {"- / =",      "Zoom out / in"},
@@ -1982,7 +1999,8 @@ void MapEditor::renderHelpOverlay(SDL_Renderer* renderer) {
         {"Q",          "Rotate collision zone CCW"},
         {"F",          "Rect tool: filled / outline"},
         {"Del",        "Delete selected trigger/entity"},
-        {"Ctrl+Z", "Undo"},
+        {"Ctrl+Z / Y", "Undo / redo"},
+        {"Esc",        "Deselect, close panel, exit"},
         {"Ctrl+S",     "Save map"},
         {"F5",         "Test play"},
     };
@@ -2249,8 +2267,9 @@ void MapEditor::renderTriggers(SDL_Renderer* renderer) {
 
         bool selected = (i == selectedTrigger_);
 
-        // Label size scales with zoom; suppress entirely when too small to read
-        const int labelSz = std::max(0, std::min(14, (int)(11.0f * zoom_)));
+        // Label size scales with zoom but stays readable; hidden only when the
+        // zone itself is too small on screen to hold text
+        const int labelSz = (sw >= 28 && sh >= 12) ? std::max(9, std::min(14, (int)(11.0f * zoom_))) : 0;
 
         switch (t.type) {
             case TriggerType::LevelStart:
@@ -2397,6 +2416,27 @@ void MapEditor::renderTriggers(SDL_Renderer* renderer) {
                 }
                 break;
             }
+            case TriggerType::SetVariable:
+            case TriggerType::LoadMap: {
+                bool isVar = (t.type == TriggerType::SetVariable);
+                SDL_Color c = isVar ? SDL_Color{180, 240, 180, 255} : SDL_Color{140, 220, 255, 255};
+                SDL_SetRenderDrawColor(renderer, c.r, c.g, c.b, 35);
+                SDL_RenderFillRect(renderer, &r);
+                SDL_SetRenderDrawColor(renderer, c.r, c.g, c.b, selected ? 255 : 180);
+                SDL_RenderDrawRect(renderer, &r);
+                if (labelSz >= 8) {
+                    std::string lbl = isVar ? "SET VAR" : "LOAD MAP";
+                    if (isVar) {
+                        for (auto& va : csLib_.triggerVarActions)
+                            if (va.triggerIndex == i) { lbl += " " + va.key; break; }
+                    } else {
+                        for (auto& tm : csLib_.triggerMapLoads)
+                            if (tm.triggerIndex == i && !tm.mapPath.empty()) { lbl += " " + tm.mapPath; break; }
+                    }
+                    drawEditorText(renderer, lbl.c_str(), r.x + 4, r.y + 4, labelSz, c);
+                }
+                break;
+            }
             default: break;
         }
 
@@ -2446,7 +2486,16 @@ void MapEditor::renderEntitySpawns(SDL_Renderer* renderer) {
             case ENTITY_WARDEN:        SDL_SetRenderDrawColor(renderer, 150, 175, 205, 220); break;
             default:                   SDL_SetRenderDrawColor(renderer, 180, 180, 180, 200); break;
         }
-        SDL_RenderFillRect(renderer, &r);
+        const char* infraPath = infraSpritePath(es.enemyType);
+        SDL_Texture* infraTex = infraPath ? Assets::instance().loadRelTex(infraPath) : nullptr;
+        if (infraTex) {
+            // Infrastructure shows its sprite at in-game size (~64px footprint)
+            int isz = std::max(sz, (int)(64 * zoom_));
+            r = {sx - isz/2, sy - isz/2, isz, isz};
+            SDL_RenderCopy(renderer, infraTex, nullptr, &r);
+        } else {
+            SDL_RenderFillRect(renderer, &r);
+        }
         SDL_SetRenderDrawColor(renderer, selected ? 0 : 255, 255, selected ? 0 : 255, 255);
         SDL_RenderDrawRect(renderer, &r);
 
@@ -2456,7 +2505,8 @@ void MapEditor::renderEntitySpawns(SDL_Renderer* renderer) {
             "Bo", "Sp", "Wd"
         };
         const char* label = (es.enemyType < ENTITY_TYPE_COUNT) ? labels[es.enemyType] : "?";
-        drawEditorText(renderer, label, r.x + sz/4, r.y + 2, 14, {255, 255, 255, 255});
+        const int lsz = std::max(9, std::min(14, (int)(14 * zoom_)));
+        drawEditorText(renderer, label, r.x + r.w + 2, r.y + (r.h - lsz) / 2 - 1, lsz, {255, 255, 255, 255});
     }
 }
 
@@ -2504,21 +2554,9 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
     leftPanelH_ = 0;
     if (!ui_) return;
 
-    // Cancel trigger text editing if the trigger is deselected
-    if (selectedTrigger_ < 0) {
-        if (trigCondEditingName_) {
-            trigCondEditingName_ = false;
-#ifndef __SWITCH__
-            SDL_StopTextInput();
-#endif
-        }
-        if (trigMultiCooldownEditing_) {
-            trigMultiCooldownEditing_ = false;
-#ifndef __SWITCH__
-            SDL_StopTextInput();
-#endif
-        }
-    }
+    // Selection moved away from the trigger being edited: drop the edit
+    if (trigText_ != TrigText::None && selectedTrigger_ != trigTextIdx_)
+        endTrigText(false);
 
     const int panelW = 220;
     const int panelX = 8;
@@ -2548,21 +2586,18 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
         const int panelH = UI::W98::TitleH + 8 + (3 + (isResp ? 1 : 0)) * rowH + 8 + 26 + 8;
         if (panelH > maxPanelH) return;
         leftPanelH_ = panelH;
+        if (ui_->win98CloseClicked(panelX, panelY, panelW)) { selectedEnemy_ = -1; return; }
         ui_->drawWin98Window(panelX, panelY, panelW, panelH, "Entity");
         int y = panelY + UI::W98::TitleH + 8;
 
         // Type
-        static const char* eNames[ENTITY_TYPE_COUNT] = {
-            "Melee","Shooter","Crate","Upgrade","Brute","Scout","Sniper","Gunner",
-            "Civilian","Responder","Med-Relay","Power","Water","Antenna"
-        };
         ui_->drawText("Type", lx, y + 5, 11, UI::W98::Black);
         if (ui_->win98Button(200, "<", arLx, y, btnSz, btnSz, false)) {
             pushUndo();
             es.enemyType = (es.enemyType + ENTITY_TYPE_COUNT - 1) % ENTITY_TYPE_COUNT;
         }
         ui_->drawWin98TextField(fldx, y, fieldW, btnSz,
-            (es.enemyType < ENTITY_TYPE_COUNT) ? eNames[es.enemyType] : "?", false);
+            (es.enemyType < ENTITY_TYPE_COUNT) ? kEntityNames[es.enemyType] : "?", false);
         if (ui_->win98Button(201, ">", arRx, y, btnSz, btnSz, false)) {
             pushUndo();
             es.enemyType = (es.enemyType + 1) % ENTITY_TYPE_COUNT;
@@ -2588,7 +2623,7 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
         if (isResp) {
             ui_->drawText("Disable", lx, y + 5, 11, UI::W98::Black);
             bool on = (es.reserved[0] != 0);
-            if (ui_->win98Button(204, on ? "Disableable: ON" : "Disableable: OFF",
+            if (ui_->win98Button(204, on ? "ON" : "OFF",
                                  arLx, y, roFldW, btnSz, on)) {
                 pushUndo();
                 es.reserved[0] = on ? 0 : 1;
@@ -2606,36 +2641,40 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
         y += 8;
         if (ui_->win98Button(210, "Delete", lx, y, panelW - pad * 2, 26, false)) {
             pushUndo();
-            map_.enemySpawns.erase(map_.enemySpawns.begin() + selectedEnemy_);
-            selectedEnemy_ = -1;
+            deleteEnemy(selectedEnemy_);
         }
     }
     else if (selectedTrigger_ >= 0 && selectedTrigger_ < (int)map_.triggers.size()) {
         auto& t = map_.triggers[selectedTrigger_];
 
-        static const char* tTypeNames[] = {
-            "Start","End","Crate","Effect",
-            "SpnR","SpnB","SpnG","SpnY",
-            "Fade","Collision",
-            "Cutscene","Waypoint","Signal","Objective",
-            "SetVar","LoadMap",
-        };
-        static const TriggerType kTypes[] = {
-            TriggerType::LevelStart, TriggerType::LevelEnd, TriggerType::Crate, TriggerType::Effect,
-            TriggerType::TeamSpawnRed, TriggerType::TeamSpawnBlue, TriggerType::TeamSpawnGreen, TriggerType::TeamSpawnYellow,
-            TriggerType::LayerFade, TriggerType::CollisionZone,
-            TriggerType::Cutscene, TriggerType::Waypoint, TriggerType::SignalZone, TriggerType::Objective,
-            TriggerType::SetVariable, TriggerType::LoadMap,
-        };
-        constexpr int kTypeCount2 = (int)(sizeof(kTypes) / sizeof(kTypes[0]));
-        int typeIdx = 0;
-        for (int j = 0; j < kTypeCount2; j++) { if (kTypes[j] == t.type) { typeIdx = j; break; } }
+        int typeIdx = trigTypeIndex(t.type);
         bool hasCondRow  = (t.type == TriggerType::LevelEnd);
         bool hasParamRow = (t.type == TriggerType::Cutscene ||
                             t.type == TriggerType::Waypoint ||
                             t.type == TriggerType::SignalZone ||
-                            t.type == TriggerType::Objective ||
-                            t.type == TriggerType::SetVariable);
+                            t.type == TriggerType::Objective);
+
+        // SetVariable / LoadMap triggers are configured through the cutscene
+        // library (keyed by trigger index); make sure an entry exists to edit.
+        TriggerVarAction* varAct = nullptr;
+        TriggerMapLoad*   mapLoad = nullptr;
+        if (t.type == TriggerType::SetVariable) {
+            for (auto& va : csLib_.triggerVarActions)
+                if (va.triggerIndex == selectedTrigger_) { varAct = &va; break; }
+            if (!varAct) {
+                TriggerVarAction va; va.triggerIndex = selectedTrigger_; va.key = "var"; va.value = 1;
+                csLib_.triggerVarActions.push_back(va);
+                varAct = &csLib_.triggerVarActions.back();
+            }
+        } else if (t.type == TriggerType::LoadMap) {
+            for (auto& tm : csLib_.triggerMapLoads)
+                if (tm.triggerIndex == selectedTrigger_) { mapLoad = &tm; break; }
+            if (!mapLoad) {
+                TriggerMapLoad tm; tm.triggerIndex = selectedTrigger_;
+                csLib_.triggerMapLoads.push_back(tm);
+                mapLoad = &csLib_.triggerMapLoads.back();
+            }
+        }
 
         // Find variable condition for this trigger (may be null)
         TriggerCondition* trigCond = nullptr;
@@ -2651,6 +2690,8 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
 
         // TitleH(22) + top_pad(8) + rows + gap(8) + delete(26) + bot_pad(8)
         int extraRows = (hasCondRow ? 1 : 0) + (hasParamRow ? 1 : 0)
+                      + (varAct ? 4 : 0)          // var / op / value / scope
+                      + (mapLoad ? 1 : 0)         // map path
                       + 1                         // Var cond toggle
                       + (hasVarCond ? 3 : 0)      // name + cmp + value when enabled
                       + 1                         // Multi toggle
@@ -2658,6 +2699,7 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
         const int panelH = UI::W98::TitleH + 8 + (3 + extraRows) * rowH + 8 + 26 + 8;
         if (panelH > maxPanelH) return;
         leftPanelH_ = panelH;
+        if (ui_->win98CloseClicked(panelX, panelY, panelW)) { selectedTrigger_ = -1; return; }
         ui_->drawWin98Window(panelX, panelY, panelW, panelH, "Trigger");
         int y = panelY + UI::W98::TitleH + 8;
 
@@ -2665,16 +2707,49 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
         ui_->drawText("Type", lx, y + 5, 11, UI::W98::Black);
         if (ui_->win98Button(220, "<", arLx, y, btnSz, btnSz, false)) {
             pushUndo();
-            typeIdx = (typeIdx + kTypeCount2 - 1) % kTypeCount2;
-            t.type = kTypes[typeIdx];
+            typeIdx = (typeIdx + kTrigTypeCount - 1) % kTrigTypeCount;
+            t.type = kTrigTypes[typeIdx].type;
         }
-        ui_->drawWin98TextField(fldx, y, fieldW, btnSz, tTypeNames[typeIdx], false);
+        ui_->drawWin98TextField(fldx, y, fieldW, btnSz, kTrigTypes[typeIdx].shortName, false);
         if (ui_->win98Button(221, ">", arRx, y, btnSz, btnSz, false)) {
             pushUndo();
-            typeIdx = (typeIdx + 1) % kTypeCount2;
-            t.type = kTypes[typeIdx];
+            typeIdx = (typeIdx + 1) % kTrigTypeCount;
+            t.type = kTrigTypes[typeIdx].type;
         }
         y += rowH;
+
+        // SetVariable action: <var> <op>= <value> in local/pack scope
+        if (varAct) {
+            static const char* opNames[] = {"Set", "Add", "Subtract"};
+            ui_->drawText("Var", lx, y + 5, 11, UI::W98::Black);
+            trigTextField(TrigText::VarKey, varAct->key, arLx, y, roFldW, btnSz);
+            y += rowH;
+            ui_->drawText("Op", lx, y + 5, 11, UI::W98::Black);
+            if (ui_->win98Button(226, "<", arLx, y, btnSz, btnSz, false)) { pushUndo(); varAct->op = (uint8_t)((varAct->op + 2) % 3); }
+            ui_->drawWin98TextField(fldx, y, fieldW, btnSz, opNames[varAct->op % 3], false);
+            if (ui_->win98Button(227, ">", arRx, y, btnSz, btnSz, false)) { pushUndo(); varAct->op = (uint8_t)((varAct->op + 1) % 3); }
+            y += rowH;
+            ui_->drawText("Value", lx, y + 5, 11, UI::W98::Black);
+            if (ui_->win98Button(228, "-", arLx, y, btnSz, btnSz, false)) { pushUndo(); varAct->value--; }
+            snprintf(buf, sizeof(buf), "%d", varAct->value);
+            ui_->drawWin98TextField(fldx, y, fieldW, btnSz, buf, false);
+            if (ui_->win98Button(229, "+", arRx, y, btnSz, btnSz, false)) { pushUndo(); varAct->value++; }
+            y += rowH;
+            ui_->drawText("Scope", lx, y + 5, 11, UI::W98::Black);
+            if (ui_->win98Button(231, varAct->scope == 1 ? "Pack" : "Local",
+                                 arLx, y, roFldW, btnSz, false)) {
+                pushUndo();
+                varAct->scope = varAct->scope == 1 ? 0 : 1;
+            }
+            y += rowH;
+        }
+
+        // LoadMap target (.csm path, relative to the game folder or a mod)
+        if (mapLoad) {
+            ui_->drawText("Map", lx, y + 5, 11, UI::W98::Black);
+            trigTextField(TrigText::MapPath, mapLoad->mapPath, arLx, y, roFldW, btnSz);
+            y += rowH;
+        }
 
         // Condition (LevelEnd only)
         if (hasCondRow) {
@@ -2763,7 +2838,7 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
                         }
                     }
                     trigCond = nullptr; hasVarCond = false;
-                    trigCondEditingName_ = false;
+                    if (trigText_ == TrigText::CondName) endTrigText(false);
                 } else {
                     // Add condition with defaults
                     TriggerCondition nc;
@@ -2780,19 +2855,7 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
             if (hasVarCond && trigCond) {
                 // Var name (inline editable)
                 ui_->drawText("Var", lx, y + 5, 11, UI::W98::Black);
-                bool editingThis = trigCondEditingName_;
-                const char* nameDisp = editingThis ? trigCondNameBuf_.c_str() : trigCond->varName.c_str();
-                float blink = editingThis ? (float)fmod(SDL_GetTicks() * 0.001, 1.0) : 0.0f;
-                ui_->drawWin98TextField(arLx, y, roFldW, btnSz, nameDisp, editingThis, false, blink);
-                if (ui_->mouseClicked && ui_->pointInRect(ui_->mouseX, ui_->mouseY, arLx, y, roFldW, btnSz)) {
-                    ui_->mouseClicked = false;
-                    ui_->clickCooldownFrames = 2;
-                    trigCondEditingName_ = true;
-                    trigCondNameBuf_ = trigCond->varName;
-#ifndef __SWITCH__
-                    SDL_StartTextInput();
-#endif
-                }
+                trigTextField(TrigText::CondName, trigCond->varName, arLx, y, roFldW, btnSz);
                 y += rowH;
 
                 // Cmp operator
@@ -2837,7 +2900,7 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
                         }
                     }
                     trigMulti = nullptr; hasMulti = false;
-                    trigMultiCooldownEditing_ = false;
+                    if (trigText_ == TrigText::Cooldown) endTrigText(false);
                 } else {
                     TriggerMultiConfig mc;
                     mc.triggerIndex = selectedTrigger_;
@@ -2852,25 +2915,9 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
             if (hasMulti && trigMulti) {
                 // Cooldown (editable text field, seconds)
                 ui_->drawText("Cooldown", lx, y + 5, 11, UI::W98::Black);
-                bool editingCd = trigMultiCooldownEditing_;
-                char cdDisp[32];
-                if (editingCd) {
-                    snprintf(cdDisp, sizeof(cdDisp), "%s", trigMultiCooldownBuf_.c_str());
-                } else {
-                    snprintf(cdDisp, sizeof(cdDisp), "%.2fs", trigMulti->cooldown);
-                }
-                float blinkCd = editingCd ? (float)fmod(SDL_GetTicks() * 0.001, 1.0) : 0.0f;
-                ui_->drawWin98TextField(arLx, y, roFldW, btnSz, cdDisp, editingCd, false, blinkCd);
-                if (ui_->mouseClicked && ui_->pointInRect(ui_->mouseX, ui_->mouseY, arLx, y, roFldW, btnSz)) {
-                    ui_->mouseClicked = false;
-                    ui_->clickCooldownFrames = 2;
-                    trigMultiCooldownEditing_ = true;
-                    snprintf(cdDisp, sizeof(cdDisp), "%.2f", trigMulti->cooldown);
-                    trigMultiCooldownBuf_ = cdDisp;
-#ifndef __SWITCH__
-                    SDL_StartTextInput();
-#endif
-                }
+                char cdVal[32];
+                snprintf(cdVal, sizeof(cdVal), "%.2f", trigMulti->cooldown);
+                trigTextField(TrigText::Cooldown, cdVal, arLx, y, roFldW, btnSz);
                 y += rowH;
             }
         }
@@ -2891,8 +2938,7 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
         y += 8;
         if (ui_->win98Button(230, "Delete", lx, y, panelW - pad * 2, 26, false)) {
             pushUndo();
-            map_.triggers.erase(map_.triggers.begin() + selectedTrigger_);
-            selectedTrigger_ = -1;
+            deleteTrigger(selectedTrigger_);
         }
     }
     else if (currentTool_ == EditorTool::Tile || currentTool_ == EditorTool::Erase ||
@@ -2939,19 +2985,7 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
         }
     }
     else if (currentTool_ == EditorTool::Trigger) {
-        static const char* tNames[] = {
-            "Level Start", "Level End", "Crate", "Effect",
-            "Spawn Red", "Spawn Blue", "Spawn Green", "Spawn Yellow",
-            "Layer Fade", "Collision",
-            "Cutscene", "Waypoint", "Signal Zone", "Objective",
-        };
-        static const TriggerType kT[] = {
-            TriggerType::LevelStart, TriggerType::LevelEnd, TriggerType::Crate, TriggerType::Effect,
-            TriggerType::TeamSpawnRed, TriggerType::TeamSpawnBlue, TriggerType::TeamSpawnGreen, TriggerType::TeamSpawnYellow,
-            TriggerType::LayerFade, TriggerType::CollisionZone,
-            TriggerType::Cutscene, TriggerType::Waypoint, TriggerType::SignalZone, TriggerType::Objective,
-        };
-        const int kTrigCount = (int)(sizeof(kT) / sizeof(kT[0]));
+        const int kTrigCount = kTrigTypeCount;
         const int itemH = 22;
         const int panelH = UI::W98::TitleH + 8 + kTrigCount * itemH + 8;
         if (panelH > maxPanelH) return;
@@ -2960,19 +2994,13 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
         int y = panelY + UI::W98::TitleH + 8;
         const int btnW = panelW - pad * 2;
         for (int i = 0; i < kTrigCount; i++) {
-            if (ui_->win98Button(240 + i, tNames[i], lx, y, btnW, itemH, triggerGhost_.type == kT[i]))
-                triggerGhost_.type = kT[i];
+            if (ui_->win98Button(240 + i, kTrigTypes[i].longName, lx, y, btnW, itemH, triggerGhost_.type == kTrigTypes[i].type))
+                triggerGhost_.type = kTrigTypes[i].type;
             y += itemH;
         }
     }
     else if (currentTool_ == EditorTool::Entity) {
-        static const char* eNames[] = {
-            "Melee", "Shooter", "Crate", "Upgrade Crate",
-            "Brute", "Scout", "Sniper", "Gunner",
-            "Civilian", "Responder", "Med-Relay", "Power", "Water", "Antenna",
-            "Bomber", "Spitter", "Warden",
-        };
-        const int kEntCount = (int)(sizeof(eNames) / sizeof(eNames[0]));
+        const int kEntCount = ENTITY_TYPE_COUNT;
         const int itemH = 20;
         const int panelH = UI::W98::TitleH + 8 + kEntCount * itemH + 8;
         if (panelH > maxPanelH) return;
@@ -2981,7 +3009,7 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
         int y = panelY + UI::W98::TitleH + 8;
         const int btnW = panelW - pad * 2;
         for (int i = 0; i < kEntCount; i++) {
-            if (ui_->win98Button(250 + i, eNames[i], lx, y, btnW, itemH, entitySpawnType_ == (uint8_t)i))
+            if (ui_->win98Button(250 + i, kEntityNames[i], lx, y, btnW, itemH, entitySpawnType_ == (uint8_t)i))
                 entitySpawnType_ = (uint8_t)i;
             y += itemH;
         }
@@ -3008,6 +3036,60 @@ void MapEditor::renderPropertiesPanel(SDL_Renderer* renderer) {
     }
 }
 
+// Trigger config text fields
+
+void MapEditor::beginTrigText(TrigText field, const std::string& initial) {
+    trigText_    = field;
+    trigTextIdx_ = selectedTrigger_;
+    trigTextBuf_ = initial;
+#ifndef __SWITCH__
+    SDL_StartTextInput();
+#endif
+}
+
+void MapEditor::endTrigText(bool commit) {
+    if (trigText_ == TrigText::None) return;
+    TrigText field = trigText_;
+    trigText_ = TrigText::None;   // clear first: pushUndo() below must not recurse into us
+#ifndef __SWITCH__
+    SDL_StopTextInput();
+#endif
+    if (!commit) return;
+    const int ti = trigTextIdx_;
+    const std::string& b = trigTextBuf_;
+    auto find = [ti](auto& v) -> decltype(v.data()) {
+        for (auto& e : v) if (e.triggerIndex == ti) return &e;
+        return nullptr;
+    };
+    switch (field) {
+        case TrigText::CondName:
+            if (!b.empty()) if (auto* c = find(csLib_.triggerConditions)) { pushUndo(); c->varName = b; }
+            break;
+        case TrigText::Cooldown:
+            if (!b.empty()) if (auto* m = find(csLib_.triggerMultiConfigs)) { pushUndo(); m->cooldown = std::max(0.0f, (float)atof(b.c_str())); }
+            break;
+        case TrigText::VarKey:
+            if (!b.empty()) if (auto* va = find(csLib_.triggerVarActions)) { pushUndo(); va->key = b; }
+            break;
+        case TrigText::MapPath:
+            if (auto* tm = find(csLib_.triggerMapLoads)) { pushUndo(); tm->mapPath = b; }
+            break;
+        case TrigText::None: break;
+    }
+}
+
+void MapEditor::trigTextField(TrigText field, const std::string& value, int x, int y, int w, int h) {
+    bool editing = (trigText_ == field);
+    float blink = editing ? (float)fmod(SDL_GetTicks() * 0.001, 1.0) : 0.0f;
+    ui_->drawWin98TextField(x, y, w, h, editing ? trigTextBuf_.c_str() : value.c_str(), editing, false, blink);
+    if (!editing && ui_->mouseClicked && ui_->pointInRect(ui_->mouseX, ui_->mouseY, x, y, w, h)) {
+        ui_->mouseClicked = false;
+        ui_->clickCooldownFrames = 2;
+        endTrigText(true);   // clicking another field keeps what was typed so far
+        beginTrigText(field, value);
+    }
+}
+
 // Map Properties Panel (game mode + player config, editable from within editor)
 
 void MapEditor::renderMapPropsPanel(SDL_Renderer* renderer) {
@@ -3022,14 +3104,15 @@ void MapEditor::renderMapPropsPanel(SDL_Renderer* renderer) {
     const int rowH    = 30;
     const int innerW  = panelW - pad * 2;  // 214
 
-    // 8 rows (mode, abilities header, abilities, hp, bombs, speed, damage,
-    // reset) + separator + two image pickers + close button
-    const int panelH  = UI::W98::TitleH + pad + 8 * rowH + 6 + 68 + btnSz + pad;
+    // 9 rows (mode, abilities header, 2 ability rows, hp, bombs, speed, damage,
+    // reset) + separator + two image pickers
+    const int panelH  = UI::W98::TitleH + pad + 9 * rowH + 6 + 68 + pad;
     const int panelX  = screenW_ - uiPaletteW() - panelW - 8;
     const int panelY  = uiToolbarH() + 8;
     // Don't draw under the cutscene panel
     if (panelY + panelH > screenH_ - csEditorBottom()) return;
     mapPropsH_ = panelH;
+    if (ui_->win98CloseClicked(panelX, panelY, panelW)) { showMapProps_ = false; return; }
 
     // Any button inside this panel changes the map (Reset/Auto/X included)
     bool firedBefore = ui_->buttonFired;
@@ -3039,7 +3122,9 @@ void MapEditor::renderMapPropsPanel(SDL_Renderer* renderer) {
     int y    = panelY + UI::W98::TitleH + pad;
     int lx   = panelX + pad;
     int arLx = lx + 72;
-    int arRx = arLx + btnSz + 44 + 2;
+    int arRx = panelX + panelW - pad - btnSz;       // ">" hugs the right edge
+    int valX = arLx + btnSz + 2;
+    int valW = arRx - 2 - valX;                      // value box fills the gap
     char buf[64];
 
     // Game Mode
@@ -3047,7 +3132,7 @@ void MapEditor::renderMapPropsPanel(SDL_Renderer* renderer) {
     ui_->drawText("Mode", lx, y + 5, 11, UI::W98::Black);
     if (ui_->win98Button(500, "<", arLx, y, btnSz, btnSz, false))
         map_.gameMode = (map_.gameMode + 1) % 2;
-    ui_->drawWin98TextField(arLx + btnSz + 2, y, 44, btnSz,
+    ui_->drawWin98TextField(valX, y, valW, btnSz,
         modeNames[map_.gameMode & 1], false);
     if (ui_->win98Button(501, ">", arRx, y, btnSz, btnSz, false))
         map_.gameMode = (map_.gameMode + 1) % 2;
@@ -3057,24 +3142,26 @@ void MapEditor::renderMapPropsPanel(SDL_Renderer* renderer) {
     ui_->drawText("Abilities", lx, y + 5, 11, UI::W98::Black);
     y += rowH;
 
-    // Abilities toggle buttons (5 equal columns across full interior)
+    // Abilities toggle buttons: 3 + 2 columns so the names fit
     {
-        const char* abNames[]  = { "Gun", "Mlee", "Bomb", "Parry", "Pick" };
+        const char* abNames[]  = { "Gun", "Melee", "Bombs", "Parry", "Pickups" };
         bool*       abFields[] = { &pc.hasGun, &pc.hasMelee, &pc.hasBombs, &pc.hasParry, &pc.hasPickups };
-        const int abW = innerW / 5;  // 42px each, well within panel
         for (int i = 0; i < 5; i++) {
-            if (ui_->win98Button(510 + i, abNames[i], lx + i * abW, y, abW - 2, btnSz, *abFields[i]))
+            int cols = (i < 3) ? 3 : 2, col = (i < 3) ? i : i - 3;
+            int abW  = innerW / cols;
+            int by   = y + (i < 3 ? 0 : rowH);
+            if (ui_->win98Button(510 + i, abNames[i], lx + col * abW, by, abW - 2, btnSz, *abFields[i]))
                 *abFields[i] = !*abFields[i];
         }
     }
-    y += rowH;
+    y += rowH * 2;
 
     // Max HP
     ui_->drawText("Max HP", lx, y + 5, 11, UI::W98::Black);
     if (ui_->win98Button(520, "<", arLx, y, btnSz, btnSz, false))
         if (pc.maxHp > 0) pc.maxHp--;
     snprintf(buf, sizeof(buf), pc.maxHp == 0 ? "Default" : "%d", (int)pc.maxHp);
-    ui_->drawWin98TextField(arLx + btnSz + 2, y, 44, btnSz, buf, false);
+    ui_->drawWin98TextField(valX, y, valW, btnSz, buf, false);
     if (ui_->win98Button(521, ">", arRx, y, btnSz, btnSz, false))
         if (pc.maxHp < 99) pc.maxHp++;
     y += rowH;
@@ -3084,7 +3171,7 @@ void MapEditor::renderMapPropsPanel(SDL_Renderer* renderer) {
     if (ui_->win98Button(522, "<", arLx, y, btnSz, btnSz, false))
         if (pc.startBombs > 0) pc.startBombs--;
     snprintf(buf, sizeof(buf), "%d", (int)pc.startBombs);
-    ui_->drawWin98TextField(arLx + btnSz + 2, y, 44, btnSz, buf, false);
+    ui_->drawWin98TextField(valX, y, valW, btnSz, buf, false);
     if (ui_->win98Button(523, ">", arRx, y, btnSz, btnSz, false))
         if (pc.startBombs < 9) pc.startBombs++;
     y += rowH;
@@ -3094,7 +3181,7 @@ void MapEditor::renderMapPropsPanel(SDL_Renderer* renderer) {
     if (ui_->win98Button(524, "<", arLx, y, btnSz, btnSz, false))
         if (pc.speedPct > 50) pc.speedPct = (uint8_t)(pc.speedPct - 5);
     snprintf(buf, sizeof(buf), "%d%%", (int)pc.speedPct);
-    ui_->drawWin98TextField(arLx + btnSz + 2, y, 44, btnSz, buf, false);
+    ui_->drawWin98TextField(valX, y, valW, btnSz, buf, false);
     if (ui_->win98Button(525, ">", arRx, y, btnSz, btnSz, false))
         if (pc.speedPct < 150) pc.speedPct = (uint8_t)(pc.speedPct + 5);
     y += rowH;
@@ -3104,10 +3191,13 @@ void MapEditor::renderMapPropsPanel(SDL_Renderer* renderer) {
     if (ui_->win98Button(526, "<", arLx, y, btnSz, btnSz, false))
         if (pc.damagePct > 50) pc.damagePct = (uint8_t)(pc.damagePct - 5);
     snprintf(buf, sizeof(buf), "%d%%", (int)pc.damagePct);
-    ui_->drawWin98TextField(arLx + btnSz + 2, y, 44, btnSz, buf, false);
+    ui_->drawWin98TextField(valX, y, valW, btnSz, buf, false);
     if (ui_->win98Button(527, ">", arRx, y, btnSz, btnSz, false))
         if (pc.damagePct < 150) pc.damagePct = (uint8_t)(pc.damagePct + 5);
     y += rowH;
+
+    // The map only applies (and saves) its player config when enabled
+    if (ui_->buttonFired && !firedBefore) pc.enabled = true;
 
     // Reset to defaults
     if (ui_->win98Button(528, "Reset Defaults", lx, y, panelW - pad * 2, btnSz, false)) {
@@ -3159,6 +3249,7 @@ void MapEditor::renderMapPropsPanel(SDL_Renderer* renderer) {
 }
 
 void MapEditor::renderVarListPanel(SDL_Renderer* renderer) {
+    varListH_ = 0;
     if (!ui_) return;
 
     // Collect all variable names referenced in the current .csc
@@ -3185,11 +3276,19 @@ void MapEditor::renderVarListPanel(SDL_Renderer* renderer) {
     bool addingNew = (varListSelected_ == (int)varNames.size() && varListEditingName_);
     int visRows = std::min((int)varNames.size(), maxRows - 1) + 1;  // data rows + add row
     const int panelH  = UI::W98::TitleH + pad + 20 + visRows * rowH + pad + btnSz + pad;
-    const int panelX  = screenW_ - uiPaletteW() - panelW - 8;
+    int panelX        = screenW_ - uiPaletteW() - panelW - 8;
     int panelY        = uiToolbarH() + 8;
-    // If map props panel is open and would overlap, push below it
-    if (mapPropsH_ > 0) panelY += mapPropsH_ + 8;
-    if (panelY + panelH > screenH_ - csEditorBottom() - 8) return;
+    const int bottom  = screenH_ - csEditorBottom() - 8;
+    // Map props panel open: stack below it, or sit beside it when that won't fit
+    if (mapPropsH_ > 0) {
+        if (panelY + mapPropsH_ + 8 + panelH <= bottom) panelY += mapPropsH_ + 8;
+        else                                            panelX -= 230 + 8;
+    }
+    if (panelY + panelH > bottom) return;
+    varListX_ = panelX;
+    varListY_ = panelY;
+    varListH_ = panelH;
+    if (ui_->win98CloseClicked(panelX, panelY, panelW)) { showVarList_ = false; return; }
 
     ui_->drawWin98Window(panelX, panelY, panelW, panelH, "Variables");
 
@@ -3496,14 +3595,16 @@ void MapEditor::renderPalette(SDL_Renderer* renderer) {
     for (int t = 0; t < tabCount; t++) {
         int tx = px + 3 + t * tabW;
         bool active = ((int)paletteTab_ == t);
-        if (ui_->win98Button(120 + t, tabNames[t], tx, tabY, tabW - 1, tabH, active)) {
+        if (ui_->win98Button(130 + t, tabNames[t], tx, tabY, tabW - 1, tabH, active)) {
             paletteTab_ = (PaletteTab)t;
             rebuildFilteredPalette();
             paletteScroll_ = 0;
         }
     }
 
-    int contentTop = TOOLBAR_H + tabH + 8;
+    int contentTop = TOOLBAR_H + kPaletteTabsH;
+    int maxScroll  = std::max(0, paletteContentHeight() - (palBottom - contentTop));
+    paletteScroll_ = std::max(0, std::min(paletteScroll_, maxScroll));
 
     // Clip to palette content area (bounded by the cutscene panel)
     SDL_Rect clip = {px + 2, contentTop, PALETTE_W - 2, palBottom - contentTop};
@@ -3517,21 +3618,9 @@ void MapEditor::renderPalette(SDL_Renderer* renderer) {
     const int rowH = TILE_PREVIEW + 6;
     const int imgSz = TILE_PREVIEW - 4;
 
-    for (int i = 0; i < (int)palette_.size(); i++) {
+    for (int fi = 0; fi < (int)filteredPalette_.size(); fi++) {
+        const int i = filteredPalette_[fi];
         auto& pt = palette_[i];
-
-        // Tab filter
-        if (paletteTab_ != PaletteTab::All) {
-            bool match = false;
-            switch (paletteTab_) {
-                case PaletteTab::Ground:  match = (pt.category == "ground");  break;
-                case PaletteTab::Walls:   match = (pt.category == "walls");   break;
-                case PaletteTab::Ceiling: match = (pt.category == "ceiling"); break;
-                case PaletteTab::Props:   match = (pt.category == "props");   break;
-                default: match = true; break;
-            }
-            if (!match) continue;
-        }
 
         // Category header
         if (pt.category != lastCat) {
@@ -3562,8 +3651,12 @@ void MapEditor::renderPalette(SDL_Renderer* renderer) {
                 ui_->drawWin98Bevel(px + 3, y, PALETTE_W - 6, rowH - 2, true);
             }
 
-            if (hover && ui_->mouseClicked) {
-                selectedPalette_ = i;
+            if (hover && ui_->mouseClicked && ui_->mouseY >= contentTop && ui_->mouseY < palBottom) {
+                selectedPalette_   = i;
+                filteredSelection_ = fi;
+                // Picking a tile means "I want to paint": leave select/erase/etc.
+                if (currentTool_ != EditorTool::Rect && currentTool_ != EditorTool::Fill)
+                    currentTool_ = EditorTool::Tile;
                 ui_->mouseClicked = false;
                 ui_->clickCooldownFrames = 3;
             }
@@ -3600,7 +3693,7 @@ void MapEditor::renderPalette(SDL_Renderer* renderer) {
     {
         int totalH = paletteContentHeight();
         int viewH  = palBottom - contentTop;
-        if (totalH > viewH) {
+        if (totalH > viewH && viewH > 0) {
             int barX = px + PALETTE_W - 8;
             SDL_SetRenderDrawColor(renderer, UI::W98::Shadow.r, UI::W98::Shadow.g, UI::W98::Shadow.b, 255);
             SDL_Rect track = {barX, contentTop, 6, viewH};
@@ -3626,7 +3719,7 @@ void MapEditor::drawEditorText(SDL_Renderer* renderer, const char* text, int x, 
     }
     TTF_Font* f = Assets::instance().font(size);
     if (!f || !text || text[0] == '\0') return;
-    SDL_Surface* surf = TTF_RenderText_Blended(f, text, color);
+    SDL_Surface* surf = TTF_RenderUTF8_Blended(f, text, color);
     if (!surf) return;
     SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer, surf);
     SDL_Rect dst = {x, y, surf->w, surf->h};
@@ -3875,24 +3968,7 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
                     editorBeginTextInput(cfg.textBuf);
                 }
                 else if (cfg.field == 6) { // OK
-                    if (cfg.action == EditorConfig::Action::LoadMap && !cfg.availableMaps.empty()) {
-                        int idx = cfg.loadIdx;
-                        if (idx >= 0 && idx < (int)cfg.availableMaps.size()) {
-                            loadMap(cfg.availableMaps[idx]);
-                            savePath_ = cfg.availableMaps[idx];
-                        }
-                    } else {
-                        newMap(cfg.mapWidth, cfg.mapHeight);
-                        map_.name    = cfg.mapName;
-                        map_.creator = cfg.creator;
-                        map_.gameMode = (uint8_t)cfg.gameMode;
-                        std::string safeName = cfg.mapName;
-                        for (char& c : safeName) {
-                            if (c == ' ' || c == '/' || c == '\\') c = '_';
-                        }
-                        savePath_ = "maps/" + safeName + ".csm";
-                    }
-                    showConfig_ = false;
+                    applyConfig();
                 }
                 else if (cfg.field == 7) { // Cancel
                     wantsBack_ = true;
@@ -3959,24 +4035,7 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
                     editorBeginTextInput(cfg.textBuf);
                 }
                 else if (cfg.field == 6) { // OK
-                    if (cfg.action == EditorConfig::Action::LoadMap && !cfg.availableMaps.empty()) {
-                        int idx = cfg.loadIdx;
-                        if (idx >= 0 && idx < (int)cfg.availableMaps.size()) {
-                            loadMap(cfg.availableMaps[idx]);
-                            savePath_ = cfg.availableMaps[idx];
-                        }
-                    } else {
-                        newMap(cfg.mapWidth, cfg.mapHeight);
-                        map_.name    = cfg.mapName;
-                        map_.creator = cfg.creator;
-                        map_.gameMode = (uint8_t)cfg.gameMode;
-                        std::string safeName = cfg.mapName;
-                        for (char& c : safeName) {
-                            if (c == ' ' || c == '/' || c == '\\') c = '_';
-                        }
-                        savePath_ = "maps/" + safeName + ".csm";
-                    }
-                    showConfig_ = false;
+                    applyConfig();
                 }
                 else if (cfg.field == 7) { // Cancel
                     wantsBack_ = true;
@@ -4000,6 +4059,32 @@ void MapEditor::handleConfigInput(SDL_Event& e) {
         if (cfg.field < 0) cfg.field = 0;
         if (cfg.field > 7) cfg.field = 7;
     }
+}
+
+// Config screen OK: create the new map or load the chosen one.
+void MapEditor::applyConfig() {
+    auto& cfg = config_;
+    commitConfigEdit();
+    if (cfg.action == EditorConfig::Action::LoadMap && !cfg.availableMaps.empty()) {
+        int idx = std::max(0, std::min(cfg.loadIdx, (int)cfg.availableMaps.size() - 1));
+        if (!loadMap(cfg.availableMaps[idx])) {
+            // Stay on the config screen; the status bar explains what happened
+            saveMessage_      = "Could not load " + cfg.availableMaps[idx];
+            saveMessageTimer_ = 3.0f;
+            return;
+        }
+    } else {
+        newMap(cfg.mapWidth, cfg.mapHeight);
+        map_.name     = cfg.mapName;
+        map_.creator  = cfg.creator;
+        map_.gameMode = (uint8_t)cfg.gameMode;
+        std::string safe = cfg.mapName;
+        for (char& c : safe) { if (c == ' ' || c == '/' || c == '\\') c = '_'; }
+        if (safe.empty()) safe = "untitled";
+        savePath_ = "maps/" + safe + ".csm";
+    }
+    fitView();
+    showConfig_ = false;
 }
 
 // Commit the value currently being typed into a config text field. Called when
@@ -4032,23 +4117,20 @@ void MapEditor::renderConfig(SDL_Renderer* renderer) {
     ui_->drawDesktop();
 
     // Centered window
+    // Sized to the tallest layout (8-row map list) instead of the whole screen
     const int winW  = 520;
-    const int winH  = screenH_ - 100;
+    const int winH  = std::min(430, screenH_ - ui_->statusBarHeight() - 20);
     const int winX  = (screenW_ - winW) / 2;
-    const int winY  = 40;
+    const int winY  = std::max(8, (screenH_ - ui_->statusBarHeight() - winH) / 2);
     const char* winTitle = (cfg.action == EditorConfig::Action::NewMap)
                            ? "New Map" : "Load Map";
     ui_->drawWin98Window(winX, winY, winW, winH, winTitle);
 
     // X button closes back to main menu
-    {
-        const int cbSz = UI::W98::TitleH - 4;
-        if (ui_->mouseClicked && ui_->pointInRect(ui_->mouseX, ui_->mouseY,
-                winX + winW - 3 - cbSz, winY + 5, cbSz, cbSz)) {
-            wantsBack_ = true;
-            showConfig_ = false;
-            return;
-        }
+    if (ui_->win98CloseClicked(winX, winY, winW)) {
+        wantsBack_ = true;
+        showConfig_ = false;
+        return;
     }
 
     // A click anywhere commits the field currently being edited. If the click
@@ -4191,7 +4273,14 @@ void MapEditor::renderConfig(SDL_Renderer* renderer) {
         } else {
             int listX = winX + padX;
             int listW = winW - padX * 2;
-            int startShow = std::max(0, cfg.loadIdx - 4);
+            // Mouse wheel over the list moves the selection
+            if (ui_->mouseWheelY != 0 &&
+                ui_->pointInRect(ui_->mouseX, ui_->mouseY, listX, y, listW, 8 * (rowH + 2))) {
+                cfg.loadIdx = std::max(0, std::min((int)cfg.availableMaps.size() - 1,
+                                                   cfg.loadIdx - ui_->mouseWheelY));
+                cfg.field = 1;
+            }
+            int startShow = std::max(0, std::min(cfg.loadIdx - 4, (int)cfg.availableMaps.size() - 8));
             int endShow   = std::min((int)cfg.availableMaps.size(), startShow + 8);
             for (int i = startShow; i < endShow; i++) {
                 const std::string& fullPath = cfg.availableMaps[i];
@@ -4210,8 +4299,12 @@ void MapEditor::renderConfig(SDL_Renderer* renderer) {
                 std::string label = prefix + fname;
                 bool isCur = (i == cfg.loadIdx);
                 if (ui_->win98Button(300 + i, label.c_str(), listX, y, listW, rowH, isCur)) {
+                    Uint32 now = SDL_GetTicks();
+                    bool dbl = isCur && now - cfg.lastListClickT < 450;
+                    cfg.lastListClickT = now;
+                    if (dbl) { applyConfig(); return; }   // double-click opens the map
                     cfg.loadIdx = i;
-                    cfg.field   = 5;
+                    cfg.field   = 1;
                 }
                 y += rowH + 2;
             }
@@ -4228,21 +4321,7 @@ void MapEditor::renderConfig(SDL_Renderer* renderer) {
     int btn2X = winX + winW / 2 + btnGap / 2;
 
     if (ui_->win98Button(400, "OK", btn1X, btnY, btnW, btnH, cfg.field == 6)) {
-        if (cfg.action == EditorConfig::Action::LoadMap && !cfg.availableMaps.empty()) {
-            int idx = std::max(0, std::min(cfg.loadIdx, (int)cfg.availableMaps.size() - 1));
-            loadMap(cfg.availableMaps[idx]);
-            savePath_ = cfg.availableMaps[idx];
-        } else {
-            newMap(cfg.mapWidth, cfg.mapHeight);
-            map_.name    = cfg.mapName;
-            map_.creator = cfg.creator;
-            map_.gameMode = (uint8_t)cfg.gameMode;
-            std::string safe = cfg.mapName;
-            for (char& c : safe) { if (c == ' ' || c == '/' || c == '\\') c = '_'; }
-            if (safe.empty()) safe = "untitled";
-            savePath_ = "maps/" + safe + ".csm";
-        }
-        showConfig_ = false;
+        applyConfig();
         return;
     }
     if (ui_->win98Button(401, "Cancel", btn2X, btnY, btnW, btnH, cfg.field == 7)) {
@@ -4251,9 +4330,11 @@ void MapEditor::renderConfig(SDL_Renderer* renderer) {
         return;
     }
 
-    // Status bar with controls hint
-    ui_->drawWin98StatusBar(screenH_ - 24,
-        "\xe2\x86\x91\xe2\x86\x93 navigate   \xe2\x86\x90\xe2\x86\x92 adjust   Enter confirm   Esc cancel");
+    // Status bar with controls hint (or the last load error)
+    ui_->drawWin98StatusBar(screenH_ - ui_->statusBarHeight(),
+        saveMessageTimer_ > 0 ? saveMessage_.c_str()
+                              : "Up/Down navigate   Left/Right adjust   Enter confirm   Esc cancel");
+    if (saveMessageTimer_ > 0) saveMessageTimer_ -= ui_->dt;
 }
 
 // Gamepad Support
@@ -4306,32 +4387,20 @@ void MapEditor::handleGamepadInput(SDL_Event& e) {
                 if (zoom_ > ZOOM_MAX) zoom_ = ZOOM_MAX;
                 break;
             case SDL_CONTROLLER_BUTTON_DPAD_UP:
-                if (currentTool_ == EditorTool::Tile && !palette_.empty()) {
-                    selectedPalette_--;
-                    if (selectedPalette_ < 0) selectedPalette_ = (int)palette_.size() - 1;
+                if (currentTool_ == EditorTool::Tile && !filteredPalette_.empty()) {
+                    int n = (int)filteredPalette_.size();
+                    filteredSelection_ = (filteredSelection_ + n - 1) % n;
+                    selectedPalette_ = filteredPalette_[filteredSelection_];
                     scrollPaletteToSelection();
                 }
-                if (currentTool_ == EditorTool::Trigger) {
-                    // Cycle only valid trigger types (the enum has gaps)
-                    static const TriggerType kGpTypes[] = {
-                        TriggerType::LevelStart, TriggerType::LevelEnd,
-                        TriggerType::Crate, TriggerType::Effect,
-                        TriggerType::TeamSpawnRed, TriggerType::TeamSpawnBlue,
-                        TriggerType::TeamSpawnGreen, TriggerType::TeamSpawnYellow,
-                        TriggerType::LayerFade, TriggerType::CollisionZone,
-                        TriggerType::Cutscene, TriggerType::Waypoint,
-                        TriggerType::SignalZone, TriggerType::Objective,
-                    };
-                    int cur = 0;
-                    for (int i = 0; i < 14; i++)
-                        if (kGpTypes[i] == triggerGhost_.type) { cur = i; break; }
-                    triggerGhost_.type = kGpTypes[(cur + 1) % 14];
-                }
+                if (currentTool_ == EditorTool::Trigger)
+                    triggerGhost_.type = kTrigTypes[(trigTypeIndex(triggerGhost_.type) + 1) % kTrigTypeCount].type;
                 break;
             case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
-                if (currentTool_ == EditorTool::Tile && !palette_.empty()) {
-                    selectedPalette_++;
-                    if (selectedPalette_ >= (int)palette_.size()) selectedPalette_ = 0;
+                if (currentTool_ == EditorTool::Tile && !filteredPalette_.empty()) {
+                    int n = (int)filteredPalette_.size();
+                    filteredSelection_ = (filteredSelection_ + 1) % n;
+                    selectedPalette_ = filteredPalette_[filteredSelection_];
                     scrollPaletteToSelection();
                 }
                 if (currentTool_ == EditorTool::Entity) entitySpawnType_ = (entitySpawnType_ + 1) % ENTITY_TYPE_COUNT;
@@ -4354,17 +4423,11 @@ void MapEditor::handleGamepadInput(SDL_Event& e) {
             case SDL_CONTROLLER_BUTTON_BACK: // Delete selection  (- button on Switch)
                 // If nothing selected, treat as exit-to-menu
                 if (selectedTrigger_ < 0 && selectedEnemy_ < 0) {
-                    wantsBack_ = true;
+                    if (requestExit()) wantsBack_ = true;
                 } else {
                     pushUndo();
-                    if (selectedTrigger_ >= 0 && selectedTrigger_ < (int)map_.triggers.size()) {
-                        map_.triggers.erase(map_.triggers.begin() + selectedTrigger_);
-                        selectedTrigger_ = -1;
-                    }
-                    if (selectedEnemy_ >= 0 && selectedEnemy_ < (int)map_.enemySpawns.size()) {
-                        map_.enemySpawns.erase(map_.enemySpawns.begin() + selectedEnemy_);
-                        selectedEnemy_ = -1;
-                    }
+                    deleteTrigger(selectedTrigger_);
+                    deleteEnemy(selectedEnemy_);
                 }
                 break;
         }

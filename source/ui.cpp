@@ -67,7 +67,7 @@ const TextCache::Entry& TextCache::get(const char* text, int size) {
     if (!f) return empty;
 
     SDL_Color white = {255, 255, 255, 255};
-    SDL_Surface* surf = TTF_RenderText_Blended(f, text, white);
+    SDL_Surface* surf = TTF_RenderUTF8_Blended(f, text, white);
     if (!surf) return empty;
 
     SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer_, surf);
@@ -213,6 +213,17 @@ void Context::endFrame() {
 void Context::shutdown() {
     textCache.clear();
 }
+
+// Console UI helpers
+int Context::menuFontSize() const        { return consoleUI_ ? 24 : 18; }
+int Context::menuSelFontSize() const     { return consoleUI_ ? 30 : 24; }
+int Context::win98ButtonHeight() const   { return consoleUI_ ? 36 : 26; }
+int Context::win98ButtonFontSize() const { return consoleUI_ ? 18 : 14; }
+int Context::statusBarHeight() const     { return consoleUI_ ? 36 : 26; }
+int Context::statusBarFontSize() const   { return consoleUI_ ? 16 : 12; }
+int Context::hintBarFontSize() const     { return consoleUI_ ? 18 : 13; }
+int Context::menuItemHeight() const      { return consoleUI_ ? 40 : 30; }
+int Context::buttonGap() const           { return consoleUI_ ? 6 : 4; }
 
 // Drawing Helpers
 
@@ -474,7 +485,7 @@ int Context::sliderRow(int idx, const char* label, const char* value,
 
 void Context::drawHintBar(const HintPair* pairs, int count, int y) {
     std::string text = buildHintBar(pairs, count, usingGamepad);
-    drawTextCentered(text.c_str(), y, 13, Color::HintGray);
+    drawTextCentered(text.c_str(), y, hintBarFontSize(), Color::HintGray);
 }
 
 bool Context::pointInRect(int px, int py, int rx, int ry, int rw, int rh) const {
@@ -578,6 +589,14 @@ void Context::drawWin98Window(int x, int y, int w, int h, const char* title, boo
     SDL_RenderDrawLine(renderer, x+3, y+4+tH, x+w-4, y+4+tH);
 }
 
+bool Context::win98CloseClicked(int x, int y, int w) {
+    int cbSz = W98::TitleH - 4;
+    if (!mouseClicked || !pointInRect(mouseX, mouseY, x + w - 3 - cbSz, y + 5, cbSz, cbSz)) return false;
+    mouseClicked = false;
+    clickCooldownFrames = 3;
+    return true;
+}
+
 bool Context::win98Button(int idx, const char* label, int x, int y, int w, int h, bool sel) {
     bool hovered  = pointInRect(mouseX, mouseY, x, y, w, h);
     if (hovered) hoveredItem = idx;
@@ -614,12 +633,14 @@ bool Context::win98Button(int idx, const char* label, int x, int y, int w, int h
 
     drawWin98Bevel(x, y, w, h, !pressed);
 
-    const auto& te = textCache.get(label, 14);
+    // Console UI enlarges the font; never past what the button can hold
+    const auto& te = textCache.get(label, std::min(win98ButtonFontSize(), std::max(9, h - 6)));
     if (te.texture) {
         SDL_SetTextureColorMod(te.texture, 0, 0, 0);
         SDL_SetTextureAlphaMod(te.texture, 255);
         int ox = pressed ? 1 : 0;
-        int tx = x + (w - te.width) / 2 + ox;
+        // Centered; a label wider than the button is left-aligned and cut on the right
+        int tx = (te.width > w - 6 ? x + 3 : x + (w - te.width) / 2) + ox;
         int ty = y + (h - te.height) / 2 + ox;
         // Clip text horizontally to button interior so wide labels never overflow
         int srcX = 0, drawW = te.width;
@@ -650,13 +671,19 @@ void Context::drawWin98TextField(int x, int y, int w, int h, const char* text,
     if (focused && (int)(blinkT * 2) % 2 == 0) display += '|';
 
     if (!display.empty()) {
-        const auto& te = textCache.get(display.c_str(), 14);
+        const auto& te = textCache.get(display.c_str(), std::min(win98ButtonFontSize(), std::max(9, h - 6)));
         if (te.texture) {
             SDL_SetTextureColorMod(te.texture, 0, 0, 0);
             SDL_SetTextureAlphaMod(te.texture, 255);
-            SDL_Rect dst = {x+5, y+(h-te.height)/2,
-                            std::min(te.width, w-8), te.height};
-            SDL_RenderCopy(renderer, te.texture, nullptr, &dst);
+            // Crop (don't squash) text wider than the field. While typing keep
+            // the end - where the caret is - in view.
+            int visW = std::min(te.width, w - 8);
+            if (visW > 0) {
+                int srcX = (focused && te.width > visW) ? te.width - visW : 0;
+                SDL_Rect src = {srcX, 0, visW, te.height};
+                SDL_Rect dst = {x+5, y+(h-te.height)/2, visW, te.height};
+                SDL_RenderCopy(renderer, te.texture, &src, &dst);
+            }
         }
     }
 }
@@ -671,7 +698,7 @@ void Context::drawWin98StatusBar(int y, const char* text) {
     SDL_SetRenderDrawColor(renderer, W98::White.r, W98::White.g, W98::White.b, 255);
     SDL_RenderDrawLine(renderer, 0, y+1, SCREEN_W, y+1);
     if (text && text[0]) {
-        const auto& te = textCache.get(text, 12);
+        const auto& te = textCache.get(text, statusBarFontSize());
         if (te.texture) {
             SDL_SetTextureColorMod(te.texture, 0, 0, 0);
             SDL_SetTextureAlphaMod(te.texture, 255);

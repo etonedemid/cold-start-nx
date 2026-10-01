@@ -8,6 +8,9 @@ build/
 build-pc/
 build-win/
 build-win-wsl/
+build-*/
+compile_commands.json
+*.lst
 build-server/
 dist/
 hbas-repo/
@@ -45,6 +48,7 @@ config.txt
 presets.txt
 servers.txt
 modconfig.cfg
+best_run.txt
 
 # ─── Android ────────────────────────────────────────────────────────────────
 android/app/jni/SDL2/

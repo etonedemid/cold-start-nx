@@ -491,7 +491,7 @@ void Game::setupNetworkCallbacks() {
         (void)state;
     };
 
-    net.onBulletSpawned = [this](Vec2 pos, float angle, uint8_t playerId, uint32_t netId, uint8_t playerSlot) {
+    net.onBulletSpawned = [this](Vec2 pos, float angle, uint8_t playerId, uint32_t netId, uint8_t playerSlot, int damage) {
         if (playerId != NetworkManager::instance().localPlayerId()) {
             Entity b;
             b.pos = pos;
@@ -501,7 +501,7 @@ void Game::setupNetworkCallbacks() {
             b.lifetime = BULLET_LIFETIME;
             b.tag = TAG_BULLET;
             b.sprite = bulletSprite_;
-            b.damage = 1;
+            b.damage = damage;
             b.netId = netId;
             b.ownerId = playerId;
             b.ownerSubSlot = playerSlot;
@@ -945,6 +945,42 @@ void Game::setupNetworkCallbacks() {
         }
     };
 
+    // PvE: host receives enemy hit report from client; applies authoritative damage
+    net.onEnemyHit = [this](uint32_t enemyIdx, int damage, uint8_t ownerId, uint8_t ownerSlot) -> bool {
+        if (enemyIdx >= enemies_.size()) return false;
+        auto& e = enemies_[enemyIdx];
+        if (!e.alive) return false;
+        float dmg = damage * (1.0f - e.bulletDamageReduction);
+        e.hp -= dmg;
+        // Aggro the enemy toward the shooter
+        e.state = EnemyState::Chase;
+        e.lastSeenTime = gameTime_;
+        e.idleTimer    = 0;
+        if (ownerId != 255) {
+            e.targetPlayerId = ownerId;
+            e.targetPlayerSlot = ownerSlot;
+        }
+        // Credit kill and broadcast if enemy died
+        auto creditEnemyKill = [&](Enemy& enemy, uint8_t killerOwnerId) {
+            bool trackKill = !NetworkManager::instance().isOnline() || killerOwnerId == NetworkManager::instance().localPlayerId();
+            killEnemy(enemy, trackKill);
+            // Credit kill to the firing slot's scoreboard counter
+            if (killerOwnerId < 4 && coopSlots_[killerOwnerId].joined)
+                coopSlots_[killerOwnerId].kills++;
+            if (NetworkManager::instance().isInGame()) {
+                NetworkManager::instance().sendEnemyKilled(enemyIdx, killerOwnerId);
+                enemyStatesNeedUpdate_ = true;
+            }
+        };
+        if (e.hp <= 0) {
+            creditEnemyKill(e, ownerId);
+        } else {
+            // Force immediate enemy state update so clients see the damage
+            enemyStatesNeedUpdate_ = true;
+        }
+        return true;
+    };
+
     // Receive authoritative HP from host - update local player if it's ours
     net.onPlayerHpSync = [this](uint8_t playerId, int hp, int maxHp, uint8_t killerId) {
         auto& net = NetworkManager::instance();
@@ -1386,7 +1422,12 @@ void Game::updateMultiplayer(float dt) {
         return;
     }
 
-    syncLocalCharacterSelection();
+    // Only sync character selection when entering multiplayer states or lobby,
+    // not every frame during gameplay. The per-frame call caused heavy filesystem I/O
+    // (buildCharacterSyncBundle reads all sprite files from disk) which lagged Switch.
+    if (!net.isInGame()) {
+        syncLocalCharacterSelection();
+    }
 
     // NOTE: net.update(dt) is already called in run() every frame - do NOT call again here
 

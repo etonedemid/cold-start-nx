@@ -350,7 +350,34 @@ bool Game::init() {
 #endif
 
     DiscordRPC::instance().init();
+    reportMissingAssets(true);
     return true;
+}
+
+// Tell the player about assets that failed to load since the last report.
+// Startup gets a native dialog listing them; anything that goes missing later
+// (lazily loaded sprites, map music...) gets an in-game toast instead.
+void Game::reportMissingAssets(bool startup) {
+    const auto& miss = Assets::instance().missingAssets();
+    if (miss.size() <= assetsReported_) return;
+    const size_t first = assetsReported_, n = miss.size() - first;
+    assetsReported_ = miss.size();
+
+    if (startup) {
+        std::string msg = std::to_string(n) + (n == 1 ? " game file" : " game files") +
+                          " could not be loaded:\n\n";
+        for (size_t i = first; i < miss.size() && i < first + 12; i++) msg += "    " + miss[i] + "\n";
+        if (n > 12) msg += "    ...and " + std::to_string(n - 12) + " more (see the console log)\n";
+        msg += "\nThe game will still run, but some things may be invisible or silent.\n"
+               "Reinstalling (or re-extracting) the game usually fixes this.";
+        // Native dialog where the platform has one; consoles fall through to the toast
+        if (SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "Cold Start - missing files",
+                                     msg.c_str(), window_) == 0)
+            return;
+    }
+    assetToast_ = (n == 1) ? "Missing file: " + miss[first]
+                           : std::to_string(n) + " files missing, e.g. " + miss[first];
+    assetToastT_ = 6.0f;
 }
 
 void Game::playMapMusic(const std::string& folder, const std::string& trackPath) {
@@ -678,7 +705,7 @@ void Game::loadAssets() {
 
 // Game State Management
 
-static std::string mapLoadingTip() {
+std::string mapLoadingTip() {
     static const char* kTips[] = {
         "Reload while sprinting to keep your momentum",
         "Melee at the right moment reflects bullets",
@@ -866,6 +893,7 @@ void Game::run() {
         // Update UI system at the start of each frame so both handleInput()
         // and render() see consistent mouse/touch state.
         ui_.beginFrame(dt_, usingGamepad_);
+        ui_.consoleUI_ = config_.consoleUI;
 
     #ifdef __SWITCH__
         updateSwitchRumble();
@@ -876,7 +904,25 @@ void Game::run() {
         // Always update the network (for lobby, connecting, in-game, etc.)
         {
             auto& net = NetworkManager::instance();
-            if (net.isOnline()) net.update(dt_);
+
+            // Track whether we've synced character selection for this session.
+            // Reset when going offline so next join triggers sync again.
+            static bool s_charSyncDone = false;
+            if (!net.isOnline()) {
+                s_charSyncDone = false;
+            }
+
+            if (net.isOnline()) {
+                net.update(dt_);
+
+                // When a client successfully connects and enters lobby for the first time,
+                // sync their character selection to host. updateMultiplayer() only runs during
+                // gameplay states, not Lobby, so we need this one-time trigger here.
+                if (!net.isHost() && net.state() == NetState::InLobby && !s_charSyncDone) {
+                    syncLocalCharacterSelection(true);
+                    s_charSyncDone = true;
+                }
+            }
         }
 
         // Discord Rich Presence: tick IPC connection; refresh activity every 5 s
@@ -1423,6 +1469,7 @@ void Game::saveConfig() {
     fprintf(f, "playerSpeedScale=%.2f\n", config_.playerSpeedScale);
     fprintf(f, "killsPerBomb=%d\n", config_.killsPerBomb);
     fprintf(f, "waveSizeScale=%.2f\n", config_.waveSizeScale);
+    fprintf(f, "consoleUI=%d\n", config_.consoleUI ? 1 : 0);
     fclose(f);
     printf("Config saved to config.txt\n");
 }
@@ -1468,6 +1515,7 @@ void Game::loadConfig() {
         else if (sscanf(line, "playerSpeedScale=%f",  &fval) == 1) config_.playerSpeedScale  = std::clamp(fval, 0.5f, 2.0f);
         else if (sscanf(line, "killsPerBomb=%d",      &ival) == 1) config_.killsPerBomb      = std::clamp(ival, 1, 50);
         else if (sscanf(line, "waveSizeScale=%f",     &fval) == 1) config_.waveSizeScale     = std::clamp(fval, 0.5f, 3.0f);
+        else if (sscanf(line, "consoleUI=%d",         &ival) == 1) config_.consoleUI         = (ival != 0);
     }
     fclose(f);
     printf("Config loaded from config.txt\n");

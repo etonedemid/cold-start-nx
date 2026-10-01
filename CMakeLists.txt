@@ -60,17 +60,12 @@ if(WIN32)
     message(STATUS "libcurl: found and linked")
 
     if(MINGW)
-        # Static linking - produces a single portable .exe
-        if(CMAKE_CROSSCOMPILING AND EXISTS /usr/x86_64-w64-mingw32/static/lib)
-            target_link_directories(cold_start BEFORE PRIVATE
-                /usr/x86_64-w64-mingw32/static/lib)
-        endif()
-
+        # All SDL2 libs are dynamically linked (DLLs shipped with release).
         target_link_libraries(cold_start PRIVATE
-            SDL2::SDL2main SDL2::SDL2-static
-            SDL2_image::SDL2_image-static
-            SDL2_ttf::SDL2_ttf-static
-            SDL2_mixer::SDL2_mixer-static)
+            SDL2::SDL2main SDL2::SDL2
+            SDL2_image::SDL2_image
+            SDL2_ttf::SDL2_ttf
+            SDL2_mixer::SDL2_mixer)
 
         target_compile_definitions(cold_start PRIVATE _GLIBCXX_USE_DEPRECATED=1)
         target_compile_options(cold_start PRIVATE -Wno-deprecated-declarations)
@@ -95,12 +90,10 @@ if(WIN32)
             add_custom_target(winpthread_nores DEPENDS "${WINPTHREAD_STRIPPED}")
             add_dependencies(cold_start winpthread_nores)
             target_link_options(cold_start PRIVATE
-                -static-libgcc -static-libstdc++
                 -Wl,-Bstatic,--whole-archive "${WINPTHREAD_STRIPPED}" -Wl,--no-whole-archive,-Bdynamic
                 -mwindows)
         else()
             target_link_options(cold_start PRIVATE
-                -static-libgcc -static-libstdc++
                 -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive,-Bdynamic
                 -mwindows)
         endif()
@@ -143,9 +136,9 @@ if(WIN32)
         # miniupnpc must come before ws2_32/msvcrt so GNU ld sees its undefined
         # refs before closing those archives (left-to-right symbol resolution).
         # msvcrt provides __imp__snprintf / __imp__scprintf that miniupnpc uses.
-        target_link_libraries(cold_start PRIVATE ${MINIUPNPC_LIB} iphlpapi ws2_32 msvcrt-os)
-        # MINIUPNP_STATICLIB (no C) suppresses __declspec(dllimport) in the headers
-        target_compile_definitions(cold_start PRIVATE HAS_ENET=1 HAS_UPNP=1 PLATFORM_PC MINIUPNP_STATICLIB)
+        target_link_libraries(cold_start PRIVATE ${MINIUPNPC_LIB} iphlpapi ws2_32)
+        # Shared miniupnpc DLL — no MINIUPNP_STATICLIB so headers use __declspec(dllimport)
+        target_compile_definitions(cold_start PRIVATE HAS_ENET=1 HAS_UPNP=1 PLATFORM_PC)
         message(STATUS "miniupnpc: found - UPnP enabled")
     else()
         target_link_libraries(cold_start PRIVATE ws2_32)

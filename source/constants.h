@@ -18,11 +18,11 @@
 #endif
 
 // Version
-constexpr const char* GAME_VERSION = "3.5.0";
+constexpr const char* GAME_VERSION = "3.6.0";
 
 // Workshop
 constexpr const char* WORKSHOP_URL    = "https://coldstartworkshop.duckdns.org";
-constexpr const char* WORKSHOP_PUBKEY = "c7963d86025b9dbd05a9740a496c672fb999a4fcc49e1da2acb062c831def453";
+constexpr const char* WORKSHOP_PUBKEY = "8cd9c38f6666bff8087797817a8578ee14128c4de6ac6cac8a59c50ba3e4ca6a";
 
 // Screen (window resolution - runtime configurable)
 inline int SCREEN_W = 1280;

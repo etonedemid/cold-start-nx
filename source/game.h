@@ -128,6 +128,11 @@ struct GameConfig {
     bool  acceptLocalMods      = false; // receive unverified locally-created mods from host
     float uiScale   = 1.0f;   // HUD + touch controls scale multiplier
     float shakeScale = 1.0f;  // screen shake intensity  0=off  1=full
+#if defined(__SWITCH__) || defined(__WIIU__)
+    bool consoleUI = true;     // larger text, bigger buttons, gamepad-focused layout (default on consoles)
+#else
+    bool consoleUI = false;
+#endif
 
     // Comfort / accessibility
     bool  reduceFlashing    = false; // dampen explosion white-flash, glitch strips, chromatic pulses (photosensitivity)
@@ -335,6 +340,10 @@ private:
     static constexpr float kCrtWarmupSec = 0.55f;
     uint32_t     currentMapSeed_   = 0;      // seed of the active generated map
     bool         currentMapHasSeed_= false;  // true only for generated maps (not custom/pack)
+    // Custom-map music is deferred to the CRT transition (started after the loading
+    // screen), the same way generated maps defer their action music.
+    std::string  pendingMapMusicDir_;
+    std::string  pendingMapMusicPath_;
     // Multiplayer keeps its own game state (set by the caller) but raises this
     // flag so every peer shows a synced loading screen with per-player ready
     // status until everyone reports in (or a timeout elapses).
@@ -656,6 +665,13 @@ private:
     void consoleExec(const char* cmd);
     void consoleOut(const char* line);
 
+    // Missing-asset warnings: a system dialog at startup, a toast for later misses
+    size_t      assetsReported_ = 0;
+    std::string assetToast_;
+    float       assetToastT_ = 0.0f;
+    void reportMissingAssets(bool startup);
+    void renderAssetToast();
+
     // Visual Polish
     float waveAnnounceTimer_ = 0;  // countdown for wave banner display
     int   waveAnnounceNum_   = 0;  // which wave to show
@@ -892,8 +908,8 @@ private:
     int  renderMapLoadCore();          // shared black bg + sawblade + seed + tip; returns y below tip
     void renderMapLoading();           // single-player loading screen
     void renderMultiplayerLoading();   // multiplayer loading screen w/ per-player ready status
-    void renderCrtPowerOn(float t);
-    void beginCrtWarmup();             // start CRT power-on: kicks the sfx + gameplay music
+    void beginCrtWarmup();             // start CRT power-on: arms warmup + tube-whir sfx
+    void startLoadedMapMusic();        // start the track for the map we're entering (action vs custom)
     void renderLoginScreen();
     void renderMainMenu();
     void renderToolsMenu();

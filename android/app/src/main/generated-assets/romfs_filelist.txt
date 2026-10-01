@@ -15,6 +15,7 @@ sounds/beep.mp3
 sounds/bg.mp3
 sounds/break.mp3
 sounds/death.mp3
+sounds/dragon-studio-tv-shutdown-386167.mp3
 sounds/enemyexplode.mp3
 sounds/explosion.mp3
 sounds/freesound_community-bootup-63385.mp3
@@ -72,6 +73,8 @@ sprites/enemy/melee.png
 sprites/enemy/scout.png
 sprites/enemy/shooter.png
 sprites/enemy/sniper.png
+sprites/enemy/spitter.png
+sprites/enemy/warden.png
 sprites/player/backup_32x32/body-0001.png
 sprites/player/backup_32x32/body-0002.png
 sprites/player/backup_32x32/body-0003.png
@@ -137,8 +140,14 @@ sprites/player/legs-0008.png
 sprites/projbliss.png
 sprites/projectiles/bullet-enemy.png
 sprites/projectiles/bullet-player.png
+sprites/props/CREDITS.txt
 sprites/props/box.png
 sprites/props/computer.png
+sprites/props/infra_antenna.png
+sprites/props/infra_medrelay.png
+sprites/props/infra_power.png
+sprites/props/infra_water.png
+sprites/sawblade.png
 sprites/ui/browser_about.png
 sprites/ui/browser_connect.png
 sprites/ui/browser_doc.png

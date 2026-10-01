@@ -28,6 +28,8 @@ Write-Host "Cold Start $VER - All-Platform Build" -ForegroundColor White
 Write-Host "Output: $OUT" -ForegroundColor Gray
 Write-Host ""
 
+# Clear previous build artifacts
+if (Test-Path $OUT) { Remove-Item "$OUT\*" -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $OUT | Out-Null
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -62,7 +64,14 @@ if (-not $SkipWin) {
     Start-Sleep -Milliseconds 300
 
     Set-Location $ROOT
-    cmake --build build-win -- -j4
+
+    # Build using MSYS2 MinGW64 environment (native Windows build, no WSL needed)
+    $msysBash = "C:\msys64\usr\bin\bash.exe"
+    $jobCount = [System.Environment]::ProcessorCount
+    # Convert Windows path to MSYS2-style (C:\Users\... -> /c/Users/...) and
+    # include System32 in PATH so cmd.exe is found during the link step.
+    $repoMsys = '/c' + ((Get-Item $ROOT).FullName.Substring(2)).Replace('\\', '/')
+    & $msysBash -lc "export PATH=/mingw64/bin:/usr/bin:/c/Windows/System32:\$PATH && cd '$repoMsys' && cmake --build build-win -j$jobCount"
     if ($LASTEXITCODE -ne 0) { Fail "Windows build failed" }
 
     # Collect: exe + romfs + all needed DLLs
@@ -80,8 +89,9 @@ if (-not $SkipWin) {
     # resolve recursively from the binary's actual imports instead.
     $mingw = "C:\msys64\mingw64\bin"
     $exePath = "$ROOT\build-win\cold_start.exe"
-    if (-not (Get-Command "objdump" -ErrorAction SilentlyContinue)) {
-        Fail "objdump not found (expected at $mingw) - cannot resolve DLL dependencies"
+    $objdumpExe = Join-Path $mingw "objdump.exe"
+    if (-not (Test-Path $objdumpExe)) {
+        Fail "objdump not found at $objdumpExe - cannot resolve DLL dependencies"
     }
 
     $resolvedDlls = @{}
@@ -89,7 +99,7 @@ if (-not $SkipWin) {
     $queue.Enqueue($exePath)
     while ($queue.Count -gt 0) {
         $current = $queue.Dequeue()
-        $imports = (objdump -p $current 2>$null) | Select-String "DLL Name:" | ForEach-Object {
+        $imports = (& $objdumpExe -p $current 2>$null) | Select-String "DLL Name:" | ForEach-Object {
             ($_ -replace ".*DLL Name:\s*", "").Trim()
         }
         foreach ($dll in $imports) {
@@ -112,6 +122,13 @@ if (-not $SkipWin) {
 
     Zip-Dir $winStage $WIN_ZIP
     Remove-Item $winStage -Recurse -Force
+
+    # Extract to Desktop for quick testing
+    $desktopTest = "$env:USERPROFILE\Desktop\cold_start-win-test"
+    if (Test-Path $desktopTest) { Remove-Item $desktopTest -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $desktopTest | Out-Null
+    Expand-Archive -Path $WIN_ZIP -DestinationPath $desktopTest -Force
+    Write-Host "    OK: Extracted to $desktopTest" -ForegroundColor Green
 }
 
 # ── Linux ─────────────────────────────────────────────────────────────────────

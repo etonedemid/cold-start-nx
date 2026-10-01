@@ -811,6 +811,7 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
     }
 
     case NetPacketType::BulletSpawn: {
+        // Payload: [pos.x:4][pos.y:4][angle:4][playerId:1][netId:4][playerSlot:1][damage:4] = 22 bytes
         if (payloadLen >= 9) {
             Vec2 pos;
             float angle;
@@ -821,8 +822,10 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             uint32_t netId = 0;
             if (payloadLen >= 17) memcpy(&netId, payload + 13, 4);
             uint8_t playerSlot = (payloadLen >= 18) ? payload[17] : 0;
+            int damage = 1; // default
+            if (payloadLen >= 22) memcpy(&damage, payload + 18, 4);
 
-            if (onBulletSpawned) onBulletSpawned(pos, angle, pid, netId, playerSlot);
+            if (onBulletSpawned) onBulletSpawned(pos, angle, pid, netId, playerSlot, damage);
 
             if (isHost_) {
                 auto pkt = buildPacket(NetPacketType::BulletSpawn, payload, payloadLen);
@@ -1081,6 +1084,19 @@ void NetworkManager::handlePacket(uint8_t* data, size_t len, ENetPeer* from) {
             }
             if (onMeleeHitRequest && attackerId != 255)
                 onMeleeHitRequest(attackerId, targetId, damage, targetSlot);
+        }
+        break;
+    }
+
+    case NetPacketType::EnemyHit: {
+        // payload: enemyIdx(4) + damage(1) + ownerId(1) + ownerSlot(1) - sent by a client to host
+        if (isHost_ && payloadLen >= 7) {
+            uint32_t enemyIdx;
+            memcpy(&enemyIdx, payload, 4);
+            int   damage    = std::max(1, (int)(uint8_t)payload[4]);
+            uint8_t ownerId = payload[5];
+            uint8_t ownerSlot = payload[6];
+            if (onEnemyHit) onEnemyHit(enemyIdx, damage, ownerId, ownerSlot);
         }
         break;
     }
@@ -1951,16 +1967,18 @@ void NetworkManager::sendSubPlayerStates(uint8_t localId, const SubPlayerInfo* s
 #endif
 }
 
-void NetworkManager::sendBulletSpawn(Vec2 pos, float angle, uint8_t playerId, uint32_t netId, uint8_t playerSlot) {
+void NetworkManager::sendBulletSpawn(Vec2 pos, float angle, uint8_t playerId, uint32_t netId, uint8_t playerSlot, int damage) {
 #if HAS_ENET
-    uint8_t payload[18];
+    // Payload: [pos.x:4][pos.y:4][angle:4][playerId:1][netId:4][playerSlot:1][damage:4] = 22 bytes
+    uint8_t payload[22];
     memcpy(payload,      &pos.x, 4);
     memcpy(payload + 4,  &pos.y, 4);
     memcpy(payload + 8,  &angle, 4);
     payload[12] = playerId;
     memcpy(payload + 13, &netId, 4);
     payload[17] = playerSlot;
-    auto pkt = buildPacket(NetPacketType::BulletSpawn, payload, 18);
+    memcpy(payload + 18, &damage, 4);
+    auto pkt = buildPacket(NetPacketType::BulletSpawn, payload, 22);
     sendUnreliable(pkt);
 #endif
 }
@@ -2120,6 +2138,19 @@ void NetworkManager::sendMeleeHitRequest(uint8_t targetId, int damage, uint8_t t
 #if HAS_ENET
     uint8_t payload[3] = { targetId, (uint8_t)std::clamp(damage, 1, 255), targetSlot };
     auto pkt = buildPacket(NetPacketType::MeleeHitRequest, payload, 3);
+    sendReliable(pkt);
+#endif
+}
+
+void NetworkManager::sendEnemyHit(uint32_t enemyIdx, int damage, uint8_t ownerId, uint8_t ownerSlot) {
+#if HAS_ENET
+    // Payload: [enemyIdx:4][damage:1][ownerId:1][ownerSlot:1] = 7 bytes
+    uint8_t payload[7];
+    memcpy(payload,      &enemyIdx, 4);
+    payload[4] = (uint8_t)std::clamp(damage, 1, 255);
+    payload[5] = ownerId;
+    payload[6] = ownerSlot;
+    auto pkt = buildPacket(NetPacketType::EnemyHit, payload, 7);
     sendReliable(pkt);
 #endif
 }

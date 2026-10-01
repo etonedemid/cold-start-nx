@@ -97,6 +97,9 @@ void PlayerUpgrades::apply(UpgradeType type) {
 
 // Random upgrade roll
 UpgradeType rollRandomUpgrade() {
+    // Blindness is a flat 1% of the pool (it's excluded from the tier rolls below).
+    if (rand() % 100 == 0) return UpgradeType::Blindness;
+
     // Step 1: roll a quality tier
     // Common=50%, Uncommon=30%, Rare=15%, Epic=4%, Cursed=1%
     int tierRoll = rand() % 100;
@@ -107,15 +110,19 @@ UpgradeType rollRandomUpgrade() {
     else if (tierRoll < 99) tier = UpgradeQuality::Epic;
     else                    tier = UpgradeQuality::Cursed;
 
-    // Step 2: count upgrades in that tier, then pick uniformly
+    // Step 2: count upgrades in that tier, then pick uniformly. Blindness is
+    // excluded - it only occurs as a rare in-game event, never as a drop/forge.
+    auto rollable = [tier](int i) {
+        return s_upgradeTable[i].quality == tier && (UpgradeType)i != UpgradeType::Blindness;
+    };
     int count = 0;
     for (int i = 0; i < (int)UpgradeType::COUNT; i++)
-        if (s_upgradeTable[i].quality == tier) count++;
+        if (rollable(i)) count++;
     if (count == 0) return UpgradeType::SpeedUp;
 
     int pick = rand() % count;
     for (int i = 0; i < (int)UpgradeType::COUNT; i++) {
-        if (s_upgradeTable[i].quality == tier) {
+        if (rollable(i)) {
             if (pick-- == 0) return (UpgradeType)i;
         }
     }

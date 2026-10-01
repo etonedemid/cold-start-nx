@@ -1,3 +1,0 @@
-wave=21
-kills=0
-time=248.30
