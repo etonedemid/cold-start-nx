@@ -154,3 +154,11 @@ Multiplayer mod sync ships all enabled mod content to clients before the match s
 - Config: `config.txt`
 - Mod state: `modconfig.cfg`
 - Dev console: `~` key (host or singleplayer)
+
+## Support
+
+If you'd like to support development:
+
+- USDT (TRC20): `TCJ4HMJF3JHQG66khYTj98Em7v74j3cry9`
+- Bitcoin: `bc1qaeypp2m5h74alrmhyu4zvzf3yyf58k6mcw7868`
+- Monero: `45npN9u6zMFE7xMxfszfWBX2jdDdtZaogcGex4s5D7QDNsGPtbXjtjtXpbx9cnxLaKXC1KzGgckN2fMwrYrw5yqPTG2KiPj`
