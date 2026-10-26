@@ -1,0 +1,259 @@
+#pragma once
+#include "vec2.h"
+
+// Wii U boot diagnostics under Cemu: printf goes nowhere, wut's OSReport is
+// client-side (Cemu never sees it), and Cemu stubs OSFatal as a no-op. The one
+// channel Cemu always prints is the PPC thread dump on crash. So encode progress
+// into the current thread's NAME - the last marker set before exit shows up in
+// that dump's "PPC threads" list. Buffer must be static: Cemu reads the name
+// pointer at crash time, long after the marking function has returned.
+#ifdef __WIIU__
+#include <coreinit/thread.h>
+#include <cstdio>
+#define WIIU_LOG(...) do { static char _wn[160]; snprintf(_wn, sizeof(_wn), __VA_ARGS__); OSSetThreadName(OSGetCurrentThread(), _wn); } while (0)
+#define WIIU_FATAL(...) WIIU_LOG(__VA_ARGS__)
+#else
+#define WIIU_LOG(...) ((void)0)
+#define WIIU_FATAL(...) ((void)0)
+#endif
+
+// Version
+constexpr const char* GAME_VERSION = "3.6.0";
+
+// Workshop
+constexpr const char* WORKSHOP_URL    = "https://coldstartworkshop.duckdns.org";
+constexpr const char* WORKSHOP_PUBKEY = "8cd9c38f6666bff8087797817a8578ee14128c4de6ac6cac8a59c50ba3e4ca6a";
+
+// Screen (window resolution - runtime configurable)
+inline int SCREEN_W = 1280;
+inline int SCREEN_H = 720;
+
+// Base game viewport (always rendered at this resolution, scaled to window)
+constexpr int BASE_VIEWPORT_W = 1280;
+constexpr int BASE_VIEWPORT_H = 720;
+
+// World / tile
+constexpr int   TILE_SIZE   = 64;
+constexpr int   MAP_DEFAULT_W = 50;   // tiles
+constexpr int   MAP_DEFAULT_H = 50;
+constexpr float WORLD_W       = MAP_DEFAULT_W * TILE_SIZE;
+constexpr float WORLD_H       = MAP_DEFAULT_H * TILE_SIZE;
+
+// Player
+constexpr float PLAYER_SPEED        = 520.0f;
+constexpr float PLAYER_BOOSTED_SPEED= 560.0f;
+constexpr float PLAYER_SMOOTHING    = 10.0f;
+constexpr int   PLAYER_MAX_HP       = 100;
+constexpr float PLAYER_INVULN_TIME  = 0.10f; // invuln window after any hit (prevents per-frame damage stacking)
+constexpr float PLAYER_SIZE         = 48.0f;
+constexpr float GUN_OFFSET_RIGHT    = 12.0f; // perpendicular offset to the right of facing
+
+// Gun
+constexpr int   GUN_MAX_AMMO   = 10;
+constexpr float GUN_FIRE_RATE  = 10.0f;  // shots/sec
+constexpr float GUN_RELOAD_TIME= 1.0f;
+
+// Bullet
+constexpr float BULLET_SPEED   = 1200.0f;
+constexpr float BULLET_LIFETIME= 1.2f;
+constexpr float BULLET_SIZE    = 8.0f;
+
+// Enemy bullet
+constexpr float ENEMY_BULLET_SPEED   = 550.0f;
+constexpr float ENEMY_BULLET_LIFETIME= 3.0f;
+constexpr float SNIPER_BULLET_SPEED_MULTI = 3.0f;
+
+// Melee enemy
+constexpr float ENEMY_SPEED      = 330.0f;
+constexpr float ENEMY_VISION_DIST= 700.0f;
+constexpr float ENEMY_VISION_ANGLE= 120.0f;
+constexpr float ENEMY_HP         = 30.0f;
+constexpr float ENEMY_SIZE       = 48.0f;
+constexpr float ENEMY_DASH_DIST  = 82.0f;   // melee strike trigger range
+constexpr float ENEMY_DASH_FORCE = 160.0f;  // short lunge velocity during strike
+constexpr float ENEMY_DASH_DELAY = 0.38f;   // wind-up duration before strike
+constexpr float ENEMY_DASH_DUR   = 0.18f;   // strike frame duration
+constexpr float ENEMY_DASH_CD    = 1.5f;
+constexpr int   ENEMY_DASH_DMG   = 20;
+constexpr float MELEE_INERTIA    = 14.0f; // velocity smoothing factor (higher = more responsive)
+constexpr float SHOOTER_INERTIA  = 8.0f;  // velocity smoothing for shooter enemies
+
+// Shooter enemy
+constexpr float SHOOTER_SPEED       = 210.0f;
+constexpr float SHOOTER_SHOOT_CD    = 1.0f;
+constexpr float SHOOTER_HP          = 30.0f;
+constexpr float SHOOTER_SIZE        = 64.0f;
+constexpr float SHOOTER_RENDER_SCALE= 4.5f;
+
+// Enemy variants
+constexpr float BRUTE_SPEED         = 240.0f;
+constexpr float BRUTE_HP            = 70.0f;
+constexpr float BRUTE_SIZE          = 64.0f;
+constexpr float BRUTE_DASH_DIST     = 98.0f;
+constexpr float BRUTE_DASH_FORCE    = 130.0f;
+constexpr float BRUTE_DASH_DELAY    = 0.58f;
+constexpr float BRUTE_DASH_DUR      = 0.24f;
+constexpr float BRUTE_DASH_CD       = 2.0f;
+constexpr int   BRUTE_DASH_DMG      = 30;
+constexpr float BRUTE_RENDER_SCALE  = 4.2f;
+
+constexpr float SCOUT_SPEED         = 450.0f;
+constexpr float SCOUT_HP            = 20.0f;
+constexpr float SCOUT_SIZE          = 40.0f;
+constexpr float SCOUT_DASH_DIST     = 68.0f;
+constexpr float SCOUT_DASH_FORCE    = 220.0f;
+constexpr float SCOUT_DASH_DELAY    = 0.16f;
+constexpr float SCOUT_DASH_DUR      = 0.14f;
+constexpr float SCOUT_DASH_CD       = 0.72f;
+constexpr int   SCOUT_DASH_DMG      = 10;
+constexpr float SCOUT_RENDER_SCALE  = 2.6f;
+
+constexpr float SNIPER_SPEED        = 165.0f;
+constexpr float SNIPER_HP           = 30.0f;
+constexpr float SNIPER_SIZE         = 60.0f;
+constexpr float SNIPER_SHOOT_CD     = 1.65f;
+constexpr float SNIPER_RENDER_SCALE = 4.8f;
+
+constexpr float GUNNER_SPEED        = 233.0f;
+constexpr float GUNNER_HP           = 40.0f;
+constexpr float GUNNER_SIZE         = 62.0f;
+constexpr float GUNNER_SHOOT_CD     = 1.25f;
+constexpr float GUNNER_BURST_GAP    = 0.11f;
+constexpr float GUNNER_RENDER_SCALE = 4.6f;
+
+// Bomber - fast suicide rusher; detonates on death or when it reaches a target
+constexpr float BOMBER_HP           = 22.0f;
+constexpr float BOMBER_SPEED        = 400.0f;
+constexpr float BOMBER_SIZE         = 46.0f;
+constexpr int   BOMBER_CONTACT_DMG  = 12;
+constexpr int   BOMBER_EXPLODE_DMG  = 35;    // blast damage applied to a nearby player
+constexpr float BOMBER_RENDER_SCALE = 3.0f;
+
+// Spitter - shooter that lobs a wide, slow acid spread
+constexpr float SPITTER_HP                 = 36.0f;
+constexpr float SPITTER_SPEED              = 200.0f;
+constexpr float SPITTER_SIZE               = 60.0f;
+constexpr float SPITTER_SHOOT_CD           = 1.5f;
+constexpr float SPITTER_BULLET_SPEED_MULTI = 0.55f;  // slow goop
+constexpr float SPITTER_RENDER_SCALE       = 4.4f;
+
+// Warden - armored tank; absorbs most bullet damage, forces melee/parry play
+constexpr float WARDEN_HP              = 140.0f;
+constexpr float WARDEN_SPEED           = 175.0f;
+constexpr float WARDEN_SIZE            = 70.0f;
+constexpr float WARDEN_BULLET_REDUCTION= 0.70f;  // bullets deal 30% damage
+constexpr float WARDEN_DASH_DIST       = 92.0f;
+constexpr float WARDEN_DASH_FORCE      = 120.0f;
+constexpr float WARDEN_DASH_DELAY      = 0.55f;
+constexpr float WARDEN_DASH_DUR        = 0.26f;
+constexpr float WARDEN_DASH_CD         = 1.8f;
+constexpr int   WARDEN_DASH_DMG        = 35;
+constexpr float WARDEN_RENDER_SCALE    = 5.0f;
+
+// Boss enemies - spawned at waves 25, 35, 45
+constexpr int   BOSS_WAVES[]         = {25, 35, 45};
+constexpr float BOSS_BRUTE_HP        = 7500.0f;
+constexpr float BOSS_BRUTE_SPEED     = 420.0f;
+constexpr float BOSS_BRUTE_SIZE      = 80.0f;
+constexpr float BOSS_BRUTE_DASH_DIST = 115.0f;
+constexpr float BOSS_BRUTE_DASH_FORCE= 190.0f;
+constexpr float BOSS_BRUTE_DASH_DELAY= 0.38f;
+constexpr float BOSS_BRUTE_DASH_DUR  = 0.28f;
+constexpr float BOSS_BRUTE_DASH_CD   = 0.90f;
+constexpr int   BOSS_BRUTE_DASH_DMG  = 50;
+constexpr float BOSS_BRUTE_SCALE     = 6.5f;
+
+constexpr float BOSS_SNIPER_HP       = 7500.0f;
+constexpr float BOSS_SNIPER_SPEED    = 150.0f;
+constexpr float BOSS_SNIPER_SIZE     = 80.0f;
+constexpr float BOSS_SNIPER_SHOOT_CD = 0.75f;
+constexpr float BOSS_SNIPER_SCALE    = 7.0f;
+constexpr float BOSS_SNIPER_PANIC_RANGE = 210.0f; // sprint away if player closer than this
+
+constexpr float BOSS_GUNNER_HP       = 7500.0f;
+constexpr float BOSS_GUNNER_SPEED    = 210.0f;
+constexpr float BOSS_GUNNER_SIZE     = 76.0f;
+constexpr float BOSS_GUNNER_SHOOT_CD = 0.75f;
+constexpr int   BOSS_GUNNER_BURST    = 8;
+constexpr float BOSS_GUNNER_BURST_GAP= 0.07f;
+constexpr float BOSS_GUNNER_SCALE    = 6.8f;
+
+// Sniper normal - panic sprint range (shared with boss sniper)
+constexpr float SNIPER_PANIC_RANGE   = 180.0f;  // sprint away if player closer than this
+
+// Stun: bosses shrug it off - max duration regardless of upgrade source
+constexpr float BOSS_MAX_STUN        = 0.20f;
+
+// Brute - bullet damage reduction (tank archetype, force melee engagement)
+constexpr float BRUTE_BULLET_REDUCTION = 0.50f;   // bullets deal 50% damage
+
+// Boss Brute - long-range charge (available always; enrage halves the cooldown)
+constexpr float BOSS_BRUTE_CHARGE_RANGE = 680.0f; // charge triggers up to this distance
+constexpr float BOSS_BRUTE_CHARGE_SPEED = 1150.0f; // charge velocity
+constexpr float BOSS_BRUTE_CHARGE_DUR   = 0.45f;  // seconds the charge lasts
+constexpr float BOSS_BRUTE_CHARGE_CD    = 5.5f;   // base cooldown (halved on enrage)
+
+// Milestone waves - guaranteed first appearance of each elite type
+constexpr int MILESTONE_SNIPER_WAVE = 60;
+constexpr int MILESTONE_GUNNER_WAVE = 80;
+
+// Bomb
+constexpr float BOMB_ORBIT_SPEED  = 80.0f;
+constexpr float BOMB_DASH_SPEED   = 1000.0f;
+constexpr float BOMB_SIZE         = 32.0f;
+constexpr float EXPLOSION_RADIUS  = 200.0f;
+constexpr float EXPLOSION_DAMAGE  = 100.0f;  // vs enemies
+constexpr int   PVP_EXPLOSION_DAMAGE = 50;   // vs players in PvP (half HP)
+constexpr float EXPLOSION_DURATION= 1.1f;
+constexpr int   KILLS_PER_BOMB    = 5;
+constexpr int   MAX_BOMBS         = 100;
+
+// Parry
+constexpr float PARRY_WINDOW   = 0.25f;
+constexpr float PARRY_COOLDOWN = 5.0f;
+constexpr float PARRY_DASH_SPEED    = 1050.0f;  // Match scout dash force
+constexpr float PARRY_DASH_DURATION = 0.15f;    // Match scout dash duration
+constexpr float PARRY_DMG            = 40.0f;
+constexpr int   PARRY_REFLECT_DAMAGE = 30;       // damage of a player-reflected bullet
+
+// Melee (player axe swing)
+constexpr float MELEE_DURATION      = 0.30f;  // swing animation duration
+constexpr float MELEE_COOLDOWN_TIME = 0.45f;  // cooldown before next swing
+constexpr float MELEE_RANGE         = 70.0f;  // reach from player centre
+constexpr float MELEE_ARC           = 1.65f;  // half-arc in radians (~95 deg)
+constexpr int   MELEE_PLAYER_DAMAGE = 30;     // damage to players (PvP / co-op)
+constexpr int   MELEE_ANIM_FIRST    = 3;      // first body frame (sprite 0004)
+constexpr int   MELEE_ANIM_LAST     = 9;      // last  body frame (sprite 0010)
+
+// Spawning - wave system
+constexpr float WAVE_PAUSE_BASE     = 10.0f; 
+constexpr int   WAVE_SIZE_BASE      = 2;     // enemies per wave at start
+constexpr int   WAVE_SIZE_GROWTH    = 1;     // extra enemies per wave number
+constexpr int   WAVE_MAX_SIZE       = 15;    // cap per wave
+constexpr float WAVE_SPAWN_INTERVAL = 0.6f; 
+constexpr int   WAVE_MELEE_WEIGHT   = 42;
+constexpr int   WAVE_SHOOTER_WEIGHT = 22;
+constexpr int   WAVE_BRUTE_WEIGHT   = 10;
+constexpr int   WAVE_SCOUT_WEIGHT   = 12;
+constexpr int   WAVE_SNIPER_WEIGHT  = 7;
+constexpr int   WAVE_GUNNER_WEIGHT  = 7;
+constexpr int   WAVE_BOMBER_WEIGHT  = 9;
+// Spitter/Warden are intentionally NOT in the random wave pool (editor/console only).
+
+// Camera
+constexpr float CAM_SMOOTH  = 0.18f;
+constexpr float CAM_OFFSET  = 75.0f;
+
+// Wander
+constexpr float WANDER_RADIUS = 300.0f;
+constexpr float WANDER_INTERVAL = 2.0f;
+constexpr float WANDER_SPEED_FRAC = 0.45f;  // roam slower than a full chase
+constexpr float WANDER_DIST_MIN   = 160.0f; // min length of a roam leg
+constexpr float WANDER_DIST_MAX   = 360.0f; // max length of a roam leg
+constexpr float WANDER_ARRIVE_DIST= 50.0f;  // pick a new roam point within this of target
+
+// Chase pathfinding: recompute the route around walls this often (seconds)
+constexpr float ENEMY_REPATH_INTERVAL = 0.4f;
+
+// Lose chase delay
+constexpr float LOSE_PLAYER_DELAY = 1.2f;

@@ -1,0 +1,1274 @@
+#pragma once
+#include "vec2.h"
+#include "constants.h"
+#include "entity.h"
+#include "player.h"
+#include "enemy.h"
+#include "bomb.h"
+#include "camera.h"
+#include "tilemap.h"
+#include "assets.h"
+#include "mapformat.h"
+#include "charformat.h"
+#include "editor.h"
+#include "texeditor.h"
+#include "mappack.h"
+#include "pickup.h"
+#include "gamemode.h"
+#ifdef __ANDROID__
+#include "touchcontrols.h"
+#endif
+#include "mod.h"
+#include "network.h"
+#include "ui.h"
+#include "vehicle.h"
+
+#include <SDL2/SDL.h>
+#include <vector>
+#include <string>
+#include <set>
+#include <functional>
+#include <unordered_map>
+#include <thread>
+#include <atomic>
+#include <mutex>
+
+// Online Workshop mod info (from API)
+struct OnlineModInfo {
+    std::string id;               // UUID from backend
+    std::string folder_id;        // mod.cfg id (folder name used for install)
+    std::string name;
+    std::string author;
+    std::string version;
+    std::string description;
+    std::string short_description;
+    std::string icon_url;
+    std::string mod_type;         // "map", "character", "pack", etc.
+    std::string download_url;     // Direct download link to .zip
+    int  upvotes   = 0;
+    int  downvotes = 0;
+    int  score     = 0;           // upvotes - downvotes
+    int  downloads = 0;
+    int  size_bytes = 0;
+    bool voted     = false;       // player already voted this session
+};
+
+enum class GameState {
+    BiosIntro,    // Fake BIOS
+    LoginScreen,  // logon window
+    MainMenu,
+    PlayModeMenu,    // Choose between generated map, custom map, or pack
+    ConfigMenu,
+    Playing,
+    Paused,
+    Workshop,        // Workshop menu (from pause)
+    Dead,
+    EditorConfig,    // Editor setup screen (new/load map, size, name)
+    Editor,          // Map editor
+    MapSelect,       // Choose a .csm to play
+    CharSelect,      // Choose a .cschar
+    CharCreator,     // Create/edit a .cschar
+    PlayingCustom,   // Playing a loaded .csm map
+    CustomPaused,
+    CustomDead,
+    CustomWin,       // Level complete
+    PackSelect,      // Choose a map pack
+    PlayingPack,     // Playing a map pack campaign
+    PackPaused,
+    PackDead,
+    PackLevelWin,    // Between levels in a pack
+    PackComplete,    // All levels done
+    // Multiplayer
+    MultiplayerMenu, // Host/Join/Browse
+    HostSetup,       // Configuring game before hosting
+    JoinMenu,        // Enter IP to connect
+    Lobby,           // Pre-game lobby (host & clients)
+    MultiplayerGame, // Active multiplayer game
+    MultiplayerPaused,
+    MultiplayerDead, // Waiting to respawn
+    Scoreboard,      // Match results / scoreboard
+    TeamSelect,      // Team selection screen before team game starts
+    MultiplayerSpectator, // Player exhausted all lives - free-roam ghost, no respawn
+    WinLoss,             // Win/Loss result screen (shown before Scoreboard)
+    // Mod management
+    ModMenu,         // Enable/disable mods
+    OnlineWorkshop,  // Download mods from online workshop
+    // Local Co-op (splitscreen, up to 4 players)
+    LocalCoopLobby,  // players join by pressing a button
+    LocalCoopGame,   // active splitscreen game
+    LocalCoopPaused, // paused from splitscreen
+    LocalCoopDead,   // all local players dead
+    // Tools
+    SpriteEditor,    // standalone in-app pixel/sprite editor (TextureEditor)
+    MapLoading,      // black loading screen (spinning sawblade + seed/tip) before a generated map
+};
+
+struct GameConfig {
+    int mapWidth = 32;
+    int mapHeight = 32;
+    bool     endless   = false;  // generated-map endless mode (infinite seeded world)
+    uint32_t worldSeed = 0;      // 0 = random each run; non-zero = reproducible
+    int playerMaxHp = PLAYER_MAX_HP;
+    float spawnRateScale = 1.0f;
+    float enemyHpScale = 1.0f;
+    float enemySpeedScale = 1.0f;
+    int musicVolume = 80;   // 0-128
+    int sfxVolume   = 100;  // 0-128
+    std::string username = "Player"; // multiplayer display name
+    bool fullscreen = false;
+    bool shaderCRT = true;
+    bool shaderChromatic = true;
+    bool shaderScanlines = true;
+    bool shaderGlow = true;
+    bool shaderGlitch = true;
+    bool shaderNeonEdge = true;
+    bool  saveIncomingModsPermanently = false;
+    bool  enableUpnp           = true;  // auto-forward port via UPnP when hosting
+    bool  acceptWorkshopMods   = true;  // receive workshop mods (hash-verified against API) from host
+    bool  acceptLocalMods      = false; // receive unverified locally-created mods from host
+    float uiScale   = 1.0f;   // HUD + touch controls scale multiplier
+    float shakeScale = 1.0f;  // screen shake intensity  0=off  1=full
+#if defined(__SWITCH__) || defined(__WIIU__)
+    bool consoleUI = true;     // larger text, bigger buttons, gamepad-focused layout (default on consoles)
+#else
+    bool consoleUI = false;
+#endif
+
+    // Comfort / accessibility
+    bool  reduceFlashing    = false; // dampen explosion white-flash, glitch strips, chromatic pulses (photosensitivity)
+    bool  showFloatingText  = true;  // floating combat text: kill "+1", multi-kill banners, combo popups
+
+    // Curated gameplay tuning (advanced) - scale factors applied over constants.h
+    bool  bombingEnabled    = true;  // telegraphed enemy air-strike barrages
+    float bombingRateScale  = 1.0f;  // >1 = more frequent barrages, <1 = rarer (0.25-3.0)
+    float playerSpeedScale  = 1.0f;  // multiplies base player move speed (0.5-2.0)
+    int   killsPerBomb      = KILLS_PER_BOMB; // enemy kills needed to earn a bomb
+    float waveSizeScale     = 1.0f;  // multiplies enemies-per-wave (0.5-3.0)
+};
+
+enum class DecalType : uint8_t { Blood, Scorch };
+
+struct BloodDecal {
+    Vec2  pos;
+    float rotation;
+    float alpha = 1.0f;
+    float scale = 1.0f;
+    float age   = 0.0f;
+    DecalType type = DecalType::Blood;
+};
+
+struct BoxFragment {
+    Vec2  pos;
+    Vec2  vel;
+    float rotation;
+    float rotSpeed;
+    float size;
+    float lifetime = 0.6f;
+    float age = 0;
+    bool  alive = true;
+    SDL_Color color;
+};
+
+// Floating combat text: damage numbers, "+1", multi-kill banners. Rises and fades.
+struct FloatText {
+    Vec2        pos;
+    Vec2        vel   = {0, -60};
+    std::string text;
+    SDL_Color   color = {255, 255, 255, 255};
+    float       age   = 0;
+    float       life  = 1.0f;
+    float       scale = 1.0f;
+};
+
+// Brief expanding ring telegraph drawn where an enemy spawns.
+struct SpawnRing {
+    Vec2  pos;
+    float age  = 0;
+    float life = 0.5f;
+};
+
+// Telegraphed bombing: a red ring converges on the impact point, then detonates.
+struct AirStrike {
+    Vec2  pos;
+    float timer = 1.6f;   // counts down to detonation
+    float warn  = 1.6f;   // total warning time (for ring animation)
+};
+
+// AVI bombing run: a plane flies straight across, its drop points telegraphed as
+// a line of AirStrikes timed so each ring closes as the plane passes over it.
+struct Bomber {
+    Vec2  pos;
+    Vec2  vel;
+    float life = 4.0f;    // despawn after it has crossed the field
+};
+
+// Story bystander: civilian, infrastructure, or a surrendered responder operator.
+// Non-combatant; harming/destroying it moves SIGNAL. Rides the EnemySpawn array
+// at spawn time but lives in its own runtime list.
+struct Bystander {
+    enum class Kind : uint8_t {
+        Civilian, MedRelay, Power, Water, Antenna, Operator
+    };
+    Vec2  pos        = {};
+    Vec2  vel        = {};
+    Kind  kind       = Kind::Civilian;
+    float hp         = 30.0f;
+    float maxHp      = 30.0f;
+    bool  alive      = true;
+    bool  fleeing    = false;   // civilian panicking from gunfire/player
+    bool  scored     = false;   // SIGNAL penalty already applied for this one
+    float wanderT    = 0.0f;
+    Vec2  wanderDir  = {1, 0};
+    float radius     = 22.0f;
+    bool  isInfrastructure() const {
+        return kind == Kind::MedRelay || kind == Kind::Power ||
+               kind == Kind::Water    || kind == Kind::Antenna;
+    }
+};
+
+// Per-player slot for local co-op splitscreen
+struct CoopSlot {
+    bool   joined       = false;
+    // Input device: -1 = keyboard+mouse, >=0 = SDL joystick instance ID
+    SDL_JoystickID joyInstanceId = -1;
+    std::string username;
+    Player player;
+    Camera camera;
+    PlayerUpgrades upgrades;
+    int    kills  = 0;
+    int    deaths = 0;
+    float  respawnTimer = 0;  // countdown to respawn when dead
+    // Per-frame input
+    Vec2  moveInput  = {};
+    Vec2  aimInput   = {};
+    bool  fireInput  = false;
+    bool  bombInput  = false;
+    bool  parryInput  = false;
+    bool  meleeInput  = false;
+    int   weaponSwitchInput = 0; // +1 = next, -1 = prev
+    bool  pauseInput = false;
+    bool  bombLaunchInput = false;  // per-slot ZL one-shot (launch orbiting bomb)
+    bool  bombLaunchHeld  = false;  // debounce: was ZL held last frame
+};
+
+// Mod-save dialog state
+struct ModSaveDialogState {
+    enum Phase  { Closed, ChooseMod, NameNewMod, ChooseCategory };
+    enum Asset  { AssetMap, AssetCharacter };
+
+    Phase phase = Closed;
+    Asset asset = AssetMap;
+
+    // Snapshot of available mods shown at open time
+    std::vector<std::string> modIds;
+    std::vector<std::string> modNames;
+    int selIdx = 0;    // 0 = "＋ New Mod", 1+ = existing mods
+
+    // New-mod name/author input
+    std::string newModId;
+    std::string newModAuthor;
+    bool        editingAuthor = false; // true when softKB is on the author field
+    bool        textEditing = false;
+    int         gpCharIdx   = 0;
+
+    // Sprite category selection (0=Ground Tile, 1=Wall Tile, 2=Ceiling Tile,
+    //                          3=Character Body, 4=Character Legs)
+    int catIdx = 0;
+    static constexpr int CAT_COUNT = 5;
+    static constexpr const char* CAT_NAMES[5] = {
+        "Ground Tile  (sprites/tiles/ground/)",
+        "Wall Tile    (sprites/tiles/walls/)",
+        "Ceiling Tile (sprites/tiles/ceiling/)",
+        "Character Body (sprites/characters/body/)",
+        "Character Legs (sprites/characters/legs/)"
+    };
+
+    // Results
+    bool        confirmed           = false;
+    std::string confirmedModFolder;  // e.g. "mods/mymod"
+    int         confirmedCat        = 0;
+
+    bool isOpen() const { return phase != Closed; }
+    void close()        { phase = Closed; confirmed = false; }
+};
+
+class Game {
+public:
+    void configureDedicatedServer(uint16_t port, int maxPlayers,
+                                 const std::string& password,
+                                 const std::string& serverName);
+    bool init();
+    void run();
+    void shutdown();
+
+private:
+    // Core
+    SDL_Window*   window_   = nullptr;
+    SDL_Renderer* renderer_ = nullptr;
+    UI::Context   ui_;  // Immediate-mode UI system
+    bool running_ = true;
+    GameState state_ = GameState::BiosIntro;
+    float gameTime_ = 0;      // seconds since level start
+    float dt_ = 0;
+
+    // Controller rumble
+    SDL_GameController* activeController_ = nullptr;
+    void rumble(float strength, int durationMs);
+    void rumble(float strength, int durationMs, float lowBandScale, float highBandScale);
+    void rumbleForSlot(int slot, float strength, int durationMs, float lowBandScale = 1.0f, float highBandScale = 1.0f);
+    SDL_GameController* getRumbleControllerForSlot(int slot) const;
+#ifdef __SWITCH__
+    Uint32 switchRumbleStopTick_ = 0;
+    bool switchRumbleActive_ = false;
+    void updateSwitchRumble();
+#endif
+
+    // BIOS intro
+    float biosTimer_      = 0;
+    int   biosLine_       = 0;
+    bool  biosBootPlayed_ = false;
+
+    // Map loading screen + CRT power-on (single-player generated maps): a black
+    // screen with a spinning sawblade, the seed as a big white title and a grey
+    // tip, that then "powers on" the CRT tube and reveals the gameplay view.
+    float        mapLoadTimer_     = 0.0f;
+    std::string  mapLoadTitle_;
+    std::string  mapLoadTip_;
+    GameState    pendingPlayState_ = GameState::Playing;
+    float        crtWarmup_        = 0.0f;   // >0 while the CRT tube "warms up"
+    SDL_Texture* sawbladeTex_      = nullptr;
+    static constexpr float kCrtWarmupSec = 0.55f;
+    uint32_t     currentMapSeed_   = 0;      // seed of the active generated map
+    bool         currentMapHasSeed_= false;  // true only for generated maps (not custom/pack)
+    // Custom-map music is deferred to the CRT transition (started after the loading
+    // screen), the same way generated maps defer their action music.
+    std::string  pendingMapMusicDir_;
+    std::string  pendingMapMusicPath_;
+    // Multiplayer keeps its own game state (set by the caller) but raises this
+    // flag so every peer shows a synced loading screen with per-player ready
+    // status until everyone reports in (or a timeout elapses).
+    bool         mpLoadActive_     = false;
+    bool         mpLoadReadySent_  = false;
+    // Async world generation: single-player builds the map on a worker thread while
+    // the MapLoading screen animates, then finishMapSetup() runs on the main thread.
+    std::thread       mapGenThread_;
+    std::atomic<bool> mapGenDone_{false};
+    bool              mapSetupPending_ = false;
+
+    // Music player window (main menu)
+    int  musicWinX_        = 0;
+    int  musicWinY_        = 0;
+    bool musicWinInit_     = false;
+    bool musicWinDragging_ = false;
+    int  musicWinDragOffX_ = 0;
+    int  musicWinDragOffY_ = 0;
+    bool musicPaused_      = false;
+
+    // Log-off confirmation
+    bool  logOffConfirm_     = false;
+
+    // Credits window
+    bool creditsOpen_      = false;
+    int  creditsWinX_      = 0;
+    int  creditsWinY_      = 0;
+    bool creditsInit_      = false;
+    bool creditsDragging_  = false;
+    int  creditsDragOX_    = 0;
+    int  creditsDragOY_    = 0;
+
+    // AVA Explorer (fake browser)
+    bool     browserOpen_      = false;
+    bool     browserInit_      = false;
+    bool     browserLoading_   = false;
+    float    browserLoadTimer_ = 0.0f;
+    int      browserWinX_      = 80;
+    int      browserWinY_      = 40;
+    bool     browserDragging_  = false;
+    int      browserDragOX_    = 0;
+    int      browserDragOY_    = 0;
+    int      browserPage_      = 0;   // current page index (0-4)
+    int      browserScrollY_   = 0;
+    // navigation history (simple back/forward stack)
+    int      browserHist_[32]  = {};
+    int      browserHistLen_   = 0;
+    int      browserHistPos_   = -1;
+    uint32_t browserIconClickT_ = 0;  // last desktop-icon click ms (for double-click)
+    // Chat window (lobby)
+    int  chatWinX_         = 860;
+    int  chatWinY_         = 460;
+    bool chatWinInit_      = false;
+    bool chatWinDrag_      = false;
+    int  chatWinDragOX_    = 0;
+    int  chatWinDragOY_    = 0;
+    bool chatTyping_       = false;
+    char chatInputBuf_[256] = {};
+
+    // Login screen
+    std::string loginUsername_;
+    std::string loginPassword_;
+    int   loginField_  = 0;   // 0 = username, 1 = password
+    float loginBlinkT_ = 0;   // cursor blink accumulator
+
+    // Update checker
+    bool updateAvailable_ = false;
+    bool updateChecked_   = false;
+    std::string latestVersion_;
+    void checkForUpdates();
+    bool isNewerVersion(const char* current, const char* latest);
+
+    // Input (mapped to Joy-Con / Pro Controller)
+    Vec2 moveInput_  = {0,0};
+    Vec2 aimInput_   = {0,0};
+    Vec2 lastTouchAimDir_ = {1,0}; // persists last touch right-stick direction
+    bool fireInput_  = false;
+    bool bombInput_  = false;
+    bool bombLaunchInput_ = false;
+    bool bombLaunchHeld_ = false;  // debounce for trigger
+    bool parryInput_ = false;
+    bool meleeInput_ = false;
+    int  weaponSwitchDelta_ = 0;  // +1 scroll-up/RB, -1 scroll-down; applied once per frame
+    bool pauseInput_ = false;
+    bool confirmInput_ = false;
+    bool usingGamepad_ = false;  // true when last input was from a gamepad (shows soft KB on PC)
+    SDL_JoystickID lastGamepadInputId_ = -1;     // last gamepad that pressed a button in menus
+    SDL_JoystickID lobbyPrimaryPadId_ = -1;      // gamepad used to enter host/join flow; not auto-added as sub-player
+    bool backInput_ = false;
+    bool leftInput_ = false;
+    bool rightInput_ = false;
+    bool upInput_   = false;   // one-shot dpad/keyboard up (dialog choice nav)
+    bool downInput_ = false;   // one-shot dpad/keyboard down (dialog choice nav)
+    // One-shot render-click left/right: set by render buttons, consumed once by handleInput
+    bool renderLeft_  = false;
+    bool renderRight_ = false;
+    bool tabInput_   = false;  // Y button / Tab - kick-mode toggle in lobby
+    int  menuSelection_ = 0;
+    int  confirmCooldown_ = 0;   // frames to suppress confirmInput_ after a state transition
+    std::string disconnectReason_; // shown as popup on main menu when non-empty
+    int  configSelection_ = 0;
+    int  lobbyKickCursor_ = -1;  // -1 = not in player-kick mode; >=0 = player index
+    std::set<uint8_t> bannedPlayerIds_;  // session ban list (host only)
+    std::string lobbyPassword_ = "";     // password for this hosted lobby
+    bool hostPasswordTyping_ = false;    // editing lobby password in HostSetup
+    int  hostPasswordCharIdx_ = 0;       // char picker index for host password
+    int  lobbySubPlayersSent_ = -1;      // last sent local sub-player count (for lobby sync)
+    bool dedicatedMode_ = false;
+    bool dedicatedBootstrapped_ = false;
+    uint16_t dedicatedPort_ = 7777;
+    int dedicatedMaxPlayers_ = 16;
+    std::string dedicatedPassword_;
+    std::string dedicatedServerName_ = "DedicatedServer";
+
+    // World
+    Player              player_;
+    std::vector<Enemy>  enemies_;
+    std::vector<Entity> bullets_;       // player bullets
+    std::vector<Entity> enemyBullets_;
+    std::vector<Bomb>   bombs_;
+    std::vector<Explosion> explosions_;
+    std::vector<Entity> debris_;
+    std::vector<BloodDecal> blood_;
+    std::vector<float>      tileBlood_;  // per-tile accumulated blood tint [0..1]
+    std::vector<BoxFragment> boxFragments_;
+    std::vector<PickupCrate> crates_;      // upgrade crates
+    std::vector<Pickup>      pickups_;     // floating pickups
+    PlayerUpgrades           upgrades_;    // active player upgrades
+    Camera              camera_;
+    TileMap             map_;
+
+    // Vehicles
+    std::vector<Vehicle> vehicles_;
+    SDL_Texture*         vehicleCarSprite_ = nullptr;
+    bool                 inVehicle_  = false;
+    int                  vehicleIdx_ = -1;
+
+    // Spawning (wave system)
+    int   waveNumber_     = 0;
+    int   waveEnemiesLeft_= 0;     // enemies still to spawn this wave
+    float waveSpawnTimer_ = 0;     // delay between individual spawns in a wave
+    float wavePauseTimer_ = 0;     // countdown between waves
+    bool  waveActive_     = false; // currently spawning a wave
+    bool  bossWaveActive_ = false; // boss wave in progress - no new waves until boss dies
+    int   lastBossWaveNum_= -1;    // wave number of last boss when first beaten (-1 = not yet)
+    GameConfig config_{};
+
+    // Best-run record (persisted to best_run.txt)
+    struct BestRun {
+        int   wave  = 0;
+        int   kills = 0;
+        float time  = 0.0f;
+        bool  valid() const { return wave > 0; }
+    };
+    BestRun bestRun_;
+    bool    newBestRun_ = false; // set to true when current run beats the record
+
+    // Map Editor
+    MapEditor editor_;
+    TextureEditor texEditor_;   // standalone in-app pixel/sprite editor
+
+    // Touch / on-screen controls (Android only)
+#ifdef __ANDROID__
+    TouchControls touchControls_;
+#endif
+
+    // Custom map play
+    CustomMap customMap_;
+    bool      playingCustomMap_ = false;
+    bool      testPlayFromEditor_ = false;  // return to editor when done
+    bool      customGoalOpen_   = false;  // end goal door is open
+    int       customEnemiesTotal_ = 0;    // total enemy spawns in custom map
+
+    // --- Story campaign state (SIGNAL reputation + branching) ---
+    // SIGNAL is the Relay's invisible opinion of the player. Run-scoped: it
+    // persists across mission loads within a campaign run (guarded by
+    // storyRunActive_) but resets when a fresh run begins.
+    int   signal_        = 50;     // 0..100, mid by default
+    int   storyRoute_    = 0;      // 0=undecided, 1=Spearhead (A), 2=Signal (B)
+    bool  storyRunActive_ = false; // true once a story map has begun a run
+    std::unordered_map<std::string, bool> storyFlags_;   // campaign-spanning flags
+    std::unordered_map<std::string, int>  localVars_;    // level-scope ints, reset on level load
+    std::unordered_map<std::string, int>  packVars_;     // pack-scope ints, survive level transitions
+    enum class SignalTier : uint8_t { Low, Mid, High };
+    SignalTier signalToneTier() const {
+        if (signal_ <  34) return SignalTier::Low;
+        if (signal_ >= 67) return SignalTier::High;
+        return SignalTier::Mid;
+    }
+    void adjustSignal(int delta, const char* reason);
+    void resetStoryRun();   // clear SIGNAL/route/flags for a new campaign run
+
+    // Story cutscene playback (the map's .csc library, played in-game)
+    CutsceneLibrary  storyCutscenes_;
+    CutscenePlayback csPlay_;
+    float            csControlBlend_ = 0.0f;  // 0=full control, 1=frozen; ramps over ~0.5s on cutscene entry
+    std::set<int>    csFiredZones_;   // cutscene-trigger indices already fired
+    std::set<int>    storyFiredTriggers_; // waypoint/signalzone/objective indices fired
+    // Multi-fire runtime state
+    std::set<int>                    triggerPlayerInside_;    // indices player is currently inside
+    std::unordered_map<int,float>    triggerMultiCooldowns_;  // index -> remaining cooldown (seconds)
+    void startStoryCutscene(const std::string& id);   // begin playback by cutscene id
+    void updateStoryCutscene(float dt);               // advance + drain effects
+    void loadStoryCutsceneLib(const std::string& csmPath); // derive + load .csc
+    void updateStoryTriggers();   // fire cutscene/waypoint/signalzone/objective zones
+    bool playerInTriggerRect(const MapTrigger& t) const;
+    int  storyVar(const std::string& key) const;          // local then pack scope, 0 if unset
+    bool dialogChoiceVisible(const CsDialogChoice& c) const; // eval per-choice variable condition
+
+    // Story bystanders (civilians / infrastructure / surrendered operators)
+    std::vector<Bystander> bystanders_;
+    void spawnBystanderFromSpawn(const EnemySpawn& es);  // route a story spawn id
+    void updateBystanders(float dt);
+    void renderBystanders();
+    // Apply damage to bystanders near pos; returns true if any was hit.
+    // Used by bullets, explosions and melee. amount<0 means instant-destroy.
+    bool damageBystandersAt(Vec2 pos, float radius, float amount);
+    void onBystanderDestroyed(Bystander& b);  // SIGNAL penalty + fx
+
+    // Character system
+    std::vector<CharacterDef> availableChars_;
+    int selectedChar_ = -1;  // -1 = default character
+    CharacterDef activeCharDef_;  // Currently active character (for stat application)
+    bool hasActiveChar_ = false;  // Whether a custom character is selected
+
+    // Character Creator (simplified)
+    struct CharCreatorState {
+        std::string name = "NewChar";
+        float speed = 520.0f;
+        int   hp    = 10;
+        int   ammo  = 10;
+        float fireRate = 10.0f;
+        float reloadTime = 1.0f;
+
+        int   field = 0;      // currently selected field
+        bool  textEditing = false;
+        std::string textBuf;
+        int   statEditField = -1;  // which stat field is being typed (-1 = none)
+        std::string statEditBuf;   // raw text being entered for a stat
+        int   gpCharIdx = 0;
+
+        // Preview
+        int   previewSection = 0;  // 0=idle, 1=body anim, 2=legs, 3=death, 4=detail
+        float animTime = 0.0f;
+        int   previewFrame = 0;
+        bool  playAnimation = false;
+        float shootOffsetX = 12.0f;
+        float shootOffsetY = -30.0f;
+
+        // Character being edited (loaded from folder)
+        CharacterDef charDef;
+        bool loaded = false;
+        std::string folderPath;  // e.g. "characters/MyChar"
+
+        // Editing existing character or creating new?
+        bool isEditing = false;   // true = editing existing folder
+        int  editIdx = -1;        // index into availableChars_ if editing
+
+        // Validation warnings
+        std::vector<std::string> warnings;
+
+        // Status message shown at bottom
+        std::string statusMsg;
+        float statusTimer = 0;
+
+        void clearPreviews(SDL_Renderer* renderer) {
+            charDef.unload();
+            loaded = false;
+            warnings.clear();
+        }
+    } charCreator_;
+
+    // Local Co-op
+    CoopSlot coopSlots_[4];
+    int      coopPlayerCount_ = 0;
+    bool     coopIsPvp_       = false; // true = local PvP, false = co-op vs enemies
+    int      coopMapMode_     = 0;     // 0=generated, 1=map file, 2=pack
+
+    // Play Mode Menu
+    int playModeSelection_ = 0;   // 0=Generated,1=Map,2=Pack,3-8=sliders,9=Back
+    GameState prevMenuState_ = GameState::MainMenu; // for back nav in MapSelect/PackSelect
+    int mainMenuSub_ = 0; // 0=main menu, 1=tools submenu
+    int configSub_   = 0; // 0=main config, 1=gameplay & comfort submenu
+    int configSubSel_ = 0; // cursor within the gameplay & comfort submenu (gamepad nav)
+    int playSub_     = 0; // 0=main play menu, 1=generated-map settings submenu
+    int playSubSel_  = 0; // cursor within the generated-map settings submenu (gamepad nav)
+
+    // Selected-mod banner: cached texture + the path it was loaded from (reloaded
+    // only when the selection changes, so the mod menu doesn't leak textures).
+    SDL_Texture* modBannerTex_ = nullptr;
+    std::string  modBannerFor_;
+
+    // Menu "juice": soft hover tick + a brief fade-in when entering a menu screen.
+    int       menuPrevHover_  = -1;                    // last frame's ui_.hoveredItem (for hover ticks)
+    GameState menuFadeState_  = GameState::MainMenu;   // last state a fade was armed for
+    float     menuFadeTimer_  = 0.0f;                  // counts down; drives the open-fade overlay
+
+    // Map file browser
+    std::vector<std::string> mapFiles_;
+    int mapSelectIdx_  = 0;
+    int mapSelectMode_ = 0; // 0=Arena, 1=Sandbox
+
+    bool sandboxMode_    = false; // no enemies/crates when true
+
+    // Map Pack system
+    std::vector<MapPack> availablePacks_;
+    int packSelectIdx_ = 0;
+    MapPack currentPack_;           // Currently playing pack
+    bool playingPack_ = false;      // In pack campaign mode
+    CharacterDef packCharDef_;      // Character loaded from pack
+
+    // Dev console
+    bool consoleOpen_  = false;
+    bool godMode_      = false;
+    char consoleBuf_[256] = {};
+    std::vector<std::string> consoleLog_;
+    std::vector<std::string> consoleHistory_;
+    int  consoleHistoryIdx_ = -1;   // -1 = not browsing; 0 = most recent
+    void consoleExec(const char* cmd);
+    void consoleOut(const char* line);
+
+    // Missing-asset warnings: a system dialog at startup, a toast for later misses
+    size_t      assetsReported_ = 0;
+    std::string assetToast_;
+    float       assetToastT_ = 0.0f;
+    void reportMissingAssets(bool startup);
+    void renderAssetToast();
+
+    // Visual Polish
+    float waveAnnounceTimer_ = 0;  // countdown for wave banner display
+    int   waveAnnounceNum_   = 0;  // which wave to show
+    float lowHpTint_         = 0;  // 0..1, smoothed low-HP red overlay intensity
+
+    // Pickup name popup (reuses wave banner style)
+    float pickupPopupTimer_ = 0;
+    std::string pickupPopupName_;
+    std::string pickupPopupDesc_;
+    SDL_Color   pickupPopupColor_ = {255, 255, 255, 255};
+    float muzzleFlashTimer_  = 0;  // bright flash near gun when firing
+    Vec2  muzzleFlashPos_     = {0,0}; // world position of muzzle flash
+    float screenFlashTimer_  = 0;  // brief white flash (e.g. explosion)
+    float screenFlashR_ = 255, screenFlashG_ = 255, screenFlashB_ = 255;
+    float hitStopTimer_ = 0;  // brief freeze-frame on big impacts (local play only); see run()
+
+    // --- Game-feel "juice" (local/cosmetic; see combat.cpp) ---
+    std::vector<FloatText> floatTexts_;   // floating damage numbers / kill banners
+    std::vector<SpawnRing> spawnRings_;   // enemy-spawn telegraph rings
+    int   comboCount_     = 0;            // current kill combo
+    float comboTimer_     = 0;            // time left before the combo lapses
+    float comboFlash_     = 0;            // brief HUD pulse on combo gain
+    int   multiKill_      = 0;            // kills inside the multi-kill window
+    float multiKillTimer_ = 0;            // time left in the multi-kill window
+    float crosshairSpread_= 0;            // reticle bloom from recent fire (px)
+    float dustTimer_      = 0;            // throttle for run/dash dust puffs
+    std::vector<AirStrike> airStrikes_;   // active telegraphed bombings
+    std::vector<Bomber>    bombers_;      // AVI planes mid-run (visual)
+    SDL_Texture*           bomberPlaneSprite_ = nullptr;
+    float bombingTimer_   = 18.0f;        // countdown to the next barrage
+    // Effective kills-per-bomb threshold: config sets the baseline (config_.killsPerBomb)
+    // while per-run pickup reductions (e.g. BombCore) still apply on top of it.
+    int killsPerBombFor(const PlayerUpgrades& u) const {
+        return std::max(1, u.killsPerBomb + (config_.killsPerBomb - KILLS_PER_BOMB));
+    }
+    void updateAirStrikes(float dt);      // spawn/advance/detonate bombings
+    void renderAirStrikes();              // draw the red converging-ring telegraph
+    void spawnFloatText(Vec2 pos, const char* text, SDL_Color color, float scale = 1.0f);
+    void registerComboKill(Vec2 pos);    // called from killEnemy on a tracked kill
+    void updateJuice(float dt);          // advance float text / rings / combo / spread
+    void renderJuice();                  // draw world-space float text, rings, hp bars
+
+    // Sprites
+    std::vector<SDL_Texture*> playerSprites_;
+    std::vector<SDL_Texture*> playerDeathSprites_;
+    std::vector<SDL_Texture*> legSprites_;
+    std::vector<SDL_Texture*> defaultPlayerSprites_;
+    std::vector<SDL_Texture*> defaultPlayerDeathSprites_;
+    std::vector<SDL_Texture*> defaultLegSprites_;
+    std::vector<SDL_Texture*> bombSprites_;
+    std::vector<SDL_Texture*> enemyLegSprites_;
+    SDL_Texture* enemySprite_   = nullptr;
+    SDL_Texture* shooterSprite_ = nullptr;
+    SDL_Texture* bruteSprite_   = nullptr;
+    SDL_Texture* scoutSprite_   = nullptr;
+    SDL_Texture* sniperSprite_  = nullptr;
+    SDL_Texture* gunnerSprite_  = nullptr;
+    SDL_Texture* bomberSprite_  = nullptr;
+    SDL_Texture* spitterSprite_ = nullptr;
+    SDL_Texture* wardenSprite_  = nullptr;
+    SDL_Texture* bossBruteSprite_  = nullptr;
+    SDL_Texture* bossSniperSprite_ = nullptr;
+    SDL_Texture* bossGunnerSprite_ = nullptr;
+    SDL_Texture* bulletSprite_  = nullptr;
+    SDL_Texture* enemyBulletSprite_ = nullptr;
+    SDL_Texture* shieldSprite_  = nullptr;
+    SDL_Texture* mainmenuBg_   = nullptr;
+    SDL_Texture* discordTex_   = nullptr;
+    SDL_Texture* bloodTex_     = nullptr;
+    SDL_Texture* scorchTex_    = nullptr;
+    SDL_Texture* floorTex_     = nullptr;
+    SDL_Texture* grassTex_     = nullptr;
+    SDL_Texture* gravelTex_    = nullptr;
+    SDL_Texture* woodTex_      = nullptr;
+    SDL_Texture* sandTex_      = nullptr;
+    SDL_Texture* tileFloorTex_ = nullptr;
+    SDL_Texture* wallTex_      = nullptr;
+    SDL_Texture* glassTex_     = nullptr;
+    SDL_Texture* deskTex_      = nullptr;
+    SDL_Texture* boxTex_       = nullptr;
+    SDL_Texture* gravelGrass1Tex_ = nullptr;
+    SDL_Texture* gravelGrass2Tex_ = nullptr;
+    SDL_Texture* gravelGrass3Tex_ = nullptr;
+    SDL_Texture* glassTileTex_   = nullptr;
+    SDL_Texture* vignetteTex_    = nullptr;
+    SDL_Texture* sceneTarget_    = nullptr;
+
+    // Acid PostFX state
+    float acidFXTimer_    = 0.0f;
+    float acidFXDuration_ = 0.0f;
+    float acidFXFade_     = 0.0f;
+    SDL_Color acidColor1_ = {80, 220, 40, 255};
+    SDL_Color acidColor2_ = {200, 255, 50, 255};
+    SDL_Texture* minimapCacheTex_ = nullptr;
+    bool minimapCacheDirty_ = true;
+    int minimapCacheMapW_ = 0;
+    int minimapCacheMapH_ = 0;
+    int minimapCacheTilePx_ = 0;
+    // Custom tile textures loaded from map-embedded paths (TILE_CUSTOM_0..7)
+    SDL_Texture* customTileTextures_[8] = {nullptr};
+
+    // Full-map layer images (from custom map bgImagePath / topImagePath)
+    SDL_Texture* bgImageTex_   = nullptr;
+    SDL_Texture* topImageTex_  = nullptr;
+    float        topLayerAlpha_ = 1.0f; // smoothly fades when player inside LayerFade trigger
+
+    // SFX
+    Mix_Chunk* sfxShoot_        = nullptr;
+    Mix_Chunk* sfxEnemyShoot_   = nullptr;
+    Mix_Chunk* sfxEnemyExplode_ = nullptr;
+    Mix_Chunk* sfxReload_   = nullptr;
+    Mix_Chunk* sfxHurt_       = nullptr;
+    Mix_Chunk* sfxPlayerHurt_ = nullptr;
+    Mix_Chunk* sfxDeath_    = nullptr;
+    Mix_Chunk* sfxExplosion_= nullptr;
+    Mix_Chunk* sfxParry_    = nullptr;
+    Mix_Chunk* sfxSwoosh_   = nullptr;
+    Mix_Chunk* sfxBreak_    = nullptr;
+    Mix_Chunk* sfxBeep_     = nullptr;
+    Mix_Chunk* sfxPress_    = nullptr;
+    Mix_Chunk* sfxClick_    = nullptr;  // UI mouse click
+    Mix_Chunk* sfxBoot_     = nullptr;  // BIOS startup chime
+    Mix_Chunk* sfxTvShutdown_ = nullptr; // CRT power-on/off whir played on the loading->gameplay transition
+    Mix_Music* bgMusic_        = nullptr;  // unused; kept for ABI compat
+    Mix_Music* menuMusic_      = nullptr;
+    Mix_Music* customMapMusic_ = nullptr;  // per-map music loaded at runtime
+    std::vector<Mix_Music*>  bgMusicTracks_;
+    std::vector<std::string> bgMusicTrackNames_;
+    std::vector<std::string> bgMusicTrackAuthors_;
+    int  lastActionTrack_      = -1;
+    bool actionMusicActive_    = false;
+    bool musicLoopCurrent_     = false;
+
+    // Music player window (pause menu - separate from main-menu musicWin*)
+    int  pauseMusicWinX_          = 20;
+    int  pauseMusicWinY_          = -1;   // -1 = uninitialised, set on first draw
+    bool pauseMusicWinDragging_   = false;
+    int  pauseMusicWinDragOffX_   = 0;
+    int  pauseMusicWinDragOffY_   = 0;
+
+    // Methods
+    void loadAssets();
+    void startGame();
+    void generateMapInto(uint32_t seed, bool endless);  // heavy world gen (bg thread for single-player)
+    void finishMapSetup();                              // post-gen player/camera/loot setup (main thread)
+    void joinMapGenThread();                            // block until any running generation finishes
+    void handleInput();
+    void update();
+    void render();
+    bool isSplitscreenActive() const;
+    void renderPostFXComposite(bool gameplayView);
+
+    // Update sub-systems
+    void updatePlayer(float dt);
+    void updateVehicles(float dt);
+    void renderVehicles();
+    void updateEnemies(float dt);
+    void updateBullets(float dt);
+    void updateBombs(float dt);
+    void updateExplosions(float dt);
+    void updateSpawning(float dt);
+    void resolveCollisions();
+    void pushOutCollisionZones(Vec2& pos, float radius); // push pos out of all CollisionZone triggers
+    bool posInCollisionZone(Vec2 pos, float radius) const; // true if a body at pos overlaps any CollisionZone
+
+    // Enemy AI helpers
+    void enemyWander(Enemy& e, float dt);
+    void enemyChase(Enemy& e, float dt);
+    void enemyDash(Enemy& e, float dt);
+    void enemyShoot(Enemy& e, float dt);
+    bool enemyCanSeeAnyPlayer(Enemy& e);      // sets e.targetPlayerId, returns true if any player visible
+    Vec2 getEnemyTargetPos(const Enemy& e) const; // returns position of the enemy's current target
+    Vec2 steerToward(Vec2 from, Vec2 to, float spd, float dt) const;
+    void pickWanderTarget(Enemy& e);          // choose a calm, wall-clear roam point
+    bool tileRayClear(Vec2 a, Vec2 b) const;  // true if no solid tile lies between a and b
+    // BFS a route around walls from 'from' to 'to'; outWaypoint is the furthest
+    // corner we can head straight for. Returns false if no path exists.
+    bool computeEnemyPath(Vec2 from, Vec2 to, Vec2& outWaypoint) const;
+    mutable std::vector<int> pathScratch_;    // reused BFS parent/visited buffer
+
+    // Combat
+    void spawnBullet(Vec2 pos, float angle);
+    void spawnEnemyBullet(Vec2 pos, Vec2 target, float angleOffset = 0.0f, float speed = ENEMY_BULLET_SPEED);
+    void spawnExplosion(Vec2 pos, uint8_t ownerId = 255, uint8_t ownerSlot = 0);
+    void spawnBulletExplosion(Vec2 pos, int damage, uint8_t ownerId = 255, uint8_t ownerSlot = 0,
+                              int skipEnemyIdx = -1, bool applyDamage = true);
+    void spawnPlayerDeathEffect(Vec2 pos);
+    float localFeedbackFalloff(Vec2 pos, float maxDistance) const;
+    void playExplosionFeedback(Vec2 pos, float maxDistance, float minStrength, float maxStrength,
+                               int minDurationMs, int maxDurationMs, float lowBandScale,
+                               float highBandScale, int maxVolume, int minVolume = 0);
+    void spawnBomb();
+    Vec2 pickSpawnPos();  // team-corner or random spawn (multiplayer)
+    bool isEnemySpawnVisibleToAnyPlayer(Vec2 pos) const;
+    Vec2 pickEnemySpawnPos(bool* foundHidden = nullptr);
+    void spawnEnemy(Vec2 pos, EnemyType type);
+    void killEnemy(Enemy& e, bool trackKill = true);
+    void playerParry();
+    void destroyBox(int tx, int ty);
+    void updateBoxFragments(float dt);
+    void updateBloodDecals(float dt);
+    void stampTileBlood(Vec2 pos, float strength);
+    void playMenuMusic();
+    void playActionMusic();
+    // Start map-specific music (resolves trackPath relative to folder, falls back to bgMusic_)
+    void playMapMusic(const std::string& folder, const std::string& trackPath);
+
+    // Local Co-op
+    void renderLocalCoopLobby();
+    void startLocalCoopGame();
+    void updateLocalCoopPlayers(float dt);
+    void handleLocalCoopInput();
+    void renderLocalCoopGame();
+    SDL_Rect coopViewport(int slotIdx, int playerCount) const;
+
+    // Rendering helpers
+    void renderSprite(SDL_Texture* tex, Vec2 worldPos, float angle, float scale = 1.0f);
+    void renderSpriteEx(SDL_Texture* tex, Vec2 worldPos, float angle, float scale, SDL_Color tint);
+    void renderExplosionPixelated(const Explosion& ex);
+    SDL_Texture* enemySpriteTex(EnemyType t) const;
+    void renderMap();
+    void renderWallOverlay();
+    void renderDecals();
+    void renderRoofOverlay();
+    void renderShadingPass();
+    void renderUI();
+    SDL_GameController* getPrimaryGameplayController() const;
+    Vec2 resolveAimDirection(const Player& player, const Vec2& aimInput) const;
+    void renderAimCrosshair(const Camera& camera, const Player& player, Vec2 aimDir,
+                            float distance, SDL_Color color, int size = 10);
+    void renderMinimap();
+    void invalidateMinimapCache();
+    void renderBiosIntro();
+    int  renderMapLoadCore();          // shared black bg + sawblade + seed + tip; returns y below tip
+    void renderMapLoading();           // single-player loading screen
+    void renderMultiplayerLoading();   // multiplayer loading screen w/ per-player ready status
+    void beginCrtWarmup();             // start CRT power-on: arms warmup + tube-whir sfx
+    void startLoadedMapMusic();        // start the track for the map we're entering (action vs custom)
+    void renderLoginScreen();
+    void renderMainMenu();
+    void renderToolsMenu();
+    void renderPlayModeMenu();
+    void renderConfigMenu();
+    void renderConfigGameplayMenu();   // "Gameplay & Comfort" config submenu
+    void configGameplayAction(int row, int dir); // shared mouse/gamepad mutation (dir -1/0/+1)
+    static constexpr int CONFIG_GP_ROWS = 9;     // selectable rows in the gameplay submenu
+    void renderPlayGeneratedMenu();    // "Generated Map Settings" play submenu
+    void playGeneratedAction(int row, int dir);  // shared mouse/gamepad mutation (dir -1/0/+1)
+    static constexpr int PLAY_GEN_ROWS = 9;      // selectable rows in the generated-settings submenu (incl. Close)
+    void renderPauseMenu();
+    void renderWorkshopMenu();
+    void renderDeathScreen();
+    void drawText(const char* text, int x, int y, int size, SDL_Color color);
+    void drawTextCentered(const char* text, int y, int size, SDL_Color color);
+
+    // Collision helpers
+    bool wallCollision(Vec2 pos, float halfSize) const;
+    void slideResolve(Vec2& pos, Vec2& vel, float halfSize);
+
+    // New systems
+    void startCustomMap(const std::string& path, int modeOverride = -1); // -1=use map default, 0=Arena, 1=Sandbox
+    void startCustomMapMultiplayer(const std::string& path);
+    void updateCustomMapGoal();
+    void scanMapFiles();
+    void scanCharacters();
+    void applyCharacter(const CharacterDef& cd);
+    void applyCharacterStatsToPlayer(Player& p);  // apply active character stats
+    void resetToDefaultCharacter();                // revert to built-in sprites/stats
+
+    // Additional menu renders
+    void renderMapSelectMenu();
+    void renderMapConfigMenu();  // stubbed - no longer shown
+    void renderCharSelectMenu();
+    void renderCustomWinScreen();
+    void renderCharCreator();
+    void saveCharacterToFolder(const std::string& folderPath);    // save character.cfg
+    void loadCharacterIntoCreator(const std::string& folderPath); // load folder into creator
+    void testCharacter();  // quick-test with current character in sandbox
+
+    // Mod-save overlay dialog
+    ModSaveDialogState modSaveDialog_;
+    void openModSaveDialog(ModSaveDialogState::Asset asset);
+    void handleModSaveDialogEvent(const SDL_Event& e);
+    void renderModSaveDialog();
+    // Run from the main loop (not update(), which is gameplay-only) so they
+    // work in the character creator / editor menus too.
+    void processModSaveConfirm();             // execute a confirmed mod-save
+    void updateCharCreatorPreview(float dt);  // advance the preview animation
+    static std::string modBuildFolder(const std::string& modId, const std::string& displayName, const std::string& author = "Unknown");
+    void applyResolutionSettings(bool rebuildTargets = true);
+    void updateAspectMode();
+    bool rebuildScreenTextures();
+    void saveConfig();
+    void loadConfig();
+    void saveBestRun();
+    void loadBestRun();
+    void checkAndSaveBestRun(); // call on death; updates bestRun_ and sets newBestRun_
+
+    // Map Pack support
+    void scanMapPacks();
+    void renderPackSelectMenu();
+    void renderPackLevelWin();
+    void renderPackComplete();
+    void startPackLevel();
+    void advancePackLevel();
+
+    // Pickup / Crate system
+    void updateCrates(float dt);
+    void updatePickups(float dt);
+    void spawnCrate(Vec2 pos);
+    void collectPickup(Pickup& p);
+    void applyUpgrade(UpgradeType type);
+    void renderCrates();
+    void renderPickups();
+    float crateSpawnTimer_  = 0;
+    float cratePopupTimer_  = 0;  // countdown for "SUPPLY DROP" popup
+
+    // Multiplayer
+    GameModeRules currentRules_;            // active gamemode rules
+    float netStateSendTimer_ = 0;           // rate-limit state sends
+    float enemySendTimer_    = 0;           // rate-limit enemy state sends (host only)
+    bool  enemyStatesNeedUpdate_ = false;   // send enemy states immediately on next frame (after kill)
+    uint32_t nextBulletNetId_ = 1;          // monotonically increasing bullet network ID
+    float respawnTimer_ = 0;                // countdown after death
+    float connectTimer_ = 0;                // connection attempt timeout
+    bool  suppressNetExplosion_ = false;    // prevent re-sending network-spawned explosions
+    bool  pvpDamageThisFrame_ = false;       // flag for PVP bullet-player collision
+    int   activeLocalPlayerSlot_ = 0;        // slot currently being simulated locally (0 = main player)
+    std::string joinAddress_ = "127.0.0.1"; // address to join
+    std::string connectStatus_;              // connection status message
+    bool        ipTyping_    = false;        // currently editing IP on gamepad
+    bool        usernameTyping_ = false;     // editing username in config
+    bool        hpTyping_      = false;     // editing playerMaxHp via keyboard
+    std::string hpStr_;                     // typed HP string buffer
+    bool        mapDimTyping_  = false;     // editing map width/height via keyboard (PlayMode menu)
+    int         mapDimField_   = 3;         // 3 = width, 4 = height
+    std::string mapDimStr_;                 // typed map-dimension string buffer
+    void        beginMapDimEdit(int field); // open the soft keyboard for map width/height
+    bool        seedTyping_    = false;     // editing the world seed (PlayMode menu)
+    std::string seedStr_;                   // typed seed string buffer
+    void        beginSeedEdit();            // open the numeric soft keyboard for the seed
+    bool        mpUsernameTyping_ = false;   // editing username in host/join menus
+    int         usernameCharIdx_ = 0;        // palette index for username char picker
+    int         kbNavHeldButton_ = -1;       // D-pad button held during keyboard picker nav
+    Uint32      kbNavRepeatAt_   = 0;        // SDL_GetTicks target for next repeat step
+    int         menuNavHeldBtn_  = -1;       // D-pad button held for menu-nav hold-repeat
+    Uint32      menuNavRepeatAt_ = 0;        // timer for menu nav hold-repeat
+    int         menuNavStickPrev_= 0;        // previous analog-stick nav direction (-1/0/+1)
+    int         hostSetupScrollY_= 0;        // scroll offset (px) for HOST OPTIONS rows
+
+    // Unified onscreen keyboard (movable window, QWERTY layout)
+    struct SoftKeyboard {
+        bool  active  = false;
+        bool  nativeApplet = false;  // Wii U: native nn::swkbd via wiiu-sdl2, not the custom overlay
+        std::string* target = nullptr;
+        int   maxLen  = 32;
+        std::function<void(bool)> onDone;
+
+        // Movable window position; -1 = auto-center on first open
+        int  winX = -1, winY = -1;
+        bool dragging  = false;
+        int  dragOffX = 0, dragOffY = 0;
+        SDL_Rect titleBar = {0,0,0,0};
+
+        bool shiftOn = false;  // shift key active
+        bool numeric = false;  // when true, only digits 0-9 may be entered
+
+        // Gamepad navigation (row, col into logical key grid)
+        int  gpRow = 4, gpCol = 0;
+        int  heldNav = -1;      // held D-pad button for key-repeat
+        Uint32 repeatAt = 0;
+
+        // Per-frame hit table built by renderSoftKB, consumed by handleSoftKBEvent
+        struct Hit { SDL_Rect r; char ch, chSh; int act; int row, col; };
+        std::vector<Hit> hits;
+
+        // act codes: 0=insert, 1=backspace, 2=enter(OK), 3=shift, 4=space, 5=cancel
+
+        void open(std::string* tgt, int max,
+                  std::function<void(bool)> done = nullptr, bool numericOnly = false);
+        void close(bool confirmed);
+    };
+    SoftKeyboard softKB_;
+    bool handleSoftKBEvent(SDL_Event& e);
+    void updateSoftKBRepeat();
+    void renderSoftKB();
+    std::string presetNameBuf_;  // buffer for naming host presets
+    int         ipCharIdx_   = 0;            // palette index for IP char picker
+    int  multiMenuSelection_ = 0;
+    int  lobbyMenuSelection_ = 0;
+    int  hostSetupSelection_ = 0;
+    int  joinMenuSelection_  = 0;             // 0=edit addr, 1=edit port, 2=edit username, 3=password, 4=connect, 5=save, 6=back
+    std::string joinPassword_ = "";              // password to send when joining
+    bool joinPasswordTyping_ = false;            // editing join password
+    int  joinPasswordCharIdx_ = 0;               // char picker index for join password
+    int  gamemodeSelectIdx_ = 0;
+    int  hostMapSelectIdx_ = 0;              // map selection in host setup
+    int  hostMaxPlayers_ = 8;                   // configurable max players (2-16)
+    int  hostPort_ = 7777;                      // configurable host port
+    bool portTyping_  = false;                   // currently editing host port with keyboard
+    int  portCharIdx_ = 0;                       // palette index for host port char picker
+    std::string portStr_ = "7777";               // host port as editable string
+    int  joinPort_ = 7777;                       // port used when joining
+    bool joinPortTyping_ = false;                // currently editing join port with keyboard
+    int  joinPortCharIdx_ = 0;                   // palette index for join port char picker
+    std::string joinPortStr_ = "7777";           // join port as editable string
+    int  modMenuSelection_ = 0;
+    int  modMenuTab_       = 0;  // 0=Mods 1=Characters 2=Maps 3=Playlists
+    bool lobbyReady_ = false;
+
+    // Online Workshop
+    std::vector<OnlineModInfo> onlineModList_;  // Fetched from API
+    std::string workshopSearchQuery_ = "";      // Current search filter
+    int onlineWorkshopSelection_ = 0;           // Selected mod in list
+    int onlineWorkshopScrollOffset_ = 0;        // Scroll position
+    int workshopSort_ = 0;                      // 0=Newest 1=Name 2=Score (was static local)
+    bool workshopFetchingMods_ = false;
+    std::string workshopStatus_ = "";
+    float workshopStatusTimer_ = 0;
+    bool workshopDetailOpen_ = false;           // Detail panel modal open
+    std::string workshopDetailModId_;           // Which mod's detail is loaded
+
+    // Detail screenshots
+    std::vector<SDL_Texture*> workshopDetailSsTex_;
+    std::mutex workshopDetailMutex_;
+    std::vector<std::string> workshopDetailSsReady_;  // temp file paths ready to load
+    std::thread workshopDetailThread_;
+    std::atomic<bool> workshopDetailFetching_{false};
+
+    // Icon cache
+    std::unordered_map<std::string, SDL_Texture*> workshopIconCache_;
+    std::mutex workshopIconMutex_;
+    std::vector<std::string> workshopIconsReady_;  // IDs whose temp files are ready to load
+    std::thread workshopIconThread_;
+    std::atomic<bool> workshopIconStop_{false};
+    std::atomic<bool> workshopListReady_{false}; // set by bg thread; main thread calls fetchWorkshopIcons()
+
+    // Download thread state
+    std::atomic<bool> workshopDownloading_{false};
+    std::atomic<bool> workshopDlDone_{false};
+    std::atomic<bool> workshopDlOk_{false};
+    std::string       workshopDlName_;
+    std::string       workshopDlZipPath_;
+    std::string       workshopDlInstallId_;
+    std::thread       workshopDlThread_;
+
+    // Mod delete confirm
+    bool        modDeleteConfirm_ = false;
+    std::string modDeleteName_;
+    std::string modDeleteFolder_;
+
+    // Workshop menu (pause)
+    int  workshopSelection_ = 0;  // Current selected item in workshop
+
+    // Lobby settings (host-controlled)
+    LobbySettings lobbySettings_;           // synced from host to clients
+    int  lobbySettingsSel_   = 0;           // which settings row is selected (host)
+    int  lobbySettingsScrollY_ = 0;         // scroll offset (px) for lobby settings panel
+    int  lobbySettingsScroll_= 0;           // scroll offset for settings panel
+    int  lobbyGamemodeIdx_   = 0;           // index into GameModeRegistry for lobby
+    int  lobbyMapIdx_        = 0;           // 0=random, 1+=custom maps
+
+    // Team selection
+    int8_t localTeam_        = -1;          // local player's chosen team (-1=none)
+    int    teamSelectCursor_ = 0;           // cursor for team selection screen
+    bool   teamLocked_       = false;       // player locked in team choice
+
+    // Lives system
+    int    localLives_       = -1;          // -1=infinite, >=0=remaining lives (individual)
+    int    sharedLives_      = -1;          // -1=infinite, >=0=remaining (shared pool, host only)
+    bool   spectatorMode_    = false;       // ran out of lives, spectating as ghost
+
+    // Admin menu (host-only overlay during gameplay)
+    bool   adminMenuOpen_    = false;
+    int    adminMenuSel_     = 0;           // selected player index
+    int    adminMenuAction_  = 0;           // 0=kick, 1=respawn, 2=team-, 3=team+
+
+    // Multiplayer pause sub-state
+    int    pauseMenuSub_     = 0;           // 0=main list, 1=team-pick inline
+    int    pauseTeamCursor_  = 0;           // cursor when picking team from pause
+
+    // Saved servers
+    struct SavedServer {
+        std::string name;    // display name
+        std::string address; // IP address
+        int port = 7777;
+    };
+    std::vector<SavedServer> savedServers_;
+    int serverListSelection_ = 0;
+    bool serverNameEditing_ = false;
+    std::string serverNameBuf_;
+    int serverNameCharIdx_ = 0;
+
+    // Server config presets
+    struct ServerPreset {
+        std::string name;
+        std::string gamemodeId;
+        int maxPlayers = 8;
+        int hostPort = 7777;
+        int mapIndex = 0;        // 0 = generated
+        LobbySettings lobbySettings; // saved lobby game settings
+    };
+    std::vector<ServerPreset> serverPresets_;
+    int presetSelection_ = 0;
+
+    struct SyncedCharacterState {
+        std::string name = "Default";
+        bool isDefault = true;
+        std::vector<uint8_t> data;
+        CharacterDef visual;
+        bool visualLoaded = false;
+        std::string cacheFolder;
+    };
+    std::unordered_map<uint8_t, SyncedCharacterState> syncedCharacters_;
+    std::string lastCharacterSyncKey_;
+
+    void initMultiplayer();
+    void shutdownMultiplayer();
+    void updateMultiplayer(float dt);
+    void renderMultiplayerMenu();
+    void renderHostSetup();
+    void renderJoinMenu();
+    void renderLobby();
+    void renderMultiplayerGame();
+    void renderMultiplayerHUD();
+    void renderMultiplayerPause();
+    void renderMultiplayerDeath();
+    void renderMultiplayerSplitscreen();
+    // Match result
+    enum class MatchEndReason : uint8_t {
+        Unknown      = 0,
+        WavesCleared = 1, // PVE: all target waves cleared
+        TeamWiped    = 2, // PVE: all players exhausted lives
+        LastAlive    = 3, // PVP: last player/team standing
+        TimeUp       = 4, // PVP: match timer expired, most kills wins
+        HostEnded    = 5, // manual: host pressed "End Game"
+    };
+    struct MatchResult {
+        bool           isWin       = false;
+        MatchEndReason reason      = MatchEndReason::Unknown;
+        std::string    headline;     // "VICTORY" / "DEFEAT" / "GAME OVER"
+        std::string    subtitle;     // short result description
+        std::string    winnerName;   // FFA winner player name
+        int            winnerTeam   = -1; // winning team index, -1 = none
+        int            winnerKills  = 0;
+        float          matchElapsed = 0.f; // seconds the match lasted
+    };
+    MatchResult matchResult_;
+    float matchTimer_   = 0.f;    // counts DOWN from pvpMatchDuration (0 if no limit)
+    float matchElapsed_ = 0.f;    // counts UP from game start
+    float discordTimer_ = 0.f;    // throttle Discord presence refresh (~5 s)
+    int64_t discordSessionStart_ = 0; // Unix timestamp when current session began
+    void renderWinLoss();
+    void renderScoreboard();
+    void renderTeamSelect();
+    void renderAdminMenu();
+    void renderModMenu();
+    void renderOnlineWorkshop();
+    void fetchOnlineModList();
+    void fetchWorkshopIcons();
+    void clearWorkshopIcons();
+    void fetchModDetail(const std::string& modId);
+    void clearDetailScreenshots();
+    void downloadAndInstallMod(const OnlineModInfo& mod);
+    void extractModZip(const std::string& zipPath, const std::string& modId);
+    void deleteModFolder(const std::string& folder);
+    void renderRemotePlayers();
+    void setupNetworkCallbacks();
+    void clearSyncedCharacters();
+    void clearSyncedCharacter(uint8_t playerId);
+    std::vector<uint8_t> buildCharacterSyncBundle(const CharacterDef& cd) const;
+    bool installSyncedCharacterVisual(uint8_t playerId, const std::string& characterName,
+                                      const std::vector<uint8_t>& data);
+    void syncLocalCharacterSelection(bool force = false);
+    void hostGame();
+    void joinGame();
+    void startMultiplayerGame();  // host only
+
+    // Saved servers
+    void loadSavedServers();
+    void saveSavedServers();
+    void addSavedServer(const std::string& name, const std::string& addr, int port);
+    void removeSavedServer(int idx);
+
+    // Server config presets
+    void loadServerPresets();
+    void saveServerPresets();
+    void addServerPreset(const std::string& name, const std::string& gamemodeId, int maxPlayers, int port, int mapIdx, const LobbySettings& ls = {});
+    void removeServerPreset(int idx);
+    void applyServerPreset(int idx);
+
+    // IP utility
+    std::string getLocalIP();
+
+    // Mod system
+    void initMods();
+    void reloadModdedContent();
+    void applyModOverrides();
+    void updateDiscordPresence();
+};

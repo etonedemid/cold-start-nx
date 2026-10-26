@@ -1,0 +1,417 @@
+#pragma once
+#include "tilemap.h"
+#include "mapformat.h"
+#include "camera.h"
+#include "assets.h"
+#include "ui.h"
+#include "cutscene_editor.h"
+#include "cutscene.h"
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_image.h>
+#include <string>
+#include <vector>
+#include <deque>
+#include <cmath>
+
+// Undo/redo snapshot (full map state)
+struct UndoState {
+    std::vector<uint8_t>  tiles;
+    std::vector<uint8_t>  ceiling;
+    std::vector<uint8_t>  tileRotations;
+    std::vector<uint8_t>  tileNoCollide;
+    std::vector<MapTrigger>  triggers;
+    std::vector<EnemySpawn>  enemySpawns;
+    std::vector<PropSpawn>   props;
+    // Trigger configs live in the cutscene library but are keyed by trigger
+    // index, so they must be undone together with the triggers themselves.
+    std::vector<TriggerVarAction>   trigVarActions;
+    std::vector<TriggerCondition>   trigConditions;
+    std::vector<TriggerMapLoad>     trigMapLoads;
+    std::vector<TriggerMultiConfig> trigMultiConfigs;
+};
+
+// Editor tile palette entry (loaded from tiles/ subfolders)
+struct EditorTile {
+    std::string name;         // display name
+    std::string path;         // file path to PNG
+    SDL_Texture* texture;     // loaded texture
+    uint8_t tileType;         // TileType enum value
+    std::string category;     // "ground", "walls", "ceiling", etc.
+};
+
+// Editor tool mode
+enum class EditorTool : uint8_t {
+    Tile     = 0,  // paint tiles
+    Trigger  = 1,  // place triggers (start, end, effect)
+    Entity   = 2,  // place entities (enemies, crates)
+    Erase    = 3,  // remove
+    Select   = 4,  // select & configure
+    Rect     = 5,  // fill / outline rectangle
+    Fill     = 6,  // flood fill connected tiles
+    TOOL_COUNT = 7,
+};
+
+// Entity spawn subtypes (used in EnemySpawn::enemyType)
+static constexpr uint8_t ENTITY_MELEE        = 0;
+static constexpr uint8_t ENTITY_SHOOTER      = 1;
+static constexpr uint8_t ENTITY_CRATE        = 2;
+static constexpr uint8_t ENTITY_UPGRADE_CRATE= 3;
+static constexpr uint8_t ENTITY_BRUTE        = 4;
+static constexpr uint8_t ENTITY_SCOUT        = 5;
+static constexpr uint8_t ENTITY_SNIPER       = 6;
+static constexpr uint8_t ENTITY_GUNNER       = 7;
+// Story bystanders / infrastructure (non-enemy, ride the EnemySpawn array)
+static constexpr uint8_t ENTITY_CIVILIAN       = 8;
+static constexpr uint8_t ENTITY_RESPONDER      = 9;  // hostile; surrenders when disabled
+static constexpr uint8_t ENTITY_INFRA_MEDRELAY = 10;
+static constexpr uint8_t ENTITY_INFRA_POWER    = 11;
+static constexpr uint8_t ENTITY_INFRA_WATER    = 12;
+static constexpr uint8_t ENTITY_INFRA_ANTENNA  = 13;
+// New enemy variants (appended to keep existing map byte ids stable)
+static constexpr uint8_t ENTITY_BOMBER         = 14;
+static constexpr uint8_t ENTITY_SPITTER        = 15;
+static constexpr uint8_t ENTITY_WARDEN         = 16;
+static constexpr uint8_t ENTITY_TYPE_COUNT     = 17;
+
+// Sprite for an infrastructure entity (nullptr for everything else).
+// ponytail: Kenney CC0 placeholders, swap the PNGs for final art
+inline const char* infraSpritePath(uint8_t entityType) {
+    switch (entityType) {
+        case ENTITY_INFRA_MEDRELAY: return "sprites/props/infra_medrelay.png";
+        case ENTITY_INFRA_POWER:    return "sprites/props/infra_power.png";
+        case ENTITY_INFRA_WATER:    return "sprites/props/infra_water.png";
+        case ENTITY_INFRA_ANTENNA:  return "sprites/props/infra_antenna.png";
+        default:                    return nullptr;
+    }
+}
+
+// Trigger placement ghost
+struct TriggerGhost {
+    TriggerType type = TriggerType::LevelStart;
+    GoalCondition condition = GoalCondition::DefeatAll;
+    uint8_t param = 0;
+};
+
+// Palette filter tab
+enum class PaletteTab : uint8_t {
+    All      = 0,
+    Ground   = 1,
+    Walls    = 2,
+    Ceiling  = 3,
+    Props    = 4,
+    TAB_COUNT= 5,
+};
+
+// Editor config screen (shown before entering editor)
+struct EditorConfig {
+    enum class Action : uint8_t { NewMap, LoadMap };
+    Action action = Action::NewMap;
+    int    mapWidth  = 50;
+    int    mapHeight = 50;
+    std::string mapName    = "Untitled";
+    std::string creator    = "Unknown";
+    int    gameMode  = 0;   // 0=Arena, 1=Sandbox
+    std::string loadPath;        // path to .csm to load
+    std::vector<std::string> availableMaps; // scanned .csm files
+    int    field     = 0;        // currently selected field
+    int    loadIdx   = 0;        // selected map index for loading
+    Uint32 lastListClickT = 0;   // for double-click-to-open in the map list
+    bool   textEditing = false;
+    std::string textBuf;
+    int    gpCharIdx = 0;        // gamepad char palette index
+    int    maxField  = 7;        // 0=action..5=gamemode, 6=OK, 7=Cancel
+};
+
+class MapEditor {
+public:
+    bool init(SDL_Renderer* renderer, int screenW, int screenH, UI::Context* ui = nullptr);
+    void shutdown();
+    void handleInput(SDL_Event& e);
+    void update(float dt);
+    void render(SDL_Renderer* renderer);
+
+    // Map operations
+    void newMap(int w, int h);
+    bool saveMap(const std::string& path);
+    bool loadMap(const std::string& path);
+
+    bool isActive() const { return active_; }
+    void setActive(bool v) { active_ = v; }
+
+    // Test play - set by editor, checked by Game
+    bool wantsTestPlay() const { return wantsTestPlay_; }
+    void clearTestPlay() { wantsTestPlay_ = false; }
+    void requestTestPlay() { wantsTestPlay_ = true; }
+    CustomMap& getMap() { return map_; }
+
+    // Set map metadata
+    void setMapName(const std::string& n) { map_.name = n; }
+    void setCreator(const std::string& c) { map_.creator = c; }
+
+    // Config screen
+    bool isShowingConfig() const { return showConfig_; }
+    void showConfig();    // enter config screen before editing
+    EditorConfig& getConfig() { return config_; }
+    void setScreenSize(int w, int h);
+
+    // Wantsback (user cancelled config)
+    bool wantsBack() const { return wantsBack_; }
+    void clearWantsBack() { wantsBack_ = false; }
+
+    // True when a text field (config or cutscene editor) is capturing typing,
+    // so the host can keep ESC/Backspace/Enter from leaking into menu actions.
+    bool isTextEditing() const {
+        return config_.textEditing || trigText_ != TrigText::None ||
+               varListEditingName_ || varListEditingValue_ ||
+               (showCutsceneEditor_ && csEditor_.textEditing());
+    }
+
+    std::string savePath() const { return savePath_; }
+
+    // Mod-save handshake: game.cpp queries this, confirms with performModSave()
+    bool wantsModSave() const   { return wantsModSave_; }
+    void clearWantsModSave()    { wantsModSave_ = false; }
+    std::string pendingMapName() const { return map_.name; }
+    void performModSave(const std::string& modFolder);
+
+    // Direct save (to existing path, no dialog)
+    bool hasExplicitSavePath() const { return hasExplicitSavePath_; }
+
+    // Fill out[0..7] with the palette textures for TILE_CUSTOM_0..7 (for test play)
+    void getCustomTileTextures(SDL_Texture** out) const;
+
+    // In-memory cutscene library (for test-play, so story cutscenes run without a save)
+    const CutsceneLibrary& cutsceneLibrary() const { return csLib_; }
+
+private:
+    bool active_ = false;
+    SDL_Renderer* renderer_ = nullptr;
+    UI::Context*  ui_ = nullptr;
+    int screenW_ = 1280, screenH_ = 720;
+
+    // Map being edited
+    CustomMap map_;
+    Camera camera_;
+
+    // Config screen state
+    bool showConfig_ = true;     // show config before editing
+    bool wantsBack_  = false;    // user cancelled
+    EditorConfig config_;
+    std::string savePath_ = "maps/editor_map.csm";
+    std::string saveMessage_;
+    float saveMessageTimer_ = 0;
+    bool  wantsModSave_ = false;
+    bool  hasExplicitSavePath_ = false;  // true after first save or load from specific path
+
+    // Palette
+    std::vector<EditorTile> palette_;
+    int paletteScroll_ = 0;
+    int selectedPalette_ = 0;
+    std::vector<int> paletteItemY_;  // cached Y positions for click detection
+    SDL_Texture* tileTextures_[256] = {};  // canonical texture per TileType for map rendering
+
+    // Tools
+    EditorTool currentTool_ = EditorTool::Tile;
+    TriggerGhost triggerGhost_;
+    uint8_t entitySpawnType_ = ENTITY_MELEE;
+
+    // Palette tab filtering
+    PaletteTab paletteTab_ = PaletteTab::All;
+    std::vector<int> filteredPalette_; // indices into palette_ for current tab
+    int filteredSelection_ = 0;         // selection within filtered list
+
+    // Zoom
+    float zoom_ = 1.0f;
+    static constexpr float ZOOM_MIN = 0.05f;
+    static constexpr float ZOOM_MAX = 4.0f;
+
+    // Trigger/enemy selection & resize
+    int selectedTrigger_ = -1;      // index in triggers, -1 = none
+    int selectedEnemy_   = -1;      // index in enemySpawns, -1 = none
+    bool draggingResize_ = false;   // currently resizing a trigger
+    int  resizeCorner_   = -1;      // 0=TL, 1=TR, 2=BL, 3=BR
+    float dragStartX_ = 0, dragStartY_ = 0;
+    float origTrigW_ = 0, origTrigH_ = 0;
+    float origTrigX_ = 0, origTrigY_ = 0;
+
+    // Inline text editing of the selected trigger's config fields
+    enum class TrigText : uint8_t { None, CondName, Cooldown, VarKey, MapPath };
+    TrigText    trigText_ = TrigText::None;
+    std::string trigTextBuf_;
+    void beginTrigText(TrigText field, const std::string& initial);
+    void endTrigText(bool commit);
+    int  trigTextIdx_ = -1;  // trigger being edited (commit target)
+    void trigTextField(TrigText field, const std::string& value, int x, int y, int w, int h);
+
+    // Move drag (grab ball or object body)
+    bool  draggingMove_  = false;
+    bool  draggingMovePushed_ = false;  // undo snapshot taken for this drag
+    float moveObjOrigX_  = 0;
+    float moveObjOrigY_  = 0;
+    int   moveDragSX_    = 0;
+    int   moveDragSY_    = 0;
+
+    // Test play
+    bool wantsTestPlay_ = false;
+
+    // Map Properties panel (player config, game mode - editable from within the editor)
+    bool showMapProps_      = false;
+    int  mapPropsField_     = 0;   // 0..8: gamemode, abilities×5, maxhp, startbombs, speed, damage
+    int  mapPropsAbilSlot_  = 0;   // which ability sub-button is selected (0-4)
+
+    // Undo / Redo
+    static constexpr int UNDO_MAX = 64;
+    std::deque<UndoState> undoStack_;
+    std::deque<UndoState> redoStack_;
+    bool undoPushedForStroke_ = false;
+
+    // Brush
+    int  brushSize_      = 1;     // 1..9, tiles painted per side
+    bool rectFilled_     = true;  // Rect tool: filled vs outline
+    int  rectStartTX_    = -1;    // Rect start tile X
+    int  rectStartTY_    = -1;    // Rect start tile Y
+    float trigDragStartX_ = 0.0f; // Trigger drag start (world coords, no snap)
+    float trigDragStartY_ = 0.0f;
+    bool  trigDragging_   = false;
+    bool randomRotation_ = false; // randomise tile rotation on brush/rect paint
+    bool noCollision_    = false; // place tiles without square tile collision
+
+    // Input state
+    bool mouseDown_  = false;
+    bool rightDown_  = false;
+    int  mouseX_     = 0;
+    int  mouseY_     = 0;
+    bool showGrid_      = true;
+    bool showUI_        = true;
+    bool showTopLayer_  = true;  // toggle top image layer visibility in editor
+    bool showHelp_      = false; // F1 shortcut overlay
+    bool dirty_         = false; // unsaved changes indicator
+    bool showVarList_   = false; // Variable list panel toggle
+
+    // Var list inline editing state
+    int  varListSelected_       = -1;
+    bool varListEditingName_    = false;
+    bool varListEditingValue_   = false;
+    std::string varListNameBuf_;
+    std::string varListValueBuf_;
+
+    // Hit rects of floating panels measured during render (0 = not shown),
+    // used so canvas painting never happens under a panel.
+    int leftPanelH_   = 0;  // properties/context panel at x=8, y=TOOLBAR_H+8, w=220
+    int mapPropsH_    = 0;  // map properties panel height (right side)
+    int varListX_     = 0;  // variables panel rect (right side)
+    int varListY_     = 0;
+    int varListH_     = 0;  // variables panel height (0 = not shown)
+
+    // Exit guard: first Esc with unsaved changes only warns
+    float exitArmedT_ = 0.0f;
+
+    // Gamepad virtual cursor
+    float cursorX_ = 640.0f;     // virtual cursor X
+    float cursorY_ = 360.0f;     // virtual cursor Y
+    bool  useGamepad_ = false;   // gamepad mode active
+    float gpCursorSpeed_ = 600.0f; // cursor movement speed
+
+    // Touch state
+    bool  touchActive_ = false;
+    float touchX_ = 0, touchY_ = 0;
+
+    // Editor UI layout
+    static constexpr int PALETTE_W     = 200;
+    static constexpr int TOOLBAR_H     = 48;
+    static constexpr int TILE_PREVIEW  = 48;
+
+    // Dynamic UI offsets (0 when UI hidden)
+    int uiToolbarH() const { return showUI_ ? TOOLBAR_H : 0; }
+    int uiPaletteW() const { return showUI_ ? PALETTE_W : 0; }
+
+    // Coordinate helpers (account for zoom + toolbar offset)
+    float screenToWorldX(int sx) const { return (float)sx / zoom_ + camera_.pos.x; }
+    float screenToWorldY(int sy) const { return (float)(sy - uiToolbarH()) / zoom_ + camera_.pos.y; }
+    int   worldToScreenX(float wx) const { return (int)((wx - camera_.pos.x) * zoom_); }
+    int   worldToScreenY(float wy) const { return (int)((wy - camera_.pos.y) * zoom_) + uiToolbarH(); }
+    // floor, not truncation: world -0.5 is tile -1, not tile 0
+    static int worldToTile(float w) { return (int)floorf(w / TILE_SIZE); }
+
+    // Methods
+    UndoState snapshot() const;
+    void restore(const UndoState& s);
+    void pushUndo();
+    void undo();
+    void redo();
+    void deleteTrigger(int idx);           // erase + keep trigger configs indexed correctly
+    void deleteEnemy(int idx);
+    void fitView();                        // zoom/center so the whole map is visible
+    void applyConfig();                    // config screen OK: create or load the map
+    bool requestExit();                    // Esc/Back: true when it is OK to leave now
+    bool spacePanHeld() const {            // Space + left drag pans the view
+        return !showCutsceneEditor_ && !isTextEditing() && SDL_GetKeyboardState(nullptr)[SDL_SCANCODE_SPACE];
+    }
+    bool isOverUI(int sx, int sy) const;   // true when a UI panel covers this point
+    void floodFill(int tx, int ty);        // bucket fill with selected tile
+    void pickTileAt(int tx, int ty, float wx, float wy);  // eyedropper
+    void renderHelpOverlay(SDL_Renderer* renderer);
+    void loadPalette();
+    void buildTileTextureLookup();
+    void scanTileFolder(const std::string& folder, const std::string& category, uint8_t defaultType);
+    void paintTile(int tx, int ty);
+    void eraseTile(int tx, int ty);
+    void eraseTriggerAt(float wx, float wy);
+    void eraseEnemyAt(float wx, float wy);
+    void erasePropAt(float wx, float wy);
+    void placeTrigger(float wx, float wy);
+    void placeEnemy(float wx, float wy);
+    int  triggerAt(float wx, float wy) const;
+    int  enemyAt(float wx, float wy) const;
+    int  triggerResizeHandle(float wx, float wy, int trigIdx) const;
+    void renderPalette(SDL_Renderer* renderer);
+    void renderToolbar(SDL_Renderer* renderer);
+    void renderTriggers(SDL_Renderer* renderer);
+    void renderEntitySpawns(SDL_Renderer* renderer);
+    void renderPropertiesPanel(SDL_Renderer* renderer);
+    void renderVarListPanel(SDL_Renderer* renderer);
+    void renderMoveHandles(SDL_Renderer* renderer);
+    void rebuildFilteredPalette();
+    void renderGrid(SDL_Renderer* renderer);
+    void drawEditorText(SDL_Renderer* renderer, const char* text, int x, int y, int size, SDL_Color color);
+
+    // Palette scroll helpers
+    int  paletteItemRawY(int idx) const;  // Y of item idx ignoring scroll
+    void scrollPaletteToSelection();      // adjust paletteScroll_ so selectedPalette_ is visible
+    int  paletteContentHeight() const;    // total height of all palette items + headers
+
+    // Generate thumbnail from current map view
+    void generateThumbnail();
+
+    // Config screen
+    void handleConfigInput(SDL_Event& e);
+    void commitConfigEdit();   // write the in-progress text field to its value
+    void updateConfigGamepad(float dt);
+    void renderConfig(SDL_Renderer* renderer);
+    void scanAvailableMaps();
+
+    // Map properties panel (player config inside editor)
+    void renderMapPropsPanel(SDL_Renderer* renderer);
+
+    // Gamepad / touch helpers
+    void handleGamepadInput(SDL_Event& e);
+    void updateGamepadCursor(float dt);
+    void handleTouchInput(SDL_Event& e);
+    void renderCursor(SDL_Renderer* renderer);
+
+    // Switch software keyboard
+    std::string showSoftwareKeyboard(const std::string& headerText, const std::string& initialText, int maxLen = 64);
+
+    // Cutscene / Dialog editor
+    CutsceneEditor csEditor_;
+    CutsceneLibrary csLib_;
+    bool showCutsceneEditor_ = false;
+    void saveCutsceneLib();
+    void loadCutsceneLib();
+    // Bottom padding when cutscene editor is open (used to clip map viewport)
+    int csEditorBottom() const { return showCutsceneEditor_ ? csEditor_.panelHeight() : 0; }
+    // Preview actor overlays on map canvas at current scrub time
+    void renderCutsceneActorOverlays(SDL_Renderer* renderer);
+    // Representative sprite texture for a cutscene actor (player/enemy/free)
+    SDL_Texture* csActorTexture(const CsActor& a) const;
+};

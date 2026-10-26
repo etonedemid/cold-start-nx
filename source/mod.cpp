@@ -1,0 +1,930 @@
+#include "mod.h"
+#include "assets.h"
+#include <cstdio>
+#include <cstring>
+#include <cstdlib>
+#include <fstream>
+#include <sstream>
+#include <algorithm>
+#include <dirent.h>
+#include <sys/stat.h>
+#ifdef _WIN32
+#  include <direct.h>
+#  define mkdir(p, m) _mkdir(p)
+#  define rmdir _rmdir
+#else
+#  include <unistd.h>
+#endif
+
+// INI parser helper (reusable)
+static std::unordered_map<std::string, std::unordered_map<std::string, std::string>>
+parseINI(const std::string& path) {
+    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> sections;
+    std::ifstream f(path);
+    if (!f.is_open()) return sections;
+
+    std::string currentSection;
+    std::string line;
+    while (std::getline(f, line)) {
+        // Trim
+        size_t start = line.find_first_not_of(" \t\r\n");
+        if (start == std::string::npos) continue;
+        line = line.substr(start);
+        size_t end = line.find_last_not_of(" \t\r\n");
+        if (end != std::string::npos) line = line.substr(0, end + 1);
+
+        if (line.empty() || line[0] == ';' || line[0] == '#') continue;
+
+        if (line[0] == '[') {
+            size_t close = line.find(']');
+            if (close != std::string::npos) {
+                currentSection = line.substr(1, close - 1);
+            }
+            continue;
+        }
+
+        size_t eq = line.find('=');
+        if (eq != std::string::npos) {
+            std::string key = line.substr(0, eq);
+            std::string val = line.substr(eq + 1);
+            // Trim key and value
+            size_t ks = key.find_first_not_of(" \t");
+            size_t ke = key.find_last_not_of(" \t");
+            if (ks != std::string::npos && ke != std::string::npos) key = key.substr(ks, ke - ks + 1);
+            size_t vs = val.find_first_not_of(" \t");
+            size_t ve = val.find_last_not_of(" \t");
+            if (vs != std::string::npos && ve != std::string::npos) val = val.substr(vs, ve - vs + 1);
+
+            sections[currentSection][key] = val;
+        }
+    }
+    return sections;
+}
+
+static bool toBool(const std::string& s) {
+    return s == "true" || s == "1" || s == "yes";
+}
+
+static bool dirExists(const std::string& path) {
+    struct stat st;
+    return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+static void removeTree(const std::string& path) {
+    struct stat st;
+    if (stat(path.c_str(), &st) != 0) return;
+    if (S_ISDIR(st.st_mode)) {
+        DIR* d = opendir(path.c_str());
+        if (d) {
+            struct dirent* ent;
+            while ((ent = readdir(d)) != nullptr) {
+                std::string name = ent->d_name;
+                if (name == "." || name == "..") continue;
+                removeTree(path + "/" + name);
+            }
+            closedir(d);
+        }
+        rmdir(path.c_str());
+    } else {
+        remove(path.c_str());
+    }
+}
+
+// Path safety helpers for mod sync deserialization
+
+// Returns true if `id` is a safe mod identifier (single path component,
+// no directory traversal characters).
+static bool isSafeModId(const std::string& id) {
+    if (id.empty()) return false;
+    if (id == "." || id == "..") return false;
+    if (id.find('/') != std::string::npos) return false;
+    if (id.find('\\') != std::string::npos) return false;
+    if (id.find('\0') != std::string::npos) return false;
+#ifdef _WIN32
+    if (id.find(':') != std::string::npos) return false;
+#endif
+    return true;
+}
+
+// Returns true if `p` is a safe relative path (no absolute paths, no ".."
+// components, no backslashes or null bytes).
+static bool isSafeRelPath(const std::string& p) {
+    if (p.empty()) return false;
+    if (p[0] == '/') return false;
+    if (p.find('\\') != std::string::npos) return false;
+    if (p.find('\0') != std::string::npos) return false;
+#ifdef _WIN32
+    if (p.find(':') != std::string::npos) return false;
+#endif
+    // Check each path component for ".."
+    size_t start = 0;
+    while (start < p.size()) {
+        size_t end = p.find('/', start);
+        if (end == std::string::npos) end = p.size();
+        if (p.substr(start, end - start) == "..") return false;
+        if (end == p.size()) break;
+        start = end + 1;
+    }
+    return true;
+}
+
+static std::vector<std::string> listFiles(const std::string& dir, const std::string& ext) {
+    std::vector<std::string> result;
+    DIR* d = opendir(dir.c_str());
+    if (!d) return result;
+    struct dirent* ent;
+    while ((ent = readdir(d)) != nullptr) {
+        std::string name = ent->d_name;
+        if (name.size() > ext.size() && name.substr(name.size() - ext.size()) == ext) {
+            result.push_back(dir + "/" + name);
+        }
+    }
+    closedir(d);
+    return result;
+}
+
+// ModOverrides
+float ModOverrides::getFloat(const std::string& key, float def) const {
+    auto it = values.find(key);
+    if (it == values.end()) return def;
+    char* end = nullptr;
+    const char* s = it->second.c_str();
+    float v = std::strtof(s, &end);
+    if (end == s) return def;
+    return v;
+}
+
+int ModOverrides::getInt(const std::string& key, int def) const {
+    auto it = values.find(key);
+    if (it == values.end()) return def;
+    char* end = nullptr;
+    const char* s = it->second.c_str();
+    long v = std::strtol(s, &end, 10);
+    if (end == s) return def;
+    return (int)v;
+}
+
+// Mod loading
+bool Mod::loadFromFolder(const std::string& path) {
+    folder = path;
+    std::string cfgPath = path + "/mod.cfg";
+    auto ini = parseINI(cfgPath);
+
+    // Check for workshop metadata marker (.workshop_meta)
+    std::string metaPath = path + "/.workshop_meta";
+    {
+        auto metaIni = parseINI(metaPath);
+        if (metaIni.count("workshop")) {
+            auto& ws = metaIni["workshop"];
+            workshopId   = ws.count("id")   ? ws["id"]   : "";
+            workshopHash = ws.count("hash") ? ws["hash"] : "";
+            if (!workshopId.empty()) source = ModSource::Workshop;
+        }
+    }
+
+    if (ini.find("mod") == ini.end()) {
+        printf("Mod: no [mod] section in %s\n", cfgPath.c_str());
+        return false;
+    }
+
+    auto& modSec = ini["mod"];
+    id               = modSec.count("id")                ? modSec["id"]                : "";
+    name             = modSec.count("name")              ? modSec["name"]              : id;
+    author           = modSec.count("author")            ? modSec["author"]            : "Unknown";
+    version          = modSec.count("version")           ? modSec["version"]           : "1.0";
+    description      = modSec.count("description")       ? modSec["description"]       : "";
+    shortDescription = modSec.count("short_description") ? modSec["short_description"] : "";
+    modType          = modSec.count("type")              ? modSec["type"]              : "";
+    gameVersion      = modSec.count("game_version")      ? std::atoi(modSec["game_version"].c_str()) : 1;
+    // workshop_id in mod.cfg takes priority if .workshop_meta not present
+    if (workshopId.empty() && modSec.count("workshop_id"))
+        workshopId = modSec["workshop_id"];
+
+    // Extended presentation metadata (all optional).
+    website = modSec.count("website") ? modSec["website"]
+            : (modSec.count("url") ? modSec["url"] : "");
+    // tags: comma-separated list, trimmed of surrounding whitespace.
+    tags.clear();
+    if (modSec.count("tags")) {
+        const std::string& t = modSec["tags"];
+        size_t start = 0;
+        while (start <= t.size()) {
+            size_t comma = t.find(',', start);
+            size_t end   = (comma == std::string::npos) ? t.size() : comma;
+            size_t a = t.find_first_not_of(" \t", start);
+            if (a != std::string::npos && a < end) {
+                size_t b = t.find_last_not_of(" \t", end - 1);
+                tags.push_back(t.substr(a, b - a + 1));
+            }
+            if (comma == std::string::npos) break;
+            start = comma + 1;
+        }
+    }
+    // banner image: banner.png / banner.jpg in the mod root, if present.
+    bannerPath.clear();
+    for (const char* bn : {"/banner.png", "/banner.jpg"}) {
+        std::string bp = path + bn;
+        struct stat bst;
+        if (stat(bp.c_str(), &bst) == 0 && S_ISREG(bst.st_mode)) { bannerPath = bp; break; }
+    }
+
+    if (id.empty()) {
+        printf("Mod: missing id in %s\n", cfgPath.c_str());
+        return false;
+    }
+
+    // Content flags
+    if (ini.count("content")) {
+        auto& c = ini["content"];
+        content.characters = c.count("characters") ? toBool(c["characters"]) : false;
+        content.maps       = c.count("maps")       ? toBool(c["maps"])       : false;
+        content.packs      = c.count("packs")      ? toBool(c["packs"])      : false;
+        content.sprites    = c.count("sprites")     ? toBool(c["sprites"])    : false;
+        content.sounds     = c.count("sounds")      ? toBool(c["sounds"])     : false;
+        content.gamemodes  = c.count("gamemodes")   ? toBool(c["gamemodes"]) : false;
+        content.items      = c.count("items")       ? toBool(c["items"])      : false;
+    }
+
+    // Overrides
+    if (ini.count("overrides")) {
+        overrides.values = ini["overrides"];
+    }
+
+    // Dependencies
+    if (ini.count("dependencies")) {
+        for (auto& [k, v] : ini["dependencies"]) {
+            dependencies.push_back(v);
+        }
+    }
+
+    // Scan content subfolders. Detection is by presence, not the [content] flags:
+    // many mods (workshop or hand-made) ship folders without declaring every flag,
+    // which previously left their maps/characters/etc. invisible. The content.*
+    // flags are then set from what was actually found so the menu filters match.
+    if (dirExists(path + "/characters")) {
+        characterPaths = listFiles(path + "/characters", ".cschar");
+        // Also check subdirectories
+        DIR* d = opendir((path + "/characters").c_str());
+        if (d) {
+            struct dirent* ent;
+            while ((ent = readdir(d)) != nullptr) {
+                std::string sub = path + "/characters/" + ent->d_name;
+                if (ent->d_name[0] != '.' && dirExists(sub)) {
+                    auto subFiles = listFiles(sub, ".cschar");
+                    characterPaths.insert(characterPaths.end(), subFiles.begin(), subFiles.end());
+                }
+            }
+            closedir(d);
+        }
+        content.characters = !characterPaths.empty();
+    }
+
+    if (dirExists(path + "/maps")) {
+        mapPaths = listFiles(path + "/maps", ".csm");
+        content.maps = !mapPaths.empty();
+    }
+
+    if (dirExists(path + "/packs")) {
+        packPaths = listFiles(path + "/packs", ".cspack");
+        content.packs = !packPaths.empty();
+    }
+
+    // Sprite and tile overrides
+    if (dirExists(path + "/sprites") || dirExists(path + "/tiles")) {
+        std::function<void(const std::string&, const std::string&)> walkSprites;
+        walkSprites = [&](const std::string& dir, const std::string& relBase) {
+            DIR* d = opendir(dir.c_str());
+            if (!d) return;
+            struct dirent* ent;
+            while ((ent = readdir(d)) != nullptr) {
+                if (ent->d_name[0] == '.') continue;
+                std::string full = dir + "/" + ent->d_name;
+                std::string rel = relBase.empty() ? ent->d_name : relBase + "/" + ent->d_name;
+                struct stat st;
+                if (stat(full.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
+                    walkSprites(full, rel);
+                } else {
+                    spriteOverrides[relBase + "/" + rel] = full;
+                }
+            }
+            closedir(d);
+        };
+        if (dirExists(path + "/sprites")) walkSprites(path + "/sprites", "sprites");
+        if (dirExists(path + "/tiles"))   walkSprites(path + "/tiles", "tiles");
+        content.sprites = !spriteOverrides.empty();
+    }
+
+    // Sound overrides
+    if (dirExists(path + "/sounds")) {
+        DIR* d = opendir((path + "/sounds").c_str());
+        if (d) {
+            struct dirent* ent;
+            while ((ent = readdir(d)) != nullptr) {
+                if (ent->d_name[0] == '.') continue;
+                soundOverrides[std::string("sounds/") + ent->d_name] = path + "/sounds/" + ent->d_name;
+            }
+            closedir(d);
+        }
+        content.sounds = !soundOverrides.empty();
+    }
+
+    // Custom items
+    if (dirExists(path + "/items")) {
+        auto itemFiles = listFiles(path + "/items", ".cfg");
+        for (auto& itemFile : itemFiles) {
+            auto itemIni = parseINI(itemFile);
+            if (itemIni.count("item")) {
+                ModItemDef item;
+                auto& s = itemIni["item"];
+                item.id          = s.count("id")   ? s["id"]   : "";
+                item.name        = s.count("name")  ? s["name"]  : item.id;
+                item.description = s.count("description") ? s["description"] : "";
+                item.spritePath  = s.count("sprite") ? (path + "/items/" + s["sprite"]) : "";
+                item.modSource   = id;
+                if (itemIni.count("params")) item.params = itemIni["params"];
+                if (!item.id.empty()) items.push_back(item);
+            }
+        }
+        content.items = !items.empty();
+    }
+
+    // Custom gamemodes
+    if (dirExists(path + "/gamemodes")) {
+        auto gmFiles = listFiles(path + "/gamemodes", ".cfg");
+        for (auto& gmFile : gmFiles) {
+            auto gmIni = parseINI(gmFile);
+            if (gmIni.count("gamemode")) {
+                auto& s = gmIni["gamemode"];
+                GameModeEntry gm;
+                gm.id = s.count("id") ? s["id"] : "";
+                gm.displayName = s.count("name") ? s["name"] : gm.id;
+                gm.description = s.count("description") ? s["description"] : "";
+                gm.modSource = id;
+
+                // Parse rules
+                auto& r = gm.defaultRules;
+                r.name = gm.displayName;
+                r.description = gm.description;
+                r.type = GameModeType::CustomGamemode;
+                if (s.count("max_players"))     r.maxPlayers = std::atoi(s["max_players"].c_str());
+                if (s.count("friendly_fire"))   r.friendlyFire = toBool(s["friendly_fire"]);
+                if (s.count("lives"))           r.lives = std::atoi(s["lives"].c_str());
+                if (s.count("pvp"))             r.pvpEnabled = toBool(s["pvp"]);
+                if (s.count("spawn_enemies"))   r.spawnEnemies = toBool(s["spawn_enemies"]);
+                if (s.count("spawn_crates"))    r.spawnCrates = toBool(s["spawn_crates"]);
+                if (s.count("time_limit"))      { r.hasTimer = true; r.timeLimit = std::stof(s["time_limit"]); }
+                if (s.count("score_limit"))     r.deathmatchScoreLimit = std::atoi(s["score_limit"].c_str());
+                if (s.count("respawn_time"))    r.respawnTime = std::stof(s["respawn_time"]);
+
+                if (!gm.id.empty()) gamemodes.push_back(gm);
+            }
+        }
+        content.gamemodes = !gamemodes.empty();
+    }
+
+    printf("Mod loaded: %s (%s) by %s - chars:%zu maps:%zu packs:%zu items:%zu gamemodes:%zu\n",
+        name.c_str(), id.c_str(), author.c_str(),
+        characterPaths.size(), mapPaths.size(), packPaths.size(),
+        items.size(), gamemodes.size());
+
+    return true;
+}
+
+// Mod Manager
+ModManager& ModManager::instance() {
+    static ModManager mgr;
+    return mgr;
+}
+
+void ModManager::scanMods() {
+    mods_.clear();
+
+    // CWD is the user-chosen data directory on Android (set by androidInitRomfs/chdir).
+    // On other platforms CWD is the executable directory with romfs/ alongside it.
+    std::vector<std::string> dirs = { "mods" };
+
+#ifndef PLATFORM_ANDROID
+    dirs.push_back("romfs/mods");
+#  ifdef __SWITCH__
+    dirs.push_back("romfs:/mods");
+    // Also scan with absolute path: opendir("mods") may silently fail on Switch
+    // when relative paths don't resolve through the sdmc: device layer.
+    {
+        char cwd[512] = {};
+        if (getcwd(cwd, sizeof(cwd)) && cwd[0]) {
+            std::string base(cwd);
+            if (base.back() != '/') base += '/';
+            dirs.push_back(base + "mods");
+        }
+    }
+#  elif defined(__WIIU__)
+    dirs.push_back("fs:/vol/content/mods");
+#  endif
+#endif
+
+    for (auto& dir : dirs) {
+        scanDirectory(dir);
+    }
+
+    // Sort by load order
+    std::sort(mods_.begin(), mods_.end(), [](const Mod& a, const Mod& b) {
+        return a.loadOrder < b.loadOrder;
+    });
+
+    printf("ModManager: %zu mods found\n", mods_.size());
+
+#ifdef __SWITCH__
+    // Write diagnostic log so the contents can be read from the SD card
+    FILE* diagf = fopen("mods_scan.log", "w");
+    if (diagf) {
+        char cwd[512] = {};
+        getcwd(cwd, sizeof(cwd));
+        fprintf(diagf, "CWD: %s\n", cwd);
+        fprintf(diagf, "Scanned dirs:\n");
+        for (auto& d : dirs) {
+            DIR* td = opendir(d.c_str());
+            fprintf(diagf, "  '%s': %s\n", d.c_str(), td ? "OK" : "FAILED");
+            if (td) {
+                struct dirent* te;
+                while ((te = readdir(td)) != nullptr) {
+                    if (te->d_name[0] == '.') continue;
+                    std::string sub = d + "/" + te->d_name;
+                    std::string cfg = sub + "/mod.cfg";
+                    struct stat st;
+                    bool hasDir = (stat(sub.c_str(), &st) == 0 && S_ISDIR(st.st_mode));
+                    bool hasCfg = (stat(cfg.c_str(), &st) == 0);
+                    fprintf(diagf, "    %s  dir=%d cfg=%d\n", te->d_name, (int)hasDir, (int)hasCfg);
+                    if (hasCfg) {
+                        FILE* cf = fopen(cfg.c_str(), "r");
+                        if (cf) {
+                            char line[128];
+                            int lines = 0;
+                            while (fgets(line, sizeof(line), cf) && lines < 8) {
+                                fprintf(diagf, "      %s", line);
+                                lines++;
+                            }
+                            fclose(cf);
+                        }
+                    }
+                }
+                closedir(td);
+            }
+        }
+        fprintf(diagf, "Total mods loaded: %zu\n", mods_.size());
+        fclose(diagf);
+    }
+#endif
+}
+
+void ModManager::scanDirectory(const std::string& dir) {
+    DIR* d = opendir(dir.c_str());
+    if (!d) return;
+
+    struct dirent* ent;
+    while ((ent = readdir(d)) != nullptr) {
+        if (ent->d_name[0] == '.') continue;
+        std::string modDir = dir + "/" + ent->d_name;
+        if (!dirExists(modDir)) continue;
+
+        // Check for mod.cfg
+        std::string cfgPath = modDir + "/mod.cfg";
+        struct stat st;
+        if (stat(cfgPath.c_str(), &st) != 0) continue;
+
+        Mod mod;
+        mod.loadOrder = (int)mods_.size();
+        if (mod.loadFromFolder(modDir)) {
+            // Check not duplicate
+            bool dup = false;
+            for (auto& existing : mods_) {
+                if (existing.id == mod.id) { dup = true; break; }
+            }
+            if (!dup) mods_.push_back(mod);
+        }
+    }
+    closedir(d);
+}
+
+void ModManager::loadAllEnabled() {
+    // Register gamemodes from enabled mods
+    auto& gmReg = GameModeRegistry::instance();
+    for (auto& m : mods_) {
+        if (!m.enabled) continue;
+        for (auto& gm : m.gamemodes) {
+            gmReg.registerMode(gm);
+        }
+    }
+}
+
+void ModManager::unloadAll() {
+    mods_.clear();
+}
+
+Mod* ModManager::findMod(const std::string& id) {
+    for (auto& m : mods_) {
+        if (m.id == id) return &m;
+    }
+    return nullptr;
+}
+
+void ModManager::setEnabled(const std::string& id, bool enabled) {
+    if (auto* m = findMod(id)) m->enabled = enabled;
+}
+
+std::vector<std::string> ModManager::allCharacterPaths() const {
+    std::vector<std::string> result;
+    for (auto& m : mods_) {
+        if (!m.enabled) continue;
+        result.insert(result.end(), m.characterPaths.begin(), m.characterPaths.end());
+    }
+    return result;
+}
+
+std::vector<std::string> ModManager::allMapPaths() const {
+    std::vector<std::string> result;
+    for (auto& m : mods_) {
+        if (!m.enabled) continue;
+        result.insert(result.end(), m.mapPaths.begin(), m.mapPaths.end());
+    }
+    return result;
+}
+
+std::vector<std::string> ModManager::allPackPaths() const {
+    std::vector<std::string> result;
+    for (auto& m : mods_) {
+        if (!m.enabled) continue;
+        result.insert(result.end(), m.packPaths.begin(), m.packPaths.end());
+    }
+    return result;
+}
+
+std::vector<ModItemDef> ModManager::allItems() const {
+    std::vector<ModItemDef> result;
+    for (auto& m : mods_) {
+        if (!m.enabled) continue;
+        result.insert(result.end(), m.items.begin(), m.items.end());
+    }
+    return result;
+}
+
+std::string ModManager::resolveSpriteAsset(const std::string& original) const {
+    // Last enabled mod with an override wins
+    for (int i = (int)mods_.size() - 1; i >= 0; i--) {
+        if (!mods_[i].enabled) continue;
+        auto it = mods_[i].spriteOverrides.find(original);
+        if (it != mods_[i].spriteOverrides.end()) return it->second;
+    }
+    return original;
+}
+
+std::string ModManager::resolveSoundAsset(const std::string& original) const {
+    for (int i = (int)mods_.size() - 1; i >= 0; i--) {
+        if (!mods_[i].enabled) continue;
+        auto it = mods_[i].soundOverrides.find(original);
+        if (it != mods_[i].soundOverrides.end()) return it->second;
+    }
+    return original;
+}
+
+ModOverrides ModManager::mergedOverrides() const {
+    ModOverrides merged;
+    for (auto& m : mods_) {
+        if (!m.enabled) continue;
+        for (auto& [k, v] : m.overrides.values) {
+            merged.values[k] = v;
+        }
+    }
+    return merged;
+}
+
+void ModManager::saveModConfig() {
+    FILE* f = fopen("modconfig.cfg", "w");
+    if (!f) return;
+    fprintf(f, "[mods]\n");
+    for (auto& m : mods_) {
+        fprintf(f, "%s=%s\n", m.id.c_str(), m.enabled ? "true" : "false");
+    }
+    fclose(f);
+}
+
+void ModManager::loadModConfig() {
+    FILE* f = fopen("modconfig.cfg", "r");
+    if (!f) return;
+
+    char line[256];
+    while (fgets(line, sizeof(line), f)) {
+        char* eq = strchr(line, '=');
+        if (!eq) continue;
+        *eq = 0;
+        std::string key = line;
+        std::string val = eq + 1;
+        // Trim
+        while (!val.empty() && (val.back() == '\n' || val.back() == '\r')) val.pop_back();
+        while (!key.empty() && (key[0] == ' ' || key[0] == '\t')) key.erase(key.begin());
+        if (key == "[mods]") continue;
+
+        if (auto* m = findMod(key)) {
+            m->enabled = (val == "true" || val == "1");
+        }
+    }
+    fclose(f);
+}
+
+ModManager::SyncManifest ModManager::buildSyncManifest() const {
+    SyncManifest manifest;
+    manifest.maps = allMapPaths();
+    manifest.characters = allCharacterPaths();
+    manifest.packs = allPackPaths();
+    return manifest;
+}
+
+// Mod network sync: serialize all enabled mods into a transferable blob
+// Format:
+// uint16_t numMods
+// for each mod:
+//   uint16_t idLen, char[idLen] modId
+//   uint16_t numFiles
+//   for each file:
+//     uint16_t pathLen, char[pathLen] relativePath
+//     uint32_t dataLen, uint8_t[dataLen] fileData
+//
+static constexpr size_t MAX_MOD_SYNC_BYTES = 64u * 1024u * 1024u;
+static constexpr uint16_t MAX_MOD_SYNC_COUNT = 128;
+static constexpr uint16_t MAX_MOD_SYNC_FILES_PER_MOD = 8192;
+static constexpr uint16_t MAX_MOD_SYNC_ID_LEN = 64;
+static constexpr uint16_t MAX_MOD_SYNC_PATH_LEN = 512;
+
+void ModManager::writeWorkshopMeta(const std::string& modFolder,
+                                   const std::string& workshopId,
+                                   const std::string& fileHash) {
+    std::string metaPath = modFolder + "/.workshop_meta";
+    FILE* f = fopen(metaPath.c_str(), "w");
+    if (!f) return;
+    fprintf(f, "[workshop]\n");
+    fprintf(f, "id=%s\n", workshopId.c_str());
+    fprintf(f, "hash=%s\n", fileHash.c_str());
+    fclose(f);
+}
+
+std::vector<uint8_t> ModManager::serializeEnabledMods(ModSource sourceFilter) const {
+    std::vector<uint8_t> result;
+
+    bool hasEnabledMods = false;
+    for (auto& m : mods_) {
+        if (m.enabled && m.source == sourceFilter) {
+            hasEnabledMods = true;
+            break;
+        }
+    }
+    if (!hasEnabledMods) return result;
+
+    // Write header (patched with the actual serialized count later)
+    result.resize(2);
+    uint16_t numMods = 0;
+
+    for (auto& m : mods_) {
+        if (!m.enabled) continue;
+        if (m.source != sourceFilter) continue;  // only send mods of the requested type
+        if (m.id.empty() || m.id.size() > MAX_MOD_SYNC_ID_LEN || !isSafeModId(m.id)) {
+            printf("ModSync: skipping mod with unsafe sync id '%s'\n", m.id.c_str());
+            continue;
+        }
+
+        // Write mod ID
+        uint16_t idLen = (uint16_t)m.id.size();
+        size_t pos = result.size();
+        result.resize(pos + 2 + idLen);
+        memcpy(result.data() + pos, &idLen, 2);
+        memcpy(result.data() + pos + 2, m.id.c_str(), idLen);
+
+        // Collect all files from the mod folder, including media overrides.
+        struct ModFile { std::string relPath; std::vector<uint8_t> data; };
+        std::vector<ModFile> files;
+        size_t bytesBudget = result.size();
+
+        std::function<void(const std::string&, const std::string&)> walk;
+        walk = [&](const std::string& dir, const std::string& rel) {
+            DIR* d = opendir(dir.c_str());
+            if (!d) return;
+            struct dirent* ent;
+            while ((ent = readdir(d)) != nullptr) {
+                if (ent->d_name[0] == '.') continue;
+                std::string full = dir + "/" + ent->d_name;
+                std::string relFull = rel.empty() ? std::string(ent->d_name) : rel + "/" + ent->d_name;
+                struct stat st;
+                if (stat(full.c_str(), &st) == 0) {
+                    if (S_ISDIR(st.st_mode)) {
+                        walk(full, relFull);
+                    } else if (S_ISREG(st.st_mode) && st.st_size >= 0) {
+                        if (relFull.empty() || relFull.size() > MAX_MOD_SYNC_PATH_LEN || !isSafeRelPath(relFull)) {
+                            printf("Mod sync: skipping unsafe path %s\n", relFull.c_str());
+                            continue;
+                        }
+                        size_t projected = bytesBudget + 2 + relFull.size() + 4 + (size_t)st.st_size;
+                        if (projected > MAX_MOD_SYNC_BYTES) {
+                            printf("Mod sync: skipping %s (%ld bytes) to stay within %zu-byte limit\n",
+                                   full.c_str(), (long)st.st_size, MAX_MOD_SYNC_BYTES);
+                            continue;
+                        }
+                        ModFile mf;
+                        mf.relPath = relFull;
+                        FILE* f = fopen(full.c_str(), "rb");
+                        if (f) {
+                            mf.data.resize(st.st_size);
+                            size_t nread = fread(mf.data.data(), 1, st.st_size, f);
+                            fclose(f);
+                            if (nread == (size_t)st.st_size) {
+                                bytesBudget = projected;
+                                files.push_back(std::move(mf));
+                            } else {
+                                printf("Mod sync: short read for %s (%zu/%ld)\n",
+                                       full.c_str(), nread, (long)st.st_size);
+                            }
+                        }
+                    }
+                }
+            }
+            closedir(d);
+        };
+        walk(m.folder, "");
+
+        if (files.size() > MAX_MOD_SYNC_FILES_PER_MOD) {
+            printf("ModSync: truncating mod '%s' to %u files for sync\n",
+                   m.id.c_str(), (unsigned)MAX_MOD_SYNC_FILES_PER_MOD);
+            files.resize(MAX_MOD_SYNC_FILES_PER_MOD);
+        }
+
+        // Write file count
+        uint16_t numFiles = (uint16_t)files.size();
+        pos = result.size();
+        result.resize(pos + 2);
+        memcpy(result.data() + pos, &numFiles, 2);
+
+        // Write each file
+        for (auto& f : files) {
+            uint16_t pathLen = (uint16_t)f.relPath.size();
+            uint32_t dataLen = (uint32_t)f.data.size();
+            pos = result.size();
+            result.resize(pos + 2 + pathLen + 4 + dataLen);
+            memcpy(result.data() + pos, &pathLen, 2);
+            memcpy(result.data() + pos + 2, f.relPath.c_str(), pathLen);
+            memcpy(result.data() + pos + 2 + pathLen, &dataLen, 4);
+            if (dataLen > 0)
+                memcpy(result.data() + pos + 2 + pathLen + 4, f.data.data(), dataLen);
+        }
+
+        printf("ModSync: serialized mod '%s' - %u files\n", m.id.c_str(), numFiles);
+        numMods++;
+    }
+
+    if (numMods == 0) {
+        result.clear();
+        return result;
+    }
+    memcpy(result.data(), &numMods, 2);
+
+    printf("ModSync: total blob size = %zu bytes (%u mods)\n", result.size(), numMods);
+    return result;
+}
+
+void ModManager::deserializeAndInstallMods(const std::vector<uint8_t>& data,
+                                           bool permanentInstall,
+                                           bool acceptWorkshop,
+                                           bool acceptLocal) {
+    if (!acceptWorkshop && !acceptLocal) {
+        printf("ModSync: all mod types rejected by user settings\n");
+        return;
+    }
+    if (data.size() < 2 || data.size() > MAX_MOD_SYNC_BYTES) {
+        printf("ModSync: rejecting blob size %zu\n", data.size());
+        return;
+    }
+
+    size_t offset = 0;
+    uint16_t numMods;
+    memcpy(&numMods, data.data(), 2);
+    offset = 2;
+
+    if (numMods > MAX_MOD_SYNC_COUNT) {
+        printf("ModSync: rejecting blob with too many mods (%u)\n", numMods);
+        return;
+    }
+
+    printf("ModSync: deserializing %u mods (%zu bytes)\n", numMods, data.size());
+
+    mkdir("mods", 0755);
+    std::string installBase = permanentInstall ? "mods" : "mods/_mp_sync";
+    if (!permanentInstall) {
+        removeTree(installBase);
+        mkdir(installBase.c_str(), 0755);
+    }
+
+    std::unordered_set<std::string> installedIds;
+
+    for (uint16_t mi = 0; mi < numMods && offset < data.size(); mi++) {
+        // Read mod ID
+        if (offset + 2 > data.size()) break;
+        uint16_t idLen;
+        memcpy(&idLen, data.data() + offset, 2);
+        offset += 2;
+        if (offset + idLen > data.size()) break;
+        std::string modId((char*)data.data() + offset, idLen);
+        offset += idLen;
+
+        // Validate mod ID to prevent path traversal
+        bool skipMod = (idLen == 0 || idLen > MAX_MOD_SYNC_ID_LEN || !isSafeModId(modId));
+        if (skipMod) {
+            printf("ModSync: skipping mod with unsafe id (len=%u)\n", (unsigned)modId.size());
+        }
+
+        // Create mod directory (only if id is safe)
+        std::string modDir = installBase + "/" + modId;
+        if (!skipMod) {
+            if (permanentInstall) removeTree(modDir);
+            mkdir(modDir.c_str(), 0755);
+            installedIds.insert(modId);
+        }
+
+        // Read file count
+        if (offset + 2 > data.size()) break;
+        uint16_t numFiles;
+        memcpy(&numFiles, data.data() + offset, 2);
+        offset += 2;
+
+        if (numFiles > MAX_MOD_SYNC_FILES_PER_MOD) {
+            printf("ModSync: rejecting mod '%s' with too many files (%u)\n",
+                   modId.c_str(), numFiles);
+            return;
+        }
+
+        if (!skipMod)
+            printf("ModSync: installing mod '%s' (%u files)%s\n",
+                   modId.c_str(), numFiles, permanentInstall ? " permanently" : "");
+
+        for (uint16_t fi = 0; fi < numFiles && offset < data.size(); fi++) {
+            // Read relative path
+            if (offset + 2 > data.size()) break;
+            uint16_t pathLen;
+            memcpy(&pathLen, data.data() + offset, 2);
+            offset += 2;
+            if (offset + pathLen > data.size()) break;
+            std::string relPath((char*)data.data() + offset, pathLen);
+            offset += pathLen;
+
+            // Read data length
+            if (offset + 4 > data.size()) break;
+            uint32_t dataLen;
+            memcpy(&dataLen, data.data() + offset, 4);
+            offset += 4;
+            if (offset + dataLen > data.size()) break;
+
+            // Validate relative path to prevent path traversal; skip write if unsafe
+            if (skipMod || pathLen == 0 || pathLen > MAX_MOD_SYNC_PATH_LEN || !isSafeRelPath(relPath)) {
+                if (!skipMod)
+                    printf("ModSync: skipping file with unsafe path (len=%u)\n", (unsigned)relPath.size());
+                offset += dataLen;
+                continue;
+            }
+
+            // Create subdirectories as needed
+            std::string fullPath = modDir + "/" + relPath;
+            // Find last slash and create directories
+            for (size_t i = 0; i < fullPath.size(); i++) {
+                if (fullPath[i] == '/') {
+                    std::string sub = fullPath.substr(0, i);
+                    mkdir(sub.c_str(), 0755);
+                }
+            }
+
+            // Write file
+            FILE* f = fopen(fullPath.c_str(), "wb");
+            if (f) {
+                if (dataLen > 0)
+                    fwrite(data.data() + offset, 1, dataLen, f);
+                fclose(f);
+            }
+            offset += dataLen;
+        }
+    }
+
+    // Re-scan mods to pick up the newly installed sync mods
+    // First remember current non-sync mods' enabled state
+    std::unordered_map<std::string, bool> prevEnabled;
+    for (auto& m : mods_) prevEnabled[m.id] = m.enabled;
+
+    scanMods();
+    loadModConfig();
+
+    // Enable synced mods (they came from the host, so they should be active)
+    for (auto& m : mods_) {
+        if (installedIds.count(m.id)) {
+            m.enabled = true;
+        } else if (prevEnabled.count(m.id)) {
+            m.enabled = prevEnabled[m.id];
+        }
+    }
+
+    loadAllEnabled();
+    saveModConfig();
+    printf("ModSync: mods installed and loaded\n");
+}

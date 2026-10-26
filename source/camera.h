@@ -1,0 +1,21 @@
+#pragma once
+#include "vec2.h"
+#include "constants.h"
+
+struct Camera {
+    Vec2  pos = {0, 0};          // top-left in world coords
+    Vec2  vel = {0, 0};
+    float shake      = 0;
+    float shakeDecay = 5.5f;
+    float shakeScale = 1.0f;   // 0 = off, 1 = full; set from config_.shakeScale
+    Vec2  shakeOffset= {0, 0};
+    float worldW     = WORLD_W;
+    float worldH     = WORLD_H;
+    int   viewW      = SCREEN_W;  // viewport width  (change for splitscreen)
+    int   viewH      = SCREEN_H;  // viewport height (change for splitscreen)
+
+    void update(Vec2 target, Vec2 aimDir, float dt, float lookScale = 1.0f);
+    void addShake(float amount);
+    Vec2 worldToScreen(Vec2 world) const;
+    Vec2 screenToWorld(Vec2 screen) const;
+};

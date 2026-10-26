@@ -1,0 +1,93 @@
+# ─── Local secrets & helper scripts (never commit) ──────────────────────────
+.env.local
+fetch_projects.py
+fetch_projects.bat
+
+# ─── Build output ────────────────────────────────────────────────────────────
+build/
+build-pc/
+build-win/
+build-win-wsl/
+build-*/
+compile_commands.json
+*.lst
+build-server/
+dist/
+hbas-repo/
+deploy/
+# ─── Release archives ───────────────────────────────────────────────────────
+cold_start-*.zip
+*.zip
+release-out/
+server-dist/
+
+# ─── Tools ───────────────────────────────────────────────────────────────────
+tools/butler/
+
+# ─── Logs ────────────────────────────────────────────────────────────────────
+*.log
+
+# ─── Nintendo Switch binaries ────────────────────────────────────────────────
+*.elf
+*.nacp
+*.nro
+*.nso
+*.pfs0
+
+# ─── Wii U binaries ──────────────────────────────────────────────────────────
+*.rpx
+*.wuhb
+build-wiiu/
+
+# ─── PC binaries ────────────────────────────────────────────────────────────
+cold_start
+cold_start.exe
+
+# ─── User-specific config ───────────────────────────────────────────────────
+config.txt
+presets.txt
+servers.txt
+modconfig.cfg
+best_run.txt
+
+# ─── Android ────────────────────────────────────────────────────────────────
+android/app/jni/SDL2/
+android/app/jni/SDL2_image/
+android/app/jni/SDL2_ttf/
+android/app/jni/SDL2_mixer/
+android/.gradle/
+android/app/.cxx/
+android/app/build/
+android/build/
+android/local.properties
+*.apk
+*.aab
+
+# ─── IDE / OS ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# ─── Claude Code ─────────────────────────────────────────────────────────────
+.claude/
+CLAUDE.md
+
+deploy_all.ps1
+
+# ─── Workshop runtime temp files ─────────────────────────────────────────────
+modlist.json.tmp
+ws_icon_*.png
+ws_ss_*.png
+ws_detail_*.json
+mods_download_*.zip
+
+# ─── Local mod folders (installed mods, not source) ──────────────────────────
+mods/*/
+
+# ─── Local character exports (saved from character creator) ──────────────────
+characters/
+story draft - spoilers.txt
+
+# ─── graphify (generated knowledge graph output) ─────────────────────────────
+graphify-out/
